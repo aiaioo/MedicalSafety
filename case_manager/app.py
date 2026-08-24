@@ -386,8 +386,9 @@ REPORT_PDF_CSS = """
   h1 { font-size: 20pt; margin-bottom: 4pt; }
   h2 { font-size: 15pt; }
   h3 { font-size: 13pt; }
-  img { max-width: 100%; }
+  img { max-width: 100%; display: block; margin: 12pt 0; }
   figure { margin: 12pt 0; }
+  figure img { margin: 0; }
   figcaption { font-size: 9pt; color: #555; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }

@@ -421,37 +421,90 @@
   }
 
   // ---------------------------------------------------------------------
-  // Inserted snippet figures: no caption text (it used to get left behind
-  // when a drag only picked up the <img>, not its <figcaption> sibling),
-  // and sized (see loadSnippets below) to match how large the snippet
-  // actually was on the source page — not the PNG's raw pixel dimensions,
-  // which are rasterized at a higher DPI than the page is displayed at
-  // and so look too big at native size. Otherwise plain, fully-editable
-  // content: dragging to reposition and the main toolbar's Align left/
-  // center/right buttons are the browser's native contenteditable
-  // behavior, not custom JS (a grab/grabbing cursor and hover-to-resize
-  // handles are layered on top of that below, but neither changes what
-  // gets dragged). An earlier version made the figure
-  // contenteditable="false" + draggable="true" to fix the caption-left-
-  // behind bug, but native HTML5 drag-and-drop over a contenteditable
-  // region doesn't reliably remove the drag source, which turned into a
-  // worse bug (dragging a snippet could leave duplicate copies behind).
-  // Dropping the caption fixes the original bug on its own, without
-  // needing the figure to be non-editable at all.
+  // Inserted snippets: no caption text (it used to get left behind when a
+  // drag only picked up the <img>, not its <figcaption> sibling), and
+  // sized (see loadSnippets below) to match how large the snippet actually
+  // was on the source page. Otherwise plain, fully-editable content:
+  // dragging to reposition it is the browser's native contenteditable
+  // behavior, not custom JS.
+  //
+  // No wrapper element. An earlier version wrapped the <img> in
+  // <figure class="doc-figure"> and hung identity/alignment off the
+  // figure — a grab cursor and hover-to-resize handles keyed off
+  // ".doc-figure img", and alignment was the browser's own
+  // execCommand("justify*") setting text-align on the figure as the
+  // nearest block ancestor. That broke as soon as a snippet was actually
+  // dragged: native contenteditable image drag only ever relocates the
+  // bare <img> node, so the figure (and whatever text-align it carried)
+  // got left behind at the old location, and the moved image landed
+  // wrapper-less and unaligned. (This is the same root cause that used to
+  // strand a <figcaption> sibling, below — anything hung off a wrapper
+  // instead of the dragged node itself doesn't survive the drag.) An
+  // even earlier attempt made the figure contenteditable="false" +
+  // draggable="true" to force it to move as one atomic unit, but native
+  // HTML5 drag-and-drop over a contenteditable region doesn't reliably
+  // remove the drag source, which traded that bug for a worse one
+  // (dragging a snippet could leave duplicate copies behind).
+  //
+  // So every per-snippet property now lives directly on the <img> that
+  // actually gets dragged: `class="doc-snippet"` marks it as one (what
+  // the cursor/hover-resize/toolbar-alignment code below key off,
+  // replacing the old ".doc-figure img" selectors), and alignment is
+  // written straight onto the image's own inline `margin-left`/
+  // `margin-right` (see setSnippetAlign) instead of relying on
+  // execCommand's block-ancestor text-align. Both are plain `class`/
+  // `style`, which the server's HTML sanitizer already whitelists (it has
+  // no data-* attribute whitelist, which is why this isn't a data-align
+  // attribute instead).
   // ---------------------------------------------------------------------
 
-  // Cleans up `.doc-figure` snippets left over from that in-between
-  // approach (and drops legacy captions from further back), so an older
-  // saved document displays the same plain, native-editable figure this
-  // app inserts today. Idempotent and safe to call on every load.
+  // Ensures an inserted snippet <img> carries the marker class the
+  // cursor/hover/resize/alignment code below all key off.
+  function markAsSnippet(img) {
+    img.classList.add("doc-snippet");
+  }
+
+  // Alignment as a property of the image itself (see comment block above)
+  // rather than the browser's execCommand text-align, so it travels with
+  // the <img> through a native contenteditable drag instead of being left
+  // behind on the old location's block ancestor.
+  function setSnippetAlign(img, align) {
+    if (align === "center") {
+      img.style.marginLeft = "auto";
+      img.style.marginRight = "auto";
+    } else if (align === "right") {
+      img.style.marginLeft = "auto";
+      img.style.marginRight = "0";
+    } else {
+      img.style.marginLeft = "0";
+      img.style.marginRight = "auto";
+    }
+  }
+
+  // Cleans up `.doc-figure`-wrapped snippets left over from either older
+  // approach above (and drops legacy captions from further back):
+  // unwraps the <img>, carries over whatever alignment the figure had
+  // (inline text-align, or the older align-center/align-right classes) as
+  // the image's own inline margin, and drops the wrapper. Idempotent and
+  // safe to call on every load.
   function cleanLegacyDocFigures() {
     editor.querySelectorAll(".doc-figure").forEach((figure) => {
       figure.querySelectorAll("figcaption, .resize-handle, .figure-align-toolbar").forEach((el) => el.remove());
-      figure.removeAttribute("contenteditable");
-      figure.removeAttribute("draggable");
-      figure.classList.remove("align-center", "align-right");
-      figure.style.removeProperty("width");
-      figure.querySelectorAll("img").forEach((img) => img.style.removeProperty("max-width"));
+      const img = figure.querySelector("img");
+      if (!img) {
+        figure.remove();
+        return;
+      }
+      const align =
+        figure.classList.contains("align-center") || figure.style.textAlign === "center"
+          ? "center"
+          : figure.classList.contains("align-right") || figure.style.textAlign === "right"
+            ? "right"
+            : "left";
+      img.style.removeProperty("max-width");
+      markAsSnippet(img);
+      setSnippetAlign(img, align);
+      figure.replaceWith(img);
     });
   }
 
@@ -459,7 +512,7 @@
   // cosmetic, toggled off the browser's own dragstart/dragend so it can't
   // affect which node the drag actually moves.
   editor.addEventListener("dragstart", (e) => {
-    if (e.target.tagName === "IMG" && e.target.closest(".doc-figure")) {
+    if (e.target.tagName === "IMG" && e.target.classList.contains("doc-snippet")) {
       e.target.classList.add("dragging");
     }
   });
@@ -470,12 +523,12 @@
   // ---------------------------------------------------------------------
   // Snippet resize handles: shown on hover, positioned in the
   // #figureResizeOverlay layer (a sibling of #editor, same idea as
-  // #marginGuides above) rather than as DOM children of the figure -- see
+  // #marginGuides above) rather than as DOM children of the image -- see
   // the .figure-resize-overlay comment in style.css for why they can't
-  // live inside the figure without risking the old drag-leaves-something-
-  // behind bug. Dragging a handle just writes width/height directly onto
-  // the <img>'s own inline style, the same style attribute loadSnippets()
-  // already sets on insert.
+  // live inside/around the snippet without risking the old drag-leaves-
+  // something-behind bug. Dragging a handle just writes width/height
+  // directly onto the <img>'s own inline style, the same style attribute
+  // loadSnippets() already sets on insert.
   // ---------------------------------------------------------------------
   const RESIZE_CORNERS = ["nw", "ne", "sw", "se"];
   const resizeHandleEls = {};
@@ -536,14 +589,14 @@
   }
 
   editor.addEventListener("mouseover", (e) => {
-    const img = e.target.closest && e.target.closest(".doc-figure img");
+    const img = e.target.closest && e.target.closest("img.doc-snippet");
     if (img) {
       cancelHideHandles();
       showResizeHandles(img);
     }
   });
   editor.addEventListener("mouseout", (e) => {
-    if (e.target.closest && e.target.closest(".doc-figure img")) scheduleHideHandles();
+    if (e.target.closest && e.target.closest("img.doc-snippet")) scheduleHideHandles();
   });
   figureResizeOverlay.addEventListener("mouseover", (e) => {
     if (e.target.classList.contains("resize-handle")) cancelHideHandles();
@@ -760,8 +813,29 @@
 
   editor.addEventListener("input", markDirty);
 
+  // If the current selection is exactly one snippet image, the align
+  // buttons below set alignment directly on that <img> (see
+  // setSnippetAlign) instead of going through execCommand("justify*"),
+  // which would set text-align on the image's nearest block ancestor --
+  // fine for text, but for a snippet that ancestor doesn't survive a
+  // native drag (see the comment above cleanLegacyDocFigures).
+  const ALIGN_CMDS = { justifyLeft: "left", justifyCenter: "center", justifyRight: "right" };
+  function getSelectedSnippetImage() {
+    if (!savedRange || savedRange.startContainer !== savedRange.endContainer) return null;
+    if (savedRange.endOffset - savedRange.startOffset !== 1) return null;
+    const node = savedRange.startContainer.childNodes[savedRange.startOffset];
+    return node && node.nodeType === 1 && node.matches("img.doc-snippet") ? node : null;
+  }
+
   document.querySelectorAll(".fmt-btn[data-cmd]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      const align = ALIGN_CMDS[btn.dataset.cmd];
+      const snippetImg = align && getSelectedSnippetImage();
+      if (snippetImg) {
+        setSnippetAlign(snippetImg, align);
+        markDirty();
+        return;
+      }
       restoreSelection();
       document.execCommand(btn.dataset.cmd, false, btn.dataset.arg || null);
       saveSelection();
@@ -915,7 +989,7 @@
             sizeStyle = ` style="width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;"`;
           }
           const html =
-            `<figure class="doc-figure"><img src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}"${sizeStyle}></figure><p><br></p>`;
+            `<img class="doc-snippet" src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}"${sizeStyle}><p><br></p>`;
           restoreSelection();
           document.execCommand("insertHTML", false, html);
           saveSelection();

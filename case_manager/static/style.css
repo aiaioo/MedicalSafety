@@ -204,26 +204,35 @@ a { color: #2266dd; }
 .editor h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
 .editor h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
 .editor h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
-/* Plain, fully-editable content -- no forced size/position machinery.
-   display:inline-block on the img (rather than the UA default block) is
-   what lets the main toolbar's Align left/center/right buttons actually
-   move it: execCommand("justify*") sets text-align on the figure (the
-   nearest block ancestor), and text-align only positions inline-level
-   children. No max-width here -- a snippet keeps the pixel size it had
-   in the source document rather than being shrunk to fit the page. */
-.editor .doc-figure { margin: 16px 0; }
-.editor .doc-figure img { display: inline-block; border: 1px solid #e0e2e8; cursor: grab; }
-.editor .doc-figure img.dragging { cursor: grabbing; }
+/* Plain, fully-editable content -- no forced size/position machinery, and
+   no wrapper element. A snippet used to be <figure class="doc-figure">
+   wrapping the <img>, with the figure carrying alignment/cursor/border --
+   but native contenteditable image drag detaches only the bare <img> node,
+   so the figure (and anything hung off it) got left behind at the old
+   location whenever a snippet was actually dragged. Every property here is
+   keyed off img.doc-snippet -- the class document.js's markAsSnippet()
+   puts directly on the dragged node itself -- so it survives the move.
+   display:block plus explicit margin-left/margin-right (written by
+   document.js's setSnippetAlign(), not by this stylesheet) is what
+   positions a snippet left/center/right; see the comment above
+   cleanLegacyDocFigures() in document.js for the full history. No
+   max-width here -- a snippet keeps the pixel size it had in the source
+   document rather than being shrunk to fit the page. */
+.editor img.doc-snippet {
+  display: block; margin: 16px 0; border: 1px solid #e0e2e8; cursor: grab;
+}
+.editor img.doc-snippet.dragging { cursor: grabbing; }
 
 /* Resize handles for inserted snippets, rendered in the same kind of
    overlay layer as .margin-guides above (a sibling of #editor, positioned
    in JS from the hovered <img>'s live getBoundingClientRect()) rather than
-   as DOM children of the figure. Handles that lived inside the figure were
-   tried before and reverted: native contenteditable image drag detaches
-   only the bare <img> node, so any sibling markup around it (a caption,
-   or a handle wrapper) got left behind whenever a snippet was dragged.
-   Keeping handles entirely outside #editor means dragging still only ever
-   touches the plain, native-editable <img> -- nothing to strand. */
+   as DOM children of the image. Handles that lived inside a wrapper
+   element were tried before and reverted: native contenteditable image
+   drag detaches only the bare <img> node, so any sibling markup around it
+   (a caption, a wrapping figure, or a handle wrapper) got left behind
+   whenever a snippet was dragged. Keeping handles entirely outside #editor
+   means dragging still only ever touches the plain, native-editable
+   <img> -- nothing to strand. */
 .figure-resize-overlay {
   position: absolute; inset: 0; pointer-events: none; user-select: none;
 }
