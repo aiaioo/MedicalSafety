@@ -26,6 +26,8 @@
         <button type="button" id="newDocBtn">New document&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
         <hr>
+        <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
+        <hr>
         <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
       </div>
     </nav>
@@ -103,8 +105,11 @@
   <main class="viewer-layout">
     <div class="editor-container">
       {% if report_id %}
-      <div id="editor" class="editor" contenteditable="true"
-           data-placeholder="Start writing your document. Click a snippet on the right to insert it here."></div>
+      <div class="editor-page-wrap" id="editorPageWrap">
+        <div id="editor" class="editor" contenteditable="true"
+             data-placeholder="Start writing your document. Click a snippet on the right to insert it here."></div>
+        <div id="marginGuides" class="margin-guides" aria-hidden="true"></div>
+      </div>
       {% else %}
       <div class="doc-landing">
         <h2>Your documents</h2>
@@ -149,6 +154,32 @@
       <div id="openDocList" class="report-list"></div>
       <div class="modal-actions">
         <button type="button" id="openDocCancel">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="pageSetupModal">
+    <div class="modal">
+      <h3>Page setup</h3>
+      <p class="modal-hint">Margins in points (72pt = 1 inch). Shown as dashed guides on the page and applied to the exported PDF.</p>
+      <div class="margin-grid">
+        <label class="modal-field">Left margin
+          <input id="marginLeftInput" type="number" min="0" max="200" step="1">
+        </label>
+        <label class="modal-field">Right margin
+          <input id="marginRightInput" type="number" min="0" max="200" step="1">
+        </label>
+        <label class="modal-field">Header margin
+          <input id="marginHeaderInput" type="number" min="0" max="200" step="1">
+        </label>
+        <label class="modal-field">Footer margin
+          <input id="marginFooterInput" type="number" min="0" max="200" step="1">
+        </label>
+      </div>
+      <p id="pageSetupError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="pageSetupCancel">Cancel</button>
+        <button type="button" id="pageSetupApply">Apply</button>
       </div>
     </div>
   </div>

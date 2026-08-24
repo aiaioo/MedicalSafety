@@ -29,6 +29,29 @@ DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_ANNOTATION_COLOR = "#e02424"
 
+# Report page margins, in points — left/right/header/footer. Defaults match the
+# geometry render_report_pdf has always used (fitz mediabox inset of
+# (36, 46, -36, -46)pt), so existing reports render unchanged until a user
+# explicitly opens Page setup and changes them.
+REPORT_DEFAULT_MARGINS = {"left": 36, "right": 36, "header": 46, "footer": 46}
+REPORT_MARGIN_MIN = 0
+REPORT_MARGIN_MAX = 200  # pt; keeps left+right and header+footer well under A4's 595x842pt
+
+
+def sanitize_margins(raw, fallback=None):
+    fallback = fallback if isinstance(fallback, dict) else REPORT_DEFAULT_MARGINS
+    result = {}
+    for key, default in REPORT_DEFAULT_MARGINS.items():
+        val = raw.get(key) if isinstance(raw, dict) else None
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            val = None
+        if val is None or not (REPORT_MARGIN_MIN <= val <= REPORT_MARGIN_MAX):
+            val = fallback.get(key, default)
+        result[key] = val
+    return result
+
 app = Flask(__name__)
 
 
@@ -364,12 +387,13 @@ REPORT_PDF_CSS = """
 """
 
 
-def render_report_pdf(title, body_html):
+def render_report_pdf(title, body_html, margins=None):
     heading = f"<h1>{html_escape(title)}</h1>" if title else ""
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{body_html}</body></html>"
 
+    m = sanitize_margins(margins)
     mediabox = fitz.paper_rect("a4")
-    where = mediabox + (36, 46, -36, -46)
+    where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     story = fitz.Story(html=full_html)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
@@ -672,6 +696,7 @@ def api_reports():
         "html": "",
         "source_doc": source_doc,
         "source_type": source_type,
+        "margins": dict(REPORT_DEFAULT_MARGINS),
         "created_at": now,
         "updated_at": now,
     }
@@ -688,7 +713,9 @@ def api_report(report_id):
         raise DocumentError(f"No document with id {report_id!r}", 404)
 
     if request.method == "GET":
-        return jsonify(existing)
+        resp = dict(existing)
+        resp["margins"] = sanitize_margins(existing.get("margins"))
+        return jsonify(resp)
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", existing.get("name", ""))).strip()[:200]
@@ -702,11 +729,13 @@ def api_report(report_id):
         source_type = normalize_type(body.get("source_type", existing.get("source_type", "pdf")))
 
     html_content = sanitize_report_html(body.get("html", existing.get("html", "")))
+    margins = sanitize_margins(body.get("margins"), existing.get("margins"))
     data = {
         "name": name,
         "html": html_content,
         "source_doc": source_doc,
         "source_type": source_type,
+        "margins": margins,
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -726,7 +755,7 @@ def api_report_export(report_id):
     if not body_html.strip():
         raise DocumentError("Document is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, body_html)
+    pdf_bytes = render_report_pdf(title, body_html, data.get("margins"))
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"

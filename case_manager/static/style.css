@@ -167,15 +167,34 @@ a { color: #2266dd; }
 .color-btn input[type="color"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: none; padding: 0; }
 
 .editor-container { flex: 1; overflow: auto; background: #e8eaed; display: flex; justify-content: center; padding: 32px 20px; }
-/* A4 at 96dpi (210mm x 297mm), with margins matching render_report_pdf's
-   fitz mediabox + (36, 46, -36, -46) pt inset converted to px (*96/72). */
+/* A4 at 96dpi (210mm x 297mm). Margins (--m-*) default to render_report_pdf's
+   fitz mediabox + (36, 46, -36, -46) pt inset converted to px (*96/72), but are
+   overridden per-document by document.js from the report's saved margins (see
+   Page setup). */
+.editor-page-wrap { position: relative; width: 794px; max-width: 100%; }
 .editor {
-  background: white; width: 794px; max-width: 100%; min-height: 1123px; box-sizing: border-box;
-  padding: 61.33px 48px;
+  background: white; width: 100%; min-height: 1123px; box-sizing: border-box;
+  padding: var(--m-header, 61.33px) var(--m-right, 48px) var(--m-footer, 61.33px) var(--m-left, 48px);
   box-shadow: 0 1px 4px rgba(0,0,0,0.18); font-size: 15px; line-height: 1.5; outline: none;
   font-family: Arial, sans-serif;
 }
 .editor:empty::before { content: attr(data-placeholder); color: #9aa0ad; }
+
+/* ---- margin guides: dashed outline showing the printable area on each
+   simulated page, purely visual, rendered in an overlay layer (not inside
+   #editor) so it can never leak into saved/exported content and never
+   interferes with contenteditable's :empty placeholder. ---- */
+.margin-guides {
+  position: absolute; inset: 0; pointer-events: none; user-select: none;
+}
+.margin-guides .page-rect { position: absolute; left: 0; width: 100%; box-sizing: border-box; }
+.margin-guides .page-rect::before {
+  content: "";
+  position: absolute;
+  top: var(--mg-top, 61.33px); right: var(--mg-right, 48px);
+  bottom: var(--mg-bottom, 61.33px); left: var(--mg-left, 48px);
+  border: 1px dashed rgba(60, 64, 82, 0.28);
+}
 .editor h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
 .editor h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
 .editor h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
@@ -185,17 +204,31 @@ a { color: #2266dd; }
 
 /* ---- pagination: visual gap between simulated A4 pages ---- */
 .editor .page-break {
-  height: 122.67px; /* bottom margin of the page above + top margin of the page below */
-  margin: 0 -48px; box-sizing: border-box;
+  /* height is set inline by document.js per pagination pass (header + footer
+     margin, in px) since it depends on the document's configurable margins */
+  margin-left: calc(-1 * var(--m-left, 48px)); margin-right: calc(-1 * var(--m-right, 48px));
+  box-sizing: border-box;
   background: #e8eaed;
   box-shadow: inset 0 8px 8px -8px rgba(0,0,0,0.25), inset 0 -8px 8px -8px rgba(0,0,0,0.25);
   display: flex; align-items: center; justify-content: center;
-  user-select: none; pointer-events: none;
+  /* pointer-events stays enabled (unlike a typical decorative overlay) so
+     this element itself captures hover/clicks instead of letting them fall
+     through to the editable text behind it, which is what made the gap look
+     like typable space (text-cursor on hover, caret landing nearby on
+     click). document.js also preventDefaults its mousedown so a click here
+     is fully inert. */
+  cursor: default; user-select: none;
 }
 .editor .page-break::after {
   content: "Page " attr(data-page);
   font-family: Arial, sans-serif; font-size: 11px; color: #9aa0ad;
 }
+/* Blank filler padding a page out to full A4 height when its content falls
+   short (see insertPageFiller in document.js) — unlike .page-break, this is
+   blank space *within* a page, so clicks fall through (pointer-events: none)
+   to land the caret at the nearest real text, same as clicking below the
+   last line of a normal document. */
+.editor .page-filler { pointer-events: none; user-select: none; }
 
 .snippet-card img { cursor: default; }
 .snippet-card .tag { margin-left: 0; }
@@ -229,6 +262,8 @@ a { color: #2266dd; }
   display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: 14px;
   border: 1px solid #cfd4e0; border-radius: 4px;
 }
+.modal-hint { font-size: 12px; color: #6b7280; margin: 4px 0 14px; }
+.margin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-actions button {
   border: 1px solid #cfd4e0; background: #f7f8fa; padding: 7px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;

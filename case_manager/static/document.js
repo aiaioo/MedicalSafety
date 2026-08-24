@@ -8,6 +8,7 @@
   const preselectType = appEl.dataset.preselectType || "pdf";
 
   const editor = document.getElementById("editor");
+  const marginGuidesEl = document.getElementById("marginGuides");
   const titleInput = document.getElementById("titleInput");
   const saveBtn = document.getElementById("saveBtn");
   const saveStatusEl = document.getElementById("saveStatus");
@@ -19,7 +20,22 @@
   const fileMenuDropdown = document.getElementById("fileMenuDropdown");
   const newDocBtn = document.getElementById("newDocBtn");
   const openDocBtn = document.getElementById("openDocBtn");
+  const pageSetupBtn = document.getElementById("pageSetupBtn");
   const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+
+  const pageSetupModal = document.getElementById("pageSetupModal");
+  const marginLeftInput = document.getElementById("marginLeftInput");
+  const marginRightInput = document.getElementById("marginRightInput");
+  const marginHeaderInput = document.getElementById("marginHeaderInput");
+  const marginFooterInput = document.getElementById("marginFooterInput");
+  const pageSetupError = document.getElementById("pageSetupError");
+  const pageSetupCancel = document.getElementById("pageSetupCancel");
+  const pageSetupApply = document.getElementById("pageSetupApply");
+
+  // Page margins in points (pt); defaults match the geometry render_report_pdf
+  // has always used. Overridden by whatever the report has saved, on load.
+  const DEFAULT_MARGINS = { left: 36, right: 36, header: 46, footer: 46 };
+  let margins = { ...DEFAULT_MARGINS };
 
   const newDocModal = document.getElementById("newDocModal");
   const newDocName = document.getElementById("newDocName");
@@ -199,7 +215,82 @@
   // inside the one the caret is in, so the current selection stays valid
   // across repagination without any manual save/restore.
   // ---------------------------------------------------------------------
-  const PAGE_CONTENT_HEIGHT = 1123 - 2 * 61.33; // px, matches the .editor CSS page box
+  const PAGE_HEIGHT_PX = 1123; // px, A4 height at 96dpi
+  const PT_TO_PX = 96 / 72;
+  // Fixed visual gap between simulated pages (1cm at 96dpi) -- deliberately
+  // NOT derived from header/footer margins. A page's header/footer margins
+  // are its own white space (rendered as .page-filler, part of that page's
+  // sheet); the gray gap is just a constant separator between sheets, same
+  // idea as the fixed gap Google Docs/Word show regardless of your margins.
+  const PAGE_GAP_PX = 96 / 2.54;
+
+  function normalizeMargins(raw) {
+    const out = {};
+    for (const key of Object.keys(DEFAULT_MARGINS)) {
+      const v = raw && typeof raw === "object" ? Number(raw[key]) : NaN;
+      out[key] = Number.isFinite(v) && v >= 0 && v <= 200 ? v : DEFAULT_MARGINS[key];
+    }
+    return out;
+  }
+
+  function marginsPx() {
+    return {
+      left: margins.left * PT_TO_PX,
+      right: margins.right * PT_TO_PX,
+      header: margins.header * PT_TO_PX,
+      footer: margins.footer * PT_TO_PX,
+    };
+  }
+
+  // Pushes the current `margins` (pt) onto the CSS custom properties that
+  // drive both .editor's padding and the margin-guide overlay, then
+  // re-paginates (changing margins doesn't mutate #editor's DOM, so the
+  // MutationObserver-driven schedulePaginate() below wouldn't otherwise fire).
+  function applyMarginsToCss() {
+    const px = marginsPx();
+    editor.style.setProperty("--m-left", px.left + "px");
+    editor.style.setProperty("--m-right", px.right + "px");
+    editor.style.setProperty("--m-header", px.header + "px");
+    editor.style.setProperty("--m-footer", px.footer + "px");
+    if (marginGuidesEl) {
+      marginGuidesEl.style.setProperty("--mg-left", px.left + "px");
+      marginGuidesEl.style.setProperty("--mg-right", px.right + "px");
+      marginGuidesEl.style.setProperty("--mg-top", px.header + "px");
+      marginGuidesEl.style.setProperty("--mg-bottom", px.footer + "px");
+    }
+    schedulePaginate();
+  }
+
+  // Purely visual dashed-outline guides showing the printable area of each
+  // simulated page, one .page-rect per page. Lives in the #marginGuides
+  // overlay (a sibling of #editor, not inside it) so it never touches
+  // #editor's DOM/content and can't leak into saved HTML.
+  //
+  // Page rects are measured from the actual .page-break elements just
+  // inserted, not computed as uniform PAGE_HEIGHT_PX slices: pagination never
+  // pads a page out to full height (a block that doesn't fit moves whole to
+  // the next page), so a page's real on-screen height is usually less than
+  // PAGE_HEIGHT_PX. Assuming a fixed height there made the guide overshoot
+  // past the real page-break and bleed into the gray inter-page gap.
+  function renderMarginGuides() {
+    if (!marginGuidesEl) return;
+    const editorRect = editor.getBoundingClientRect();
+    const breaks = Array.from(editor.querySelectorAll(":scope > .page-break"));
+
+    const frag = document.createDocumentFragment();
+    let top = 0;
+    for (let i = 0; i <= breaks.length; i++) {
+      const bottom =
+        i < breaks.length ? breaks[i].getBoundingClientRect().top - editorRect.top : editorRect.height;
+      const rect = document.createElement("div");
+      rect.className = "page-rect";
+      rect.style.top = top + "px";
+      rect.style.height = Math.max(0, bottom - top) + "px";
+      frag.appendChild(rect);
+      if (i < breaks.length) top = breaks[i].getBoundingClientRect().bottom - editorRect.top;
+    }
+    marginGuidesEl.replaceChildren(frag);
+  }
 
   let paginateScheduled = false;
   let paginating = false;
@@ -213,36 +304,76 @@
     });
   }
 
+  // Inserted at the end of a page whose content falls short of
+  // pageContentHeight, so every simulated page is at least a full A4 sheet
+  // rather than shrinking to fit its content. contentEditable="false" like
+  // .page-break, but pointer-events stays off (default) here on purpose:
+  // this is blank space *within* a page (not the gap between pages), so a
+  // click on it should fall through and land the caret at the nearest real
+  // text, same as clicking below the last line of a normal document.
+  function insertPageFiller(beforeNode, heightPx) {
+    if (heightPx <= 0.5) return;
+    const filler = document.createElement("div");
+    filler.className = "page-filler";
+    filler.contentEditable = "false";
+    filler.style.height = heightPx + "px";
+    if (beforeNode) editor.insertBefore(filler, beforeNode);
+    else editor.appendChild(filler);
+  }
+
   function paginate() {
     if (paginating) return;
     paginating = true;
     paginationObserver.disconnect();
     try {
-      editor.querySelectorAll(":scope > .page-break").forEach((el) => el.remove());
+      editor.querySelectorAll(":scope > .page-break, :scope > .page-filler").forEach((el) => el.remove());
+
+      const px = marginsPx();
+      const pageContentHeight = PAGE_HEIGHT_PX - px.header - px.footer;
 
       const blocks = Array.from(editor.childNodes).filter(
-        (n) => n.nodeType === 1 && !n.classList.contains("page-break")
+        (n) => n.nodeType === 1 && !n.classList.contains("page-break") && !n.classList.contains("page-filler")
       );
 
-      let used = 0;
+      // pageContentTop anchors to the true structural start of the current
+      // page's content region -- editor's own CSS padding-top for page 1,
+      // or (previous break's bottom + header margin) for later pages -- NOT
+      // to a block's own rect.top. A block's own margin-top is usually much
+      // smaller than the header margin, so using it as the anchor let text
+      // start well above where the header margin guide line actually is;
+      // using rect.bottom - pageContentTop (an actual measured distance,
+      // not a manual margin sum) also avoids CSS margin-collapse making the
+      // overflow check overshoot the footer line.
+      const editorRect = editor.getBoundingClientRect();
+      let pageContentTop = editorRect.top + px.header;
+      let prevBottom = null;
       let pageNum = 1;
       for (const block of blocks) {
-        const style = getComputedStyle(block);
-        const h =
-          block.getBoundingClientRect().height +
-          parseFloat(style.marginTop || 0) +
-          parseFloat(style.marginBottom || 0);
-        if (used > 0 && used + h > PAGE_CONTENT_HEIGHT) {
+        let rect = block.getBoundingClientRect();
+        if (prevBottom !== null && rect.bottom - pageContentTop > pageContentHeight) {
+          // Close out the ending page: pad its remaining content area, then
+          // its own footer margin (white, part of that page's sheet) --
+          // editor's own padding-bottom only covers the *last* page's
+          // footer, not a mid-document page's.
+          insertPageFiller(block, pageContentHeight - (prevBottom - pageContentTop) + px.footer);
           pageNum += 1;
           const brk = document.createElement("div");
           brk.className = "page-break";
           brk.contentEditable = "false";
           brk.dataset.page = String(pageNum);
+          brk.style.height = PAGE_GAP_PX + "px";
           editor.insertBefore(brk, block);
-          used = 0;
+          insertPageFiller(block, px.header); // new page's own header margin (white)
+          pageContentTop = brk.getBoundingClientRect().bottom + px.header;
+          rect = block.getBoundingClientRect(); // re-measure: insertions shifted it down
         }
-        used += h;
+        prevBottom = rect.bottom;
       }
+      // Last page's footer is already real (editor's own CSS padding-bottom);
+      // only the leftover content area needs padding here.
+      if (blocks.length > 0) insertPageFiller(null, pageContentHeight - (prevBottom - pageContentTop));
+
+      renderMarginGuides();
     } finally {
       paginating = false;
       paginationObserver.observe(editor, { childList: true, subtree: true, characterData: true });
@@ -261,9 +392,18 @@
   );
   window.addEventListener("resize", schedulePaginate);
 
+  // .page-break is contentEditable="false", but that alone doesn't stop a
+  // click from landing a caret in the nearest real text — preventing the
+  // mousedown's default keeps the inter-page gap fully inert to clicks.
+  editor.addEventListener("mousedown", (e) => {
+    if (e.target.classList && e.target.classList.contains("page-break")) {
+      e.preventDefault();
+    }
+  });
+
   function getCleanEditorHtml() {
     const clone = editor.cloneNode(true);
-    clone.querySelectorAll(".page-break").forEach((el) => el.remove());
+    clone.querySelectorAll(".page-break, .page-filler").forEach((el) => el.remove());
     return clone.innerHTML;
   }
 
@@ -282,6 +422,43 @@
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // Page setup (margins)
+  // ---------------------------------------------------------------------
+  function clampMargin(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return Math.min(200, Math.max(0, n));
+  }
+
+  pageSetupBtn.addEventListener("click", () => {
+    marginLeftInput.value = margins.left;
+    marginRightInput.value = margins.right;
+    marginHeaderInput.value = margins.header;
+    marginFooterInput.value = margins.footer;
+    pageSetupError.style.display = "none";
+    openModal(pageSetupModal);
+  });
+  pageSetupCancel.addEventListener("click", () => closeModal(pageSetupModal));
+  pageSetupModal.addEventListener("click", (e) => {
+    if (e.target === pageSetupModal) closeModal(pageSetupModal);
+  });
+  pageSetupApply.addEventListener("click", () => {
+    const left = clampMargin(marginLeftInput.value);
+    const right = clampMargin(marginRightInput.value);
+    const header = clampMargin(marginHeaderInput.value);
+    const footer = clampMargin(marginFooterInput.value);
+    if ([left, right, header, footer].some((v) => v === null)) {
+      pageSetupError.textContent = "Enter margins between 0 and 200pt.";
+      pageSetupError.style.display = "block";
+      return;
+    }
+    margins = { left, right, header, footer };
+    applyMarginsToCss();
+    markDirty();
+    closeModal(pageSetupModal);
   });
 
   // ---------------------------------------------------------------------
@@ -318,6 +495,7 @@
       html: getCleanEditorHtml(),
       source_doc,
       source_type,
+      margins,
     };
     try {
       const res = await fetch(reportUrl, {
@@ -346,7 +524,7 @@
     try {
       const { source_doc, source_type } = currentSource();
       const blob = new Blob(
-        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", html: getCleanEditorHtml(), source_doc, source_type })],
+        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", html: getCleanEditorHtml(), source_doc, source_type, margins })],
         { type: "application/json" }
       );
       navigator.sendBeacon(reportUrl, blob);
@@ -547,6 +725,8 @@
       const res = await fetch(reportUrl);
       const data = await res.json();
       titleInput.value = data.name || "";
+      margins = normalizeMargins(data.margins);
+      applyMarginsToCss();
       editor.innerHTML = data.html || "";
       const combo = data.source_doc ? `${data.source_doc}|${data.source_type}` : "";
       sourceSelect.value = combo;
