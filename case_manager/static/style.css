@@ -118,8 +118,21 @@ a { color: #2266dd; }
 .doc-name:focus { outline: none; background: white; border-color: #cfd4e0; }
 .save-status { font-size: 12px; color: #8a92a5; min-width: 44px; }
 
-.source-picker { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.source-picker select { font-size: 13px; }
+.source-picker { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 14px; }
+.source-picker select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  font-size: 14px; font-family: inherit; color: #1c1c1c;
+  padding: 8px 34px 8px 14px; border: 1px solid #cfd4e0; border-radius: 8px;
+  background-color: white;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%235f6368' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; background-size: 13px;
+  cursor: pointer; min-width: 150px; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.source-picker select:hover { border-color: #adb5bd; }
+.source-picker select:focus {
+  outline: none; border-color: #2266dd; box-shadow: 0 0 0 3px rgba(34,102,221,0.18);
+}
+.source-picker select:disabled { background-color: #f1f3f4; color: #9aa0ad; cursor: default; border-color: #e0e2e8; }
 .source-picker .btn {
   background: #f1f3f4; color: #1c1c1c; padding: 6px 12px; border-radius: 4px;
   text-decoration: none; font-size: 13px;
