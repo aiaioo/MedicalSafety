@@ -30,6 +30,7 @@
         Page <input id="pageInput" type="number" min="1" max="{{ page_count }}" value="{{ page }}"> / {{ page_count }}
       </span>
       <a class="btn" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page+1 if page<page_count else page_count }}">Next &raquo;</a>
+      <a class="btn" href="{{ url_for('document_view') }}?doc={{ doc_id }}&type={{ doc_type }}">Compile document &raquo;</a>
     </div>
   </header>
 

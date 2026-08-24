@@ -1,8 +1,13 @@
+import base64
+import io
 import json
 import re
 import uuid
 from datetime import datetime, timezone
+from html import escape as html_escape
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, url_for
@@ -15,8 +20,9 @@ STORAGE_DIR = BASE_DIR / "storage"
 CACHE_DIR = STORAGE_DIR / "cache"
 ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
 SNIPPETS_DIR = STORAGE_DIR / "snippets"
+REPORTS_DIR = STORAGE_DIR / "reports"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -119,6 +125,10 @@ def snippets_dir(doc_id, norm_type):
     return SNIPPETS_DIR / f"{doc_id}__{norm_type}"
 
 
+def reports_path(doc_id, norm_type):
+    return REPORTS_DIR / f"{doc_id}__{norm_type}.json"
+
+
 # ---------------------------------------------------------------------------
 # Baking annotations into a snippet render
 # ---------------------------------------------------------------------------
@@ -204,6 +214,166 @@ def draw_annotations_on_page(page, annotations, page_rect):
 
 
 # ---------------------------------------------------------------------------
+# Report editor: HTML sanitization, image inlining, PDF rendering
+# ---------------------------------------------------------------------------
+
+REPORT_ALLOWED_TAGS = {
+    "p", "br", "div", "span", "h1", "h2", "h3", "h4",
+    "strong", "b", "em", "i", "u", "s",
+    "ul", "ol", "li", "a", "img", "blockquote", "hr",
+    "table", "thead", "tbody", "tr", "td", "th",
+    "figure", "figcaption", "pre", "code",
+}
+REPORT_VOID_TAGS = {"br", "img", "hr"}
+REPORT_STRIP_CONTENT_TAGS = {"script", "style", "iframe", "object", "embed", "form", "input", "button", "svg"}
+REPORT_SAFE_URL_RE = re.compile(
+    r"^(https?://|mailto:|/media/|data:image/(png|jpeg|jpg|gif|webp);base64,)", re.IGNORECASE
+)
+REPORT_SAFE_STYLE_RE = re.compile(r"^[a-zA-Z0-9\s:;#%.,\-()]*$")
+
+
+def _clean_report_attrs(tag, attrs):
+    out = {}
+    for name, value in attrs:
+        if value is None:
+            continue
+        name = name.lower()
+        if name == "class":
+            out["class"] = value
+        elif name == "style":
+            low = value.lower()
+            if REPORT_SAFE_STYLE_RE.match(value) and "expression" not in low and "javascript" not in low:
+                out["style"] = value
+        elif tag == "a" and name == "href":
+            if REPORT_SAFE_URL_RE.match(value.strip()):
+                out["href"] = value
+        elif tag == "img" and name == "src":
+            if REPORT_SAFE_URL_RE.match(value.strip()):
+                out["src"] = value
+        elif tag == "img" and name in ("alt", "width", "height"):
+            out[name] = value
+        elif tag in ("td", "th") and name in ("colspan", "rowspan") and value.isdigit():
+            out[name] = value
+    return out
+
+
+class _ReportHTMLSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+        self.skip_depth = 0
+
+    def _attr_str(self, tag, attrs):
+        clean = _clean_report_attrs(tag, attrs)
+        return "".join(f' {k}="{html_escape(v, quote=True)}"' for k, v in clean.items())
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in REPORT_STRIP_CONTENT_TAGS:
+            self.skip_depth += 1
+            return
+        if self.skip_depth or tag not in REPORT_ALLOWED_TAGS:
+            return
+        self.out.append(f"<{tag}{self._attr_str(tag, attrs)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        tag = tag.lower()
+        if self.skip_depth or tag in REPORT_STRIP_CONTENT_TAGS or tag not in REPORT_ALLOWED_TAGS:
+            return
+        self.out.append(f"<{tag}{self._attr_str(tag, attrs)}/>")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in REPORT_STRIP_CONTENT_TAGS:
+            if self.skip_depth:
+                self.skip_depth -= 1
+            return
+        if self.skip_depth or tag not in REPORT_ALLOWED_TAGS or tag in REPORT_VOID_TAGS:
+            return
+        self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.skip_depth:
+            self.out.append(html_escape(data))
+
+    def get_html(self):
+        return "".join(self.out)
+
+
+def sanitize_report_html(raw_html, max_len=500_000):
+    """Whitelist-sanitize client-submitted rich text before it is stored or
+    ever re-rendered (in a browser or fed into the PDF Story renderer)."""
+    if not isinstance(raw_html, str):
+        return ""
+    parser = _ReportHTMLSanitizer()
+    parser.feed(raw_html[:max_len])
+    parser.close()
+    return parser.get_html()
+
+
+REPORT_IMG_SRC_RE = re.compile(r'src="(/media/snippets/[^"]*)"')
+
+
+def inline_report_images(html_str):
+    """Replace <img src="/media/snippets/..."> references with base64 data URIs
+    read directly from the snippet files on disk, so the exported PDF is
+    self-contained and Story (which has no network access) can render it."""
+
+    def repl(match):
+        url = match.group(1)
+        parsed = urlsplit(url)
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) < 2:
+            return match.group(0)
+        filename, url_doc_id = parts[-1], parts[-2]
+        if not DOC_ID_RE.match(url_doc_id) or "/" in filename or "\\" in filename:
+            return match.group(0)
+        try:
+            url_type = normalize_type(parse_qs(parsed.query).get("type", ["pdf"])[0])
+        except DocumentError:
+            return match.group(0)
+        f = snippets_dir(url_doc_id, url_type) / filename
+        if not f.exists():
+            return match.group(0)
+        b64 = base64.b64encode(f.read_bytes()).decode("ascii")
+        return f'src="data:image/png;base64,{b64}"'
+
+    return REPORT_IMG_SRC_RE.sub(repl, html_str)
+
+
+REPORT_PDF_CSS = """
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1c1c1c; }
+  h1 { font-size: 20pt; margin-bottom: 4pt; }
+  h2 { font-size: 15pt; }
+  h3 { font-size: 13pt; }
+  img { max-width: 100%; }
+  figure { margin: 12pt 0; }
+  figcaption { font-size: 9pt; color: #555; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }
+"""
+
+
+def render_report_pdf(title, body_html):
+    heading = f"<h1>{html_escape(title)}</h1>" if title else ""
+    full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{body_html}</body></html>"
+
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (36, 46, -36, -46)
+    story = fitz.Story(html=full_html)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    more = 1
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
 
@@ -241,6 +411,25 @@ def page_view():
         page=page,
         page_count=page_count,
     )
+
+
+@app.route("/document")
+def document_view():
+    pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
+    docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
+    docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
+    docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
+    docs.sort(key=lambda d: d["id"])
+
+    doc_id = request.args.get("doc", "")
+    raw_type = request.args.get("type", "pdf")
+    if not doc_id and docs:
+        doc_id, raw_type = docs[0]["id"], docs[0]["type"]
+
+    if doc_id:
+        resolve_pdf_path(doc_id, raw_type)  # 404s if the source document doesn't exist
+
+    return render_template("document.html", docs=docs, doc_id=doc_id, doc_type=raw_type)
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +614,47 @@ def api_delete_snippet(doc_id, snippet_id):
         if f.exists():
             f.unlink()
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/report/<doc_id>", methods=["GET", "POST"])
+def api_report(doc_id):
+    check_doc_id(doc_id)
+    norm_type = normalize_type(request.args.get("type", "pdf"))
+    path = reports_path(doc_id, norm_type)
+
+    if request.method == "GET":
+        data = load_json(path, default={})
+        return jsonify({"title": data.get("title", ""), "html": data.get("html", "")})
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "")[:300]
+    html_content = sanitize_report_html(body.get("html") or "")
+    data = {
+        "title": title,
+        "html": html_content,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_json(path, data)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/report/<doc_id>/export")
+def api_report_export(doc_id):
+    check_doc_id(doc_id)
+    norm_type = normalize_type(request.args.get("type", "pdf"))
+    data = load_json(reports_path(doc_id, norm_type), default={})
+    title = data.get("title") or doc_id
+    body_html = inline_report_images(data.get("html") or "")
+    if not body_html.strip():
+        raise DocumentError("Document is empty — add some content before exporting", 400)
+
+    pdf_bytes = render_report_pdf(title, body_html)
+
+    resp = Response(pdf_bytes, mimetype="application/pdf")
+    resp.headers["Cache-Control"] = "no-store"
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or doc_id
+    resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
+    return resp
 
 
 @app.route("/media/snippets/<doc_id>/<path:filename>")

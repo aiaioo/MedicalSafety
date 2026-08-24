@@ -10,6 +10,9 @@
 <div class="container">
   <h1>Documents</h1>
   {% if docs %}
+  <p><a href="{{ url_for('document_view') }}">Open the document editor &raquo;</a></p>
+  {% endif %}
+  {% if docs %}
   <ul class="doc-list">
     {% for d in docs %}
     <li>
