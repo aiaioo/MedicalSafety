@@ -184,6 +184,69 @@ still lands on the resized text rather than wherever the collapsed caret happens
 Firefox/Safari support one but not the other); "clear highlight" is just
 `hiliteColor("transparent")`.
 
+### Tab / Shift+Tab indent
+
+Tab/Shift+Tab (`applyTabIndent()` in document.js, wired on `#editor`'s own `keydown` so it
+never depends on which element currently has focus elsewhere on the page) means two
+different things depending on what the caret/selection is in:
+
+- **Inside a list item**: Tab nests the `<li>` under the `<li>` it directly follows
+  (`listIndentItem()`) — reusing that sibling's existing nested `<ol>`/`<ul>` if it already
+  has one, so numbering *continues*, or creating a fresh one, so numbering *starts at 1*.
+  No-op if the item is the first in its list (nothing to nest under — matches most outline
+  editors). Shift+Tab is the inverse (`listOutdentRun()`): splice the item back into its
+  grandparent list right after its parent `<li>`, and re-nest anything that followed it
+  *within that same nested list* as the item's own new children (a new sub-`<ol>`/`<ul>`,
+  reusing one the item already has if present) — otherwise those later siblings would
+  incorrectly pop out to the shallower level too instead of staying subordinate to the item
+  that outdented past them.
+- **Anything else** (a paragraph/heading, or a selected snippet `<img>`): there's no
+  nesting structure to build, so "indent" is just nudging the element's own `margin-left`
+  in fixed 40px steps, clamped at 0 (`blockIndentEl()`). A centered/right-aligned snippet's
+  `margin-left` is left alone rather than clobbered — see § Snippet figures — its
+  `margin-left`/`margin-right` pair encodes *alignment* there, not indent depth, and the two
+  can't be composed into one CSS value.
+
+**Multi-line/multi-item selections** are supported, not just a collapsed caret:
+`selectedTopLevelNodes()` walks the top-level blocks a non-collapsed range spans and, for
+any that's an `<ol>`/`<ul>`, descends into it via `listItemsInRange()` to find exactly which
+`<li>`s the selection touches. That check is deliberately **not**
+`range.intersectsNode(li)` on the `<li>` itself — that's also true for an *ancestor* `<li>`
+that merely contains the selection (e.g. because a nested sub-item under it is selected),
+which would wrongly include the ancestor instead of just the selected descendants.
+`liOwnContentIntersects()` instead tests only the `<li>`'s own direct children *excluding*
+any nested `<ol>`/`<ul>`, i.e. whether the selection touches that item's own line. Selected
+items are then indented individually (each indent only needs to know the sibling it directly
+follows) or, for outdent, grouped into DOM-adjacent runs (`groupIntoRuns()`) and outdented
+one run at a time, since a contiguous run of siblings needs to move up together — outdenting
+them one-by-one would incorrectly nest the later ones under the earlier ones instead of
+leaving them all as siblings at the shallower level.
+
+**Not implemented via `execCommand("indent"/"outdent")`.** That was the first thing tried;
+Chrome's native command produces invalid markup for the list case — indenting an `<li>`
+inserted a bare `<ol>` as a *sibling* of another `<li>` (i.e. `<ol><li>...</li><ol>...</ol>
+<li>...</li></ol>`, an `<ol>` directly inside an `<ol>`, not nested inside an `<li>`), not
+merged into any existing nested list. List nesting is therefore built by hand instead of
+trusting the browser's own command.
+
+**Selection restore after moving an `<li>`.** Indenting/outdenting reparents the `<li>` DOM
+node (`appendChild`/`insertBefore`), and browsers react to a live `Range`'s boundary node
+being removed from its parent by snapping that boundary to a point in the *old* parent
+instead of following the moved node — e.g. indenting the item the caret was in left the
+live selection collapsed on the surrounding `<ol>` itself, not anywhere inside the (now
+relocated) `<li>`. Left alone, a second Tab pressed right after the first (without an
+intervening click) would then read the selection as sitting on the *list itself* and indent
+the whole thing — a real bug found in production use, not just a theoretical concern.
+Fix: capture the original selection's boundary points as plain `(node, offset)` values
+*before* mutating (not a cloned `Range`, which is itself live and subject to the exact same
+snap), then rebuild an equivalent selection from those values afterward. The underlying
+text/image nodes are only ever reparented, never removed-and-recreated, so the same
+references still resolve to the right spot post-mutation.
+
+`markDirty()`/autosave only fires when something actually changed — every mutating helper
+above returns `true`/`false` so a Tab that's a no-op (e.g. on the first item of a list, or
+on a centered snippet) doesn't trigger a spurious save.
+
 ### Source picker & snippet sidebar
 
 `sourceSelect` determines which source document's snippets/annotations show in the
