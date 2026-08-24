@@ -49,19 +49,25 @@ a { color: #2266dd; }
 }
 .toolbar button.confirming { background: #c0392b; color: white; border-color: #c0392b; }
 .color-label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.toggle-label { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .hint { font-size: 12px; color: #8a92a5; }
 .status-msg { font-size: 13px; margin-left: auto; }
 
 .viewer-layout { display: flex; flex: 1; min-height: 0; }
 .viewer-container {
   flex: 1; overflow: auto; background: #6b7280;
-  display: flex; justify-content: center; align-items: flex-start; padding: 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 20px;
 }
 .page-wrap { position: relative; flex-shrink: 0; }
 .page-wrap img { display: block; user-select: none; width: 100%; height: 100%; }
 .page-wrap canvas {
   position: absolute; top: 0; left: 0; touch-action: none; cursor: default;
 }
+.page-label {
+  display: none; position: absolute; top: -22px; left: 0; font-size: 12px; color: #e7ebf3;
+}
+.continuous .page-label { display: block; }
+.continuous .page-wrap.current-page { outline: 2px solid #2266dd; outline-offset: 3px; }
 
 .context-menu {
   position: fixed; display: none; z-index: 1000; background: white;
@@ -86,6 +92,14 @@ a { color: #2266dd; }
 .snippet-actions button { border: none; background: none; color: #c0392b; cursor: pointer; font-size: 12px; }
 .snippet-actions button.confirming { background: #c0392b; color: white; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
 .empty { color: #8a92a5; font-size: 13px; }
+
+.snippet-group { margin-bottom: 16px; }
+.snippet-group-header {
+  position: sticky; top: 0; z-index: 2; margin-bottom: 8px; padding: 6px 8px; border-radius: 4px;
+  background: #eef1f7; color: #46536b; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em; cursor: pointer;
+}
+.snippet-group.current .snippet-group-header { background: #2266dd; color: white; }
 
 /* ---- document editor (Google Docs-ish look) ---- */
 .docbar {

@@ -719,6 +719,17 @@ def page_view():
         raise DocumentError("Document has no pages", 400)
     page = max(1, min(page, page_count))
 
+    # Build "/render/__PAGE__"-style URL templates (page=1 always exists; the
+    # literal "/1" segment right after the fixed route prefix is unambiguous
+    # since doc_id can never contain "/", so this string-replace is safe).
+    render_url_base = url_for("api_render", doc_id=doc_id, page=1, type=raw_type).replace("/render/1", "/render/__PAGE__")
+    annotations_url_base = url_for("api_annotations", doc_id=doc_id, page=1, type=raw_type).replace(
+        "/annotations/1", "/annotations/__PAGE__"
+    )
+    snippet_url_base = url_for("api_create_snippet", doc_id=doc_id, page=1, type=raw_type).replace(
+        "/snippet/1", "/snippet/__PAGE__"
+    )
+
     return render_template(
         "annotations.html",
         doc_id=doc_id,
@@ -726,6 +737,9 @@ def page_view():
         norm_type=norm_type,
         page=page,
         page_count=page_count,
+        render_url_base=render_url_base,
+        annotations_url_base=annotations_url_base,
+        snippet_url_base=snippet_url_base,
     )
 
 
@@ -838,6 +852,19 @@ def api_render(doc_id, page):
 # ---------------------------------------------------------------------------
 # API: annotations (rectangles + freehand strokes)
 # ---------------------------------------------------------------------------
+
+@app.route("/api/doc/<doc_id>/annotations")
+def api_all_annotations(doc_id):
+    """All pages' annotation lists in one call, keyed by page number as a string.
+
+    Used by the continuous-view toggle so opening a multi-page document doesn't
+    require one GET per page; single-page mode doesn't need this.
+    """
+    check_doc_id(doc_id)
+    norm_type = normalize_type(request.args.get("type", "pdf"))
+    data = load_json(annotations_path(doc_id, norm_type), default={})
+    return jsonify(data)
+
 
 @app.route("/api/doc/<doc_id>/annotations/<int:page>", methods=["GET", "POST"])
 def api_annotations(doc_id, page):

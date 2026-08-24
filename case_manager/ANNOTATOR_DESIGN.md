@@ -46,9 +46,10 @@ the app once resolved.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/annotations?doc=&type=&page=` | GET | Renders `annotations.html` for one page. Clamps `page` into `[1, page_count]`. |
-| `/api/doc/<id>/info` | GET | Page count + each page's PDF-point dimensions. |
+| `/annotations?doc=&type=&page=` | GET | Renders `annotations.html`. `page` is clamped into `[1, page_count]` and used as the initial/single page — see § Continuous view for how the client decides how many pages to actually mount. |
+| `/api/doc/<id>/info` | GET | Page count + each page's PDF-point dimensions. Used by the client to pre-size every page's wrapper (from the width/height ratio) before that page's raster has even been requested — see § Continuous view. |
 | `/api/doc/<id>/render/<page>?dpi=` | GET | Rasterizes that page to PNG (`dpi` clamped 50–600, default 150). No caching header (`Cache-Control: no-store`) since annotations aren't baked into this raster — see § Annotation rendering. |
+| `/api/doc/<id>/annotations` | GET | All pages' annotation lists in one call, `{"<page>": [...]}`. One request instead of one-per-page when mounting many pages at once. |
 | `/api/doc/<id>/annotations/<page>` | GET/POST | Load/save the raw annotation list for one page. |
 | `/api/doc/<id>/snippet/<page>` | POST | Crop a rectangular region (fractional coords) out of the page at high DPI, optionally with the current annotation markup burned in, save it as a PNG + metadata entry. |
 | `/api/doc/<id>/snippets?page=` | GET | List saved snippets (optionally filtered to one page). |
@@ -60,18 +61,27 @@ the app once resolved.
 
 `#app` carries the same `data-*` URL-context pattern as the editor. Layout:
 
-- `.topbar` — doc id/type, Prev/Next page links (plain `<a href>` navigation — see §
-  "No SPA routing" below), a page-number `<input>` that jumps via Enter, and a "Compile
+- `.topbar` — doc id/type, Prev/Next page links (plain `<a href>` navigation in
+  single-page mode — see § "No SPA routing" below; repurposed to in-page scrolling in
+  continuous mode), a page-number `<input>` that jumps via Enter, and a "Compile
   document »" link to `/document?source=<id>&type=<type>` (opens the editor's New
   Document modal pre-filled with this source).
 - `.toolbar` — mode buttons (Rectangle / Freehand / Snippet), a color `<input
   type=color>`, Undo, Clear (two-step confirm), Save annotations, Download annotated
-  PDF, plus a live mode hint and a transient status message.
-- `.viewer-layout` → `.viewer-container` → `.page-wrap` containing a stacked
-  `<img id="pageImage">` (the raster) and `<canvas id="overlay">` (all markup, drawn in
-  client JS) at identical CSS size, positioned via `position: absolute`.
-- `.sidebar` — snippets belonging to *this page only* (`?page=` filter), each with an
-  open-in-new-tab thumbnail link, a Download link, and a two-step-confirm Delete.
+  PDF, a "Continuous view" checkbox (§ Continuous view), plus a live mode hint and a
+  transient status message.
+- `.viewer-layout` → `.viewer-container` — an empty mount point at page load;
+  `viewer.js` populates it with one `.page-wrap` per mounted page, each containing a
+  stacked `<img>` (the raster) and `<canvas>` (all markup, drawn in client JS) at
+  identical CSS size, positioned via `position: absolute`. Single-page mode mounts
+  exactly one; continuous mode mounts all of them, stacked vertically
+  (`.viewer-container` is a column flexbox with a gap, so this is the same DOM shape
+  either way, just with more children).
+- `.sidebar` — snippets, grouped and sorted by page in continuous mode (with sticky
+  "Page N" headers, one highlighted at a time to track the current page — see §
+  Continuous view), or filtered to just the current page in single-page mode. Each
+  snippet has an open-in-new-tab thumbnail link, a Download link, and a two-step-confirm
+  Delete.
 
 ## `viewer.js` architecture
 
@@ -89,12 +99,14 @@ regardless of zoom/responsive scaling.
 
 ### Layout / responsiveness
 
-`layout()` sizes `.page-wrap`/`canvas` (CSS size only — `canvas.width`/`height`, the
-actual bitmap resolution, are fixed to `img.naturalWidth/Height` once at image load) to
-fill the available container width minus a 40px margin, preserving the image's aspect
-ratio. Re-run via `requestAnimationFrame` (not a fixed debounce) on `window.resize` and
-via `ResizeObserver` on the container, so it tracks a live window-drag every frame
-instead of snapping only once the resize settles.
+`layout(controller)` sizes one page's `.page-wrap`/`canvas` (CSS size only —
+`canvas.width`/`height`, the actual bitmap resolution, are fixed to
+`img.naturalWidth/Height` once at image load — see § Continuous view for why sizing
+doesn't itself wait on that) to fill the available container width minus a 40px margin,
+preserving the page's aspect ratio. `layoutAll()` re-runs it for every currently-mounted
+page via `requestAnimationFrame` (not a fixed debounce) on `window.resize` and via
+`ResizeObserver` on the container, so it tracks a live window-drag every frame instead of
+snapping only once the resize settles.
 
 ### Modes
 
@@ -183,13 +195,95 @@ sidebar entry from then on.
 Plain "Snippet" mode crops do **not** get added to `annotations` at all, so they have no
 linkage to track or clean up — deleting one only ever removes the snippet itself.
 
-### No SPA routing
+### No SPA routing (single-page mode)
 
 Prev/Next/page-jump are plain full-page navigations (`<a href="?doc=...&page=...">`, or
 `window.location.href = ...` from the page-number input's Enter handler) — not
 client-side page swapping. Simpler, and it means `dirty`/unsaved-annotation state is
 scoped to exactly one page's lifetime by construction (no risk of stale in-memory state
-from a previously-viewed page bleeding into the next).
+from a previously-viewed page bleeding into the next). This is unchanged by continuous
+view — it's still what happens when the "Continuous view" checkbox is off.
+
+### Continuous view
+
+A "Continuous view" checkbox (persisted in `localStorage`, key
+`annotator:continuousView`, so it survives across documents/reloads) lets the whole
+document be mounted at once — every page stacked vertically in `.viewer-container` —
+instead of just the one page named by `?page=`, so a user can mark up a whole document
+in one pass without a page-load per page.
+
+**One code path for both modes.** Rather than maintaining a separate multi-page
+implementation, single-page mode is just the N=1 case of the same machinery:
+`applyMode()` computes the desired page-number list (`[currentPage]` normally, `[1..
+page_count]` when the checkbox is on) and calls `mountPages()`, which tears down
+whatever's currently mounted and builds a fresh `.page-wrap`/`<img>`/`<canvas>` per
+desired page (`buildController()`). Every drawing/hit-testing/redraw helper
+(`clientToFrac`, `hitTestAnnotations`, `drawRect`, `drawFreehand`,
+`drawSelectionHighlight`, `boundsToPaddedRect`) takes its `canvas`/`ctx` as a parameter
+instead of closing over a single module-level pair, so the exact same functions serve
+every mounted page. Toggling the checkbox just re-runs `applyMode()` with a different
+desired set — no reload.
+
+**Annotation state outlives its DOM.** Each page's `{annotations, annotationSnippetIds,
+dirty}` lives in `pageState` (`Map<pageNum, ...>`), *not* on the controller object that
+`mountPages()` throws away and rebuilds on every mode switch. This is what makes
+toggling cheap and lossless: an unsaved in-progress edit on some page survives a
+continuous→single→continuous round trip because `buildController()` reads from
+`pageState` (falling back to an empty array for a page that's never been touched),
+rather than re-fetching from the server. The one piece of UI state that *doesn't*
+survive a remount is `selected` (the currently-selected annotation, if any) — since it
+references a specific controller instance, it's simply cleared, matching the existing
+"selection is transient" precedent from delete/undo/clear.
+
+All pages' *saved* annotations are loaded in one shot via `GET /api/doc/<id>/annotations`
+(no per-page fetch) whether or not continuous mode is active, since it's one request
+either way and removes the need for `mountPages()` to hand out async work per page.
+**Save annotations** mirrors this on the way out: it POSTs every page currently marked
+`dirty` in `pageState` (via `Promise.all`, one `POST /api/doc/<id>/annotations/<page>`
+each — there's no bulk *write* endpoint, just bulk read) rather than the one page from
+before. In single-page mode this is still exactly one page, so behavior there is
+unchanged.
+
+**"Active page" for Undo/Clear.** Multi-page mode has no single obvious target for
+"the" page Undo/Clear should act on, so it's defined as: whichever page currently holds
+`selected`, else whichever page scrollspy (below) says is `currentPage`. The current
+page's `.page-wrap` gets a highlighted outline (`.current-page`, only visible when
+`.continuous` is on `#app`) so this target is visible, not just implicit.
+
+**Scrollspy.** An `IntersectionObserver` (`root: container`, i.e. `.viewer-container`
+itself, not the page viewport, since that's the actual scrolling element) watches every
+mounted `.page-wrap` and tracks each one's intersection ratio in `visibleRatios`; on
+every callback, whichever mounted page has the highest ratio becomes `currentPage` (only
+acted on when continuous mode is active — in single-page mode the observer still runs
+but its result is ignored, since there's nothing to spy on). `setCurrentPage()` is the
+single choke point for a `currentPage` change: it updates the page-number `<input>`, the
+`.current-page` outline, and asks the sidebar to re-highlight/scroll to match (see
+below) — so "the page you're looking at" stays in sync across the page indicator, the
+active-page outline, and the sidebar with one code path regardless of *why* it changed
+(scrolling, clicking to select an annotation on a different page, or the Prev/Next/
+page-jump controls calling `scrollToPage()` directly).
+
+**Sidebar grouping.** `GET /api/doc/<id>/snippets` (no `page` filter — the filter is
+applied client-side now) is fetched once into `allSnippets` and re-rendered by
+`renderSnippetSidebar()` on every mode change or list refresh. In continuous mode this
+groups snippets by page (ascending) under sticky `.snippet-group-header`s; in
+single-page mode it's filtered down to `currentPage` only, same flat list as before.
+`updateSnippetGroupHighlight()` (called from `setCurrentPage()`) toggles a `.current`
+class on the matching group and, if that group isn't already within the sidebar's own
+visible scroll range, smooth-scrolls it into view — this is the "snippets for a page
+appear beside the page as you scroll to it" behavior: the sidebar isn't laid out to
+align pixel-for-pixel with the main column (page heights and snippet-group heights don't
+match), so it's kept in sync by scrolling itself to the right group instead.
+
+**Page sizing without waiting on images.** Each page's `<img>` is `loading="lazy"`, so
+in a long document most page rasters aren't fetched until they're about to scroll into
+view. If wrapper sizing depended on `img.naturalWidth` (as it does in the single-page
+history of this code), every not-yet-loaded page below the fold would collapse to zero
+height, breaking scrollspy geometry and causing layout jumps as images pop in. Instead
+`layout()` sizes every `.page-wrap` from `pageDims` (fetched once via `/info`, in PDF
+points) — available immediately at mount time regardless of image load state — and only
+`canvas.width`/`height` (the actual bitmap resolution used by drawing/hit-testing) waits
+for the image's `load` event, exactly as before.
 
 ## Server-side
 

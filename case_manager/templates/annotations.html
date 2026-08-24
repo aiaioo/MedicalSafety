@@ -12,10 +12,12 @@
      data-type="{{ doc_type }}"
      data-page="{{ page }}"
      data-page-count="{{ page_count }}"
-     data-render-url="{{ url_for('api_render', doc_id=doc_id, page=page) }}?type={{ doc_type }}&dpi=150"
-     data-annotations-url="{{ url_for('api_annotations', doc_id=doc_id, page=page) }}?type={{ doc_type }}"
-     data-snippet-url="{{ url_for('api_create_snippet', doc_id=doc_id, page=page) }}?type={{ doc_type }}"
-     data-snippets-list-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}&page={{ page }}"
+     data-info-url="{{ url_for('api_doc_info', doc_id=doc_id) }}?type={{ doc_type }}"
+     data-render-url-base="{{ render_url_base }}"
+     data-annotations-all-url="{{ url_for('api_all_annotations', doc_id=doc_id) }}?type={{ doc_type }}"
+     data-annotations-url-base="{{ annotations_url_base }}"
+     data-snippet-url-base="{{ snippet_url_base }}"
+     data-snippets-all-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}"
      data-snippet-delete-base="{{ url_for('api_delete_snippet', doc_id=doc_id, snippet_id='__ID__') }}?type={{ doc_type }}"
      data-download-url="{{ url_for('api_download_annotated', doc_id=doc_id) }}?type={{ doc_type }}"
 >
@@ -25,11 +27,11 @@
       {{ doc_id }} <span class="tag">{{ doc_type }}</span>
     </div>
     <div class="pagenav">
-      <a class="btn" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page-1 if page>1 else 1 }}">&laquo; Prev</a>
+      <a class="btn" id="prevLink" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page-1 if page>1 else 1 }}">&laquo; Prev</a>
       <span class="jump">
         Page <input id="pageInput" type="number" min="1" max="{{ page_count }}" value="{{ page }}"> / {{ page_count }}
       </span>
-      <a class="btn" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page+1 if page<page_count else page_count }}">Next &raquo;</a>
+      <a class="btn" id="nextLink" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page+1 if page<page_count else page_count }}">Next &raquo;</a>
       <a class="btn" href="{{ url_for('document_view') }}?source={{ doc_id }}&type={{ doc_type }}">Compile document &raquo;</a>
     </div>
   </header>
@@ -45,19 +47,15 @@
     <button type="button" id="clearBtn">Clear</button>
     <button type="button" id="saveBtn">Save annotations</button>
     <button type="button" id="downloadBtn">Download annotated PDF</button>
+    <label class="toggle-label"><input type="checkbox" id="continuousToggle"> Continuous view</label>
     <span id="modeHint" class="hint"></span>
     <span id="statusMsg" class="status-msg"></span>
   </div>
 
   <main class="viewer-layout">
-    <div class="viewer-container" id="viewerContainer">
-      <div class="page-wrap" id="pageWrap">
-        <img id="pageImage" alt="Page {{ page }} of {{ doc_id }}">
-        <canvas id="overlay"></canvas>
-      </div>
-    </div>
+    <div class="viewer-container" id="viewerContainer"></div>
     <aside class="sidebar">
-      <h3>Snippets on this page</h3>
+      <h3 id="snippetsHeading">Snippets on this page</h3>
       <div id="snippetList" class="snippet-list"></div>
     </aside>
   </main>
