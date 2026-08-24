@@ -27,6 +27,7 @@
       <a href="{{ url_for('document_view') }}?source={{ doc_id }}&type={{ doc_type }}">&laquo; Documents</a>
       {{ doc_id }} <span class="tag">{{ doc_type }}</span>
     </div>
+    <label class="toggle-label"><input type="checkbox" id="continuousToggle" checked> Continuous view</label>
     <div class="pagenav">
       <a class="btn" id="prevLink" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page-1 if page>1 else 1 }}">&laquo; Prev</a>
       <span class="jump">
@@ -47,7 +48,6 @@
     <button type="button" id="clearBtn">Clear</button>
     <button type="button" id="saveBtn">Save annotations</button>
     <button type="button" id="downloadBtn">Download annotated PDF</button>
-    <label class="toggle-label"><input type="checkbox" id="continuousToggle"> Continuous view</label>
     <span id="modeHint" class="hint"></span>
     <span id="statusMsg" class="status-msg"></span>
   </div>
