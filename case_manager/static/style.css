@@ -204,9 +204,27 @@ a { color: #2266dd; }
 .editor h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
 .editor h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
 .editor h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
-.editor .doc-figure { margin: 16px 0; }
-.editor .doc-figure img { max-width: 100%; display: block; border: 1px solid #e0e2e8; }
-.editor .doc-figure figcaption { font-size: 12px; color: #6b7280; margin-top: 4px; }
+/* display:inline-block so the figure shrink-wraps to the image's own size
+   (rather than stretching to the full editor width as a block would),
+   which both keeps resize handles flush against the image's corners and
+   lets a resized/dragged figure sit at whatever size the user gave it. No
+   max-width here or on the img below -- snippets are meant to keep the
+   pixel size they had in the source document; if that's wider than the
+   page, the resize handles are how the user shrinks it back down. */
+.editor .doc-figure { margin: 16px 0; display: inline-block; position: relative; }
+.editor .doc-figure img { display: block; border: 1px solid #e0e2e8; }
+
+.editor .resize-handle {
+  position: absolute; width: 10px; height: 10px; margin: -5px;
+  background: #2266dd; border: 1px solid white; border-radius: 2px;
+  opacity: 0; transition: opacity 0.1s;
+}
+.editor .doc-figure:hover .resize-handle,
+.editor .resize-handle:active { opacity: 1; }
+.editor .resize-handle-nw { top: 0; left: 0; cursor: nwse-resize; }
+.editor .resize-handle-ne { top: 0; right: 0; cursor: nesw-resize; }
+.editor .resize-handle-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.editor .resize-handle-se { bottom: 0; right: 0; cursor: nwse-resize; }
 
 /* ---- pagination: visual gap between simulated A4 pages ---- */
 .editor .page-break {

@@ -408,8 +408,70 @@
 
   function getCleanEditorHtml() {
     const clone = editor.cloneNode(true);
-    clone.querySelectorAll(".page-break, .page-filler").forEach((el) => el.remove());
+    clone.querySelectorAll(".page-break, .page-filler, .resize-handle").forEach((el) => el.remove());
+    clone.querySelectorAll(".doc-figure").forEach((fig) => {
+      fig.removeAttribute("contenteditable");
+      fig.removeAttribute("draggable");
+    });
     return clone.innerHTML;
+  }
+
+  // ---------------------------------------------------------------------
+  // Inserted snippet figures: no caption text (it used to get left behind
+  // when the browser's native contenteditable drag only picked up the
+  // <img>, not its <figcaption> sibling), original image size preserved
+  // (no forced max-width — see .editor .doc-figure img in style.css), and
+  // draggable/resizable as a single atomic unit.
+  // ---------------------------------------------------------------------
+  function startFigureResize(e, img, corner) {
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    const startRect = img.getBoundingClientRect();
+    const aspect = startRect.width / (startRect.height || 1);
+    const startX = e.clientX;
+    const signX = corner.endsWith("e") ? 1 : -1;
+    const MIN_SIZE = 24;
+
+    function onMove(ev) {
+      const newWidth = Math.max(MIN_SIZE, startRect.width + (ev.clientX - startX) * signX);
+      img.style.width = newWidth + "px";
+      img.style.height = newWidth / aspect + "px";
+      img.style.maxWidth = "none";
+      schedulePaginate();
+    }
+    function onUp() {
+      handle.releasePointerCapture(e.pointerId);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      markDirty();
+    }
+    handle.setPointerCapture(e.pointerId);
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  }
+
+  // Idempotent: safe to call after every insertion and after loading a
+  // previously-saved document (which may predate this feature, or predate
+  // captions being dropped). Re-derives contenteditable/draggable and the
+  // resize handles from the live DOM rather than trusting persisted
+  // attributes, since the server sanitizer strips both anyway.
+  function enhanceDocFigures() {
+    editor.querySelectorAll(".doc-figure").forEach((figure) => {
+      figure.querySelectorAll("figcaption").forEach((fc) => fc.remove());
+      figure.contentEditable = "false";
+      figure.draggable = true;
+      if (figure.querySelector(":scope > .resize-handle")) return;
+      const img = figure.querySelector("img");
+      if (!img) return;
+      ["nw", "ne", "sw", "se"].forEach((corner) => {
+        const handle = document.createElement("span");
+        handle.className = `resize-handle resize-handle-${corner}`;
+        handle.draggable = false;
+        handle.addEventListener("pointerdown", (e) => startFigureResize(e, img, corner));
+        figure.appendChild(handle);
+      });
+    });
   }
 
   downloadPdfBtn.addEventListener("click", async () => {
@@ -710,11 +772,12 @@
           </div>`;
         card.querySelector(".insert-snippet").addEventListener("click", () => {
           const html =
-            `<figure class="doc-figure"><img src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}">` +
-            `<figcaption>${label} — page ${s.page}</figcaption></figure><p><br></p>`;
+            `<figure class="doc-figure" contenteditable="false" draggable="true">` +
+            `<img src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}"></figure><p><br></p>`;
           restoreSelection();
           document.execCommand("insertHTML", false, html);
           saveSelection();
+          enhanceDocFigures();
           markDirty();
         });
         snippetListEl.appendChild(card);
@@ -789,6 +852,7 @@
       margins = normalizeMargins(data.margins);
       applyMarginsToCss();
       editor.innerHTML = data.html || "";
+      enhanceDocFigures();
       const combo = data.source_doc ? `${data.source_doc}|${data.source_type}` : "";
       sourceSelect.value = combo;
       if (sourceSelect.value !== combo) sourceSelect.value = "";
