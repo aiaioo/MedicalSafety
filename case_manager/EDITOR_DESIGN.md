@@ -8,7 +8,8 @@ annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives
 - `templates/document.html` — page shell/toolbar markup
 - `static/document.js` — all client-side behavior
 - `static/style.css` — the "Google-Docs-ish" visual styling (`.docbar`, `.doc-toolbar`,
-  `.editor-container`, `.editor`, `.page-break`, modals, landing grid)
+  `.editor-container`, `.editor`, `.page-break`, `.page-filler`, `.margin-guides`, modals,
+  landing grid)
 - `app.py` — report CRUD endpoints, HTML sanitization, PDF export (`render_report_pdf`)
 
 ## Routes
@@ -18,9 +19,9 @@ annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives
 | `/document` | GET | Renders `document.html`. With no `?report=` param, shows the landing/picker view. With `?report=<id>`, opens that report in the editor. Also accepts `?source=<id>&type=pdf\|docx` to pre-open the "new document" modal with a source pre-selected (used by the "Compile document »" link on the annotator page). |
 | `/api/reports` | GET | List all saved reports (id, name, source doc/type, timestamps), newest-updated first. |
 | `/api/reports` | POST | Create a new report. Body: `{name, source_doc, source_type}`. Server generates the id as `slugify(name)-<6 hex chars>`. |
-| `/api/report/<id>` | GET | Fetch one report's full record (`name`, `html`, `source_doc`, `source_type`, timestamps). |
-| `/api/report/<id>` | POST | Save/update a report. Body: `{name, html, source_doc, source_type}`. Server re-sanitizes `html` before persisting (§ Sanitization). |
-| `/api/report/<id>/export` | GET | Renders the saved `html` to a PDF (`render_report_pdf`) and returns it as a download. |
+| `/api/report/<id>` | GET | Fetch one report's full record (`name`, `html`, `source_doc`, `source_type`, `margins`, timestamps). |
+| `/api/report/<id>` | POST | Save/update a report. Body: `{name, html, source_doc, source_type, margins}`. Server re-sanitizes `html` and re-validates `margins` before persisting (§ Sanitization, § Page margins). |
+| `/api/report/<id>/export` | GET | Renders the saved `html` to a PDF (`render_report_pdf`) using the report's saved `margins`, and returns it as a download. |
 
 Report records are stored one-per-file as `storage/reports/<id>.json`:
 
@@ -30,10 +31,16 @@ Report records are stored one-per-file as `storage/reports/<id>.json`:
   "html": "<h1>...</h1><p>...</p>",
   "source_doc": "some-doc-id",
   "source_type": "pdf",
+  "margins": {"left": 36, "right": 36, "header": 46, "footer": 46},
   "created_at": "2026-08-24T03:25:00.374293+00:00",
   "updated_at": "2026-08-24T03:25:00.374293+00:00"
 }
 ```
+
+`margins` (left/right/header/footer, in points) defaults to `REPORT_DEFAULT_MARGINS` — the
+geometry `render_report_pdf` always used before margins became configurable — so reports
+saved before this feature existed render unchanged. Set/edited via File → Page setup (§
+Page margins).
 
 `html` is always the *sanitized* HTML — never trusted raw client input — and is what both
 the browser (on reload) and the PDF exporter render from. There is no separate rich
@@ -46,22 +53,25 @@ model, serialized as HTML.
 never has to construct API URLs itself beyond simple concatenation, and Jinja's
 `url_for` stays the single source of truth for route paths.
 
-- `.docbar` — top bar: back link, File menu (New/Open/Download as PDF), the document
-  title `<input>`, an explicit **Save** button + autosave status text, and the source
-  picker (`<select id="sourceSelect">` + "Annotate source »" link).
+- `.docbar` — top bar: back link, File menu (New/Open/Page setup/Download as PDF), the
+  document title `<input>`, an explicit **Save** button + autosave status text, and the
+  source picker (`<select id="sourceSelect">` + "Annotate source »" link).
 - `.doc-toolbar` (`#formatToolbar`) — a Google-Docs-style formatting toolbar: font
   family/size selects, paragraph style select (Normal/H1/H2/H3), bold/italic/underline,
   text color + highlight color pickers, alignment buttons (inline SVG icons), bullet/
   numbered list buttons. Hidden entirely (`.toolbar-hidden`) when no report is open.
-- `.viewer-layout` → `.editor-container` → `#editor` — the single
-  `contenteditable="true"` surface the user types into (see § Pagination below for how
-  this became multi-page). When no report is open, this area instead shows a
-  `.doc-landing` grid of existing documents.
+- `.viewer-layout` → `.editor-container` → `#editor-page-wrap` (`#editor` +
+  `#marginGuides`) — `#editor` is the single `contenteditable="true"` surface the user
+  types into (see § Pagination below for how this became multi-page); `#marginGuides` is
+  a sibling overlay, not a child of `#editor`, that draws the dashed margin lines (§ Page
+  margins). When no report is open, this area instead shows a `.doc-landing` grid of
+  existing documents.
 - `.sidebar` (`#reportSnippetList`) — snippets/annotations belonging to whatever source
   document is currently selected in the source picker; each has an "Insert" button that
   drops it into the editor at the caret.
-- Two modals: **New document** (name + optional source doc) and **Open** (a list of all
-  existing reports).
+- Three modals: **New document** (name + optional source doc), **Open** (a list of all
+  existing reports), and **Page setup** (left/right/header/footer margin inputs, in
+  points).
 
 ## `document.js` architecture
 
@@ -155,35 +165,52 @@ Added so the editor visually shows page breaks as you type, rather than being on
 infinitely tall scrolling surface, and so those breaks roughly line up with where the
 PDF export will actually paginate.
 
-**Sizing.** `.editor` is sized to A4 at 96dpi (794×1123px) with padding
-(61.33px/48px) chosen to match `render_report_pdf`'s fitz mediabox inset of
-`(36, 46, -36, -46)` pt, converted to px at `96/72`. `.editor`'s `line-height` was
-tightened from an earlier `1.6` to `1.5` to match `REPORT_PDF_CSS`'s `line-height: 1.5`
-— any mismatch there directly skews how many editor-pages a paragraph run takes versus
-how many PDF-pages it takes.
+**Sizing.** `.editor` is A4 at 96dpi (794×1123px, `PAGE_HEIGHT_PX` in `document.js`).
+Unlike the original version of this feature, top/right/bottom/left padding is **not**
+fixed — it's driven by CSS custom properties (`--m-header`, `--m-right`, `--m-footer`,
+`--m-left`) that `applyMarginsToCss()` sets from the report's `margins` (§ Page margins),
+converted pt→px at `96/72`. The CSS fallback values if those vars are unset (61.33px/
+48px) match the old hardcoded defaults, i.e. `render_report_pdf`'s original fitz inset of
+`(36, 46, -36, -46)` pt. `.editor`'s `line-height: 1.5` matches `REPORT_PDF_CSS`'s
+`line-height: 1.5` — any mismatch there directly skews how many editor-pages a paragraph
+run takes versus how many PDF-pages it takes.
 
 **Algorithm** (`paginate()` in `document.js`): treats every direct element child of
-`#editor` as an opaque "block" (whatever tag it is — `p`, `h1`, `figure`, `ul`, …).
-Blocks are **never split** — this is a deliberate simplicity/robustness trade-off (see
-below), not a limitation ProseMirror-style editors have; a block that doesn't fit on the
-current page moves to the next page whole. On each pass:
+`#editor` (other than the pagination's own `.page-break`/`.page-filler` spacers) as an
+opaque "block" (whatever tag it is — `p`, `h1`, `figure`, `ul`, …). Blocks are **never
+split** — a deliberate simplicity/robustness trade-off (see the known limitation below);
+a block that doesn't fit on the current page moves to the next page whole. On each pass:
 
-1. Remove any existing `.page-break` spacer elements (so heights are measured against
+1. Remove any existing `.page-break`/`.page-filler` elements (so measurements are against
    real content only).
-2. Walk the remaining element children in order, tracking `used` height for the current
-   simulated page.
-3. For each block, measure `getBoundingClientRect().height` plus its computed
-   top/bottom margins. If adding it would push `used` past `PAGE_CONTENT_HEIGHT` (≈1000px
-   — A4 height minus top+bottom margins) *and* the current page isn't still empty (`used
-   > 0`, so an oversized single block doesn't recurse into an infinite string of empty
-   pages), insert a non-editable `<div class="page-break" contenteditable="false"
-   data-page="N">` immediately before that block and reset `used` to 0.
+2. Walk the remaining element children in order, tracking `pageContentTop` — the *actual
+   measured* top of the current simulated page's content region (`editor`'s own padding
+   edge for page 1; `previous break's bottom + header margin` for later pages) — and
+   `prevBottom`, the bottom of the last block placed on the page.
+3. For each block, if `rect.bottom - pageContentTop > pageContentHeight` (the page's
+   content-region capacity, `PAGE_HEIGHT_PX - header - footer`) *and* this isn't the
+   page's first block (`prevBottom !== null`, so an oversized single block doesn't
+   recurse into an infinite string of empty pages), close out the page: insert a
+   `.page-filler` sized to the leftover content space *plus* that page's footer margin
+   (its own white space, not the PDF's), then a fixed-height `.page-break` gap, then
+   another `.page-filler` sized to the new page's header margin, before advancing to this
+   block.
+4. After the loop, if there was any content, insert one more `.page-filler` on the final
+   page sized to its leftover content space only — its footer comes for free from
+   `.editor`'s own bottom padding, same as page 1's header comes from its top padding.
 
-**Why spacers are safe to insert/remove around live typing**: because they only ever go
-*between* top-level blocks, never inside the block containing the caret, inserting or
-removing them never invalidates the browser's current `Range`/selection — no manual
-save/restore is needed the way the toolbar needs it. This is the key property that makes
-the whole approach tractable without a virtual-DOM diffing layer.
+Blocks are measured via `getBoundingClientRect()` diffs (`rect.bottom - pageContentTop`),
+**not** by summing each block's own `margin-top`/`margin-bottom` — adjacent block margins
+*collapse* in the browser's real layout, so summing them independently overcounts true
+rendered height and made both the overflow check and the filler sizing badly wrong (found
+and fixed 2026-08-24, see chat history).
+
+**Why spacers are safe to insert/remove around live typing**: `.page-break` and
+`.page-filler` only ever go *between* top-level blocks, never inside the block containing
+the caret, so inserting or removing them never invalidates the browser's current
+`Range`/selection — no manual save/restore is needed the way the toolbar needs it. This
+is the key property that makes the whole approach tractable without a virtual-DOM
+diffing layer.
 
 **Trigger**: a `MutationObserver` on `#editor` (`childList + subtree + characterData`)
 catches every source of change — typing, toolbar commands, undo/redo, snippet insertion,
@@ -194,17 +221,18 @@ reconnects afterward, so its own spacer insert/remove calls don't re-trigger the
 Two extra triggers: an `img` `load` listener (image height is unknown/zero until it
 loads, so a block containing one is re-measured once it does) and `window.resize` (the
 editor can shrink below 794px on narrow viewports via `max-width:100%`, which reflows
-line-wrapping and thus block heights).
+line-wrapping and thus block heights). Changing margins via Page setup doesn't itself
+mutate `#editor`'s DOM, so `applyMarginsToCss()` calls `schedulePaginate()` explicitly.
 
-**Keeping spacers out of the saved document**: `.page-break` elements are a pure view
-artifact recomputed from scratch every pass — they must never reach the server. Both
-places that used to read `editor.innerHTML` directly (the save payload and the
-`beforeunload` sendBeacon) now call `getCleanEditorHtml()` instead, which clones
-`#editor`, strips every `.page-break` from the clone, and serializes that. (Even if a
-stray `.page-break` did leak into a save, the server's HTML sanitizer would strip its
-`contenteditable` attribute — not in the attribute whitelist — but the `div.page-break`
-element itself would survive, since `div` and `class` are both allowed; client-side
-stripping is the real safety net here, not the sanitizer.)
+**Keeping spacers out of the saved document**: `.page-break`/`.page-filler` elements are
+a pure view artifact recomputed from scratch every pass — they must never reach the
+server. Both places that used to read `editor.innerHTML` directly (the save payload and
+the `beforeunload` sendBeacon) now call `getCleanEditorHtml()` instead, which clones
+`#editor`, strips every `.page-break`/`.page-filler` from the clone, and serializes that.
+(Even if either stray element did leak into a save, the server's HTML sanitizer would
+strip its `contenteditable` attribute — not in the attribute whitelist — but the `div`
+itself would survive, since `div` and `class` are both allowed; client-side stripping is
+the real safety net here, not the sanitizer.)
 
 **Known limitation — page breaks are an approximation, not exact.** The editor's
 pagination only ever moves whole blocks; the PDF exporter (`render_report_pdf`, via
@@ -216,13 +244,55 @@ switching the export path itself to render page-by-page from the browser's own l
 (e.g. headless Chrome print-to-PDF) — both explicitly out of scope; block-level
 pagination was chosen as the right complexity/robustness trade-off for a contenteditable
 surface (see chat history 2026-08-24: user explicitly chose "block-level" fidelity over
-"line-level" and "A4" over "Letter" as the shared page size standard).
+"line-level" and "A4" over "Letter" as the shared page size standard). A related, smaller
+approximation: `.page-filler` sizing measures up to `prevBottom` (a block's own border-box
+bottom, which excludes that block's `margin-bottom`), so a page can end up a handful of
+pixels taller than exactly A4 — always *at least* A4-tall, per an explicit later
+requirement, never shorter.
 
 **Other known nuance**: pressing Backspace/Delete right at a page boundary can "consume"
-one keypress on the non-editable `.page-break` div itself before it goes on to merge the
-adjacent paragraphs, since a `contenteditable="false"` island is deleted as an atomic
-unit. Because the whole spacer set is discarded and recomputed on every pass anyway, this
-self-corrects immediately and never leaves stale/duplicate spacers behind.
+one keypress on a non-editable `.page-break`/`.page-filler` div itself before it goes on
+to merge the adjacent paragraphs, since a `contenteditable="false"` island is deleted as
+an atomic unit. Because the whole spacer set is discarded and recomputed on every pass
+anyway, this self-corrects immediately and never leaves stale/duplicate spacers behind.
+
+### Page margins & margin guides
+
+**Configuring margins.** File → Page setup opens a modal (`#pageSetupModal`) with four
+number inputs (left/right/header/footer, in points, 0–200 each — `clampMargin()`).
+Applying it updates the in-memory `margins` object, calls `applyMarginsToCss()` (§
+Pagination), and `markDirty()` so it's persisted like any other edit. `loadReport()`
+normalizes whatever the server returns (`normalizeMargins()`) so a pre-margins report
+(no `margins` key) falls back to the same defaults `REPORT_DEFAULT_MARGINS` uses
+server-side.
+
+**Two different kinds of "space" that look similar but aren't:**
+- **Header/footer margins** are a *page's own white space* — rendered as `.page-filler`
+  elements inside `#editor` (§ Pagination), sized in px from the pt margin values. Real
+  editable-adjacent blank space: `.page-filler` is `contentEditable="false"` but
+  `pointer-events: none`, so a click there falls through to `#editor` and lands the caret
+  at the nearest real text, same as clicking below the last line of a normal document.
+- **The gap between pages** (`.page-break`) is a fixed 1cm (`PAGE_GAP_PX = 96/2.54`),
+  **independent of the margin values** — purely a visual separator between simulated
+  sheets, the same idea as the constant gap Google Docs/Word show regardless of your
+  margins. It used to be sized to `header + footer` combined, which conflated the two
+  concepts and made the gap balloon with larger margins (fixed 2026-08-24). Unlike
+  `.page-filler`, `.page-break` keeps `pointer-events: auto` and `cursor: default`
+  deliberately — it needs to actually capture hover/clicks (rather than let them fall
+  through to editable text underneath, which made the gap look like typable space) — and
+  `document.js` `preventDefault()`s its `mousedown` so a click there is fully inert.
+
+**Margin guides** (`#marginGuides`, in `document.html`): a dashed-outline overlay showing
+each simulated page's printable area, one `.page-rect` per page. It's a *sibling* of
+`#editor` (inside `#editorPageWrap`), not a child — so it can never leak into saved HTML
+and doesn't interfere with `#editor`'s `:empty` placeholder (an earlier version put guides
+inside `#editor`, which broke the `:empty` CSS selector the placeholder text depends on).
+`renderMarginGuides()` (called at the end of every `paginate()` pass) measures the actual
+`.page-break` elements' positions rather than assuming uniform `PAGE_HEIGHT_PX` slices —
+an earlier version did the latter and, because pages don't literally pad to exactly
+`PAGE_HEIGHT_PX` before a break (see the filler-sizing approximation above), the guide
+rectangle occasionally overshot the real page and bled dashed lines into the gray gap
+(fixed 2026-08-24).
 
 ## Server-side: sanitization, image inlining, PDF export
 
@@ -268,11 +338,15 @@ engine, *not* a browser or wkhtmltopdf-style renderer. `REPORT_PDF_CSS` sets bas
 typography (11pt Helvetica/Arial, 1.5 line-height, heading sizes, table borders,
 figure/figcaption styling) since none of the editor's own inline styles are assumed to
 cover every case. Page geometry: `fitz.paper_rect("a4")` mediabox with content inset
-`(36, 46, -36, -46)` pt (left/top/right/bottom margins of 36/46/36/46pt) — this exact
-geometry is what the editor's `.editor`/pagination CSS was sized to match (§
-Pagination). Pages are written in a loop: `story.place(where)` lays out as much content
-as fits the current page and reports whether more remains; `story.draw(device)` paints
-it; repeat until `more` is falsy.
+`(left, header, -right, -footer)` pt, taken from the report's own `margins` (§ Page
+margins) via `sanitize_margins()` — defaulting to `REPORT_DEFAULT_MARGINS`
+(36/36/46/46pt) when a report predates the feature or a value is out of range
+(`REPORT_MARGIN_MIN`/`MAX`, 0–200pt — chosen so left+right and header+footer both stay
+well under A4's 595×842pt, keeping the content rect non-degenerate). This geometry is
+what the editor's `.editor`/pagination CSS is sized to match (§ Pagination) via the same
+`margins` value. Pages are written in a loop: `story.place(where)` lays out as much
+content as fits the current page and reports whether more remains; `story.draw(device)`
+paints it; repeat until `more` is falsy.
 
 ### Report id / naming
 
@@ -286,12 +360,17 @@ source-document ids elsewhere in the app.
 
 ```
 type/format → editor DOM (contenteditable, source of truth in-browser)
-            → MutationObserver → paginate() → visual .page-break spacers (view-only)
+            → MutationObserver → paginate() → visual .page-break/.page-filler spacers
+              (view-only) + renderMarginGuides() (#marginGuides overlay, view-only)
             → markDirty() → debounced saveReport()
-            → getCleanEditorHtml() (strips .page-break) → POST /api/report/<id>
-            → sanitize_report_html() → storage/reports/<id>.json ["html"]
+            → getCleanEditorHtml() (strips .page-break/.page-filler) → POST /api/report/<id>
+              (html + margins)
+            → sanitize_report_html() / sanitize_margins() → storage/reports/<id>.json
+
+Page setup → margins (in-memory) → applyMarginsToCss() (--m-* CSS vars) → schedulePaginate()
+          → markDirty() → (same save path as above)
 
 Download as PDF → saveReport() (flush first) → GET /api/report/<id>/export
-                → inline_report_images() → render_report_pdf() (fitz Story, A4)
+                → inline_report_images() → render_report_pdf(html, margins) (fitz Story, A4)
                 → application/pdf response
 ```
