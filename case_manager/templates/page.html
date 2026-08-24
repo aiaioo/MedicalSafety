@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ doc_id }} — page {{ page }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="app"
+     data-doc="{{ doc_id }}"
+     data-type="{{ doc_type }}"
+     data-page="{{ page }}"
+     data-page-count="{{ page_count }}"
+     data-render-url="{{ url_for('api_render', doc_id=doc_id, page=page) }}?type={{ doc_type }}&dpi=150"
+     data-annotations-url="{{ url_for('api_annotations', doc_id=doc_id, page=page) }}?type={{ doc_type }}"
+     data-snippet-url="{{ url_for('api_create_snippet', doc_id=doc_id, page=page) }}?type={{ doc_type }}"
+     data-snippets-list-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}&page={{ page }}"
+     data-snippet-delete-base="{{ url_for('api_delete_snippet', doc_id=doc_id, snippet_id='__ID__') }}?type={{ doc_type }}"
+     data-download-url="{{ url_for('api_download_annotated', doc_id=doc_id) }}?type={{ doc_type }}"
+>
+  <header class="topbar">
+    <div class="doc-title">
+      <a href="{{ url_for('index') }}" title="All documents">&larr;</a>
+      {{ doc_id }} <span class="tag">{{ doc_type }}</span>
+    </div>
+    <div class="pagenav">
+      <a class="btn" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page-1 if page>1 else 1 }}">&laquo; Prev</a>
+      <span class="jump">
+        Page <input id="pageInput" type="number" min="1" max="{{ page_count }}" value="{{ page }}"> / {{ page_count }}
+      </span>
+      <a class="btn" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page+1 if page<page_count else page_count }}">Next &raquo;</a>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="mode-group" role="group" aria-label="Drawing mode">
+      <button type="button" class="mode-btn" data-mode="rect">Rectangle</button>
+      <button type="button" class="mode-btn" data-mode="freehand">Freehand</button>
+      <button type="button" class="mode-btn" data-mode="snippet">Snippet</button>
+    </div>
+    <label class="color-label">Color <input id="colorPicker" type="color" value="#e02424"></label>
+    <button type="button" id="undoBtn">Undo</button>
+    <button type="button" id="clearBtn">Clear</button>
+    <button type="button" id="saveBtn">Save annotations</button>
+    <button type="button" id="downloadBtn">Download annotated PDF</button>
+    <span id="modeHint" class="hint"></span>
+    <span id="statusMsg" class="status-msg"></span>
+  </div>
+
+  <main class="viewer-layout">
+    <div class="viewer-container" id="viewerContainer">
+      <div class="page-wrap" id="pageWrap">
+        <img id="pageImage" alt="Page {{ page }} of {{ doc_id }}">
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <h3>Snippets on this page</h3>
+      <div id="snippetList" class="snippet-list"></div>
+    </aside>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='viewer.js') }}"></script>
+</body>
+</html>

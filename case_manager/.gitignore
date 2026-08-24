@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Working storage — generated/cached at runtime, not source
+storage/cache/
+storage/annotations/
+storage/snippets/
+!storage/cache/.gitkeep
+!storage/annotations/.gitkeep
+!storage/snippets/.gitkeep
