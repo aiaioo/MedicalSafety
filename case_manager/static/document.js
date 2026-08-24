@@ -673,6 +673,13 @@
     }
   });
 
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      saveReport().catch((err) => setStatus("Save failed: " + err.message, true));
+    }
+  });
+
   // ---------------------------------------------------------------------
   // Page setup (margins)
   // ---------------------------------------------------------------------
