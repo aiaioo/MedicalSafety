@@ -38,8 +38,10 @@
     </nav>
     <span id="uploadSourceStatus" class="upload-status"></span>
 
-    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" {{ 'disabled' if not report_id }}>
-    <button type="button" id="saveBtn" class="save-btn" {{ 'disabled' if not report_id }}>Save</button>
+    {% if report_id %}
+    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document">
+    <button type="button" id="saveBtn" class="save-btn">Save</button>
+    {% endif %}
     <span id="saveStatus" class="save-status"></span>
 
     <div class="source-picker">

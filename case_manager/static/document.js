@@ -200,6 +200,53 @@
     setTimeout(() => newDocName.focus(), 0);
   }
 
+  if (uploadSourceMenuBtn) {
+    uploadSourceMenuBtn.addEventListener("click", () => uploadSourceInput.click());
+  }
+
+  if (uploadSourceInput) {
+    uploadSourceInput.addEventListener("change", async () => {
+      const file = uploadSourceInput.files[0];
+      if (!file) return;
+
+      uploadSourceStatus.textContent = "Uploading…";
+      uploadSourceStatus.classList.remove("error");
+
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        const res = await fetch("/api/documents/upload", { method: "POST", body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+
+        const combo = `${data.id}|${data.type}`;
+        const label = `${data.id} (${data.type})`;
+        for (const select of [sourceSelect, newDocSource]) {
+          if (!select) continue;
+          const opt = document.createElement("option");
+          opt.value = combo;
+          opt.textContent = label;
+          select.appendChild(opt);
+        }
+
+        if (reportId) {
+          sourceSelect.disabled = false;
+          sourceSelect.value = combo;
+          updateAnnotateLink();
+          loadSnippets();
+          markDirty();
+        }
+
+        uploadSourceStatus.textContent = `Uploaded as "${data.id}".`;
+      } catch (err) {
+        uploadSourceStatus.textContent = err.message;
+        uploadSourceStatus.classList.add("error");
+      } finally {
+        uploadSourceInput.value = "";
+      }
+    });
+  }
+
   if (!reportId) {
     loadLanding();
     return; // nothing else to wire up until a document is open
@@ -1268,53 +1315,6 @@
     loadSnippets();
     markDirty();
   });
-
-  if (uploadSourceMenuBtn) {
-    uploadSourceMenuBtn.addEventListener("click", () => uploadSourceInput.click());
-  }
-
-  if (uploadSourceInput) {
-    uploadSourceInput.addEventListener("change", async () => {
-      const file = uploadSourceInput.files[0];
-      if (!file) return;
-
-      uploadSourceStatus.textContent = "Uploading…";
-      uploadSourceStatus.classList.remove("error");
-
-      try {
-        const body = new FormData();
-        body.append("file", file);
-        const res = await fetch("/api/documents/upload", { method: "POST", body });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Upload failed");
-
-        const combo = `${data.id}|${data.type}`;
-        const label = `${data.id} (${data.type})`;
-        for (const select of [sourceSelect, newDocSource]) {
-          if (!select) continue;
-          const opt = document.createElement("option");
-          opt.value = combo;
-          opt.textContent = label;
-          select.appendChild(opt);
-        }
-
-        if (reportId) {
-          sourceSelect.disabled = false;
-          sourceSelect.value = combo;
-          updateAnnotateLink();
-          loadSnippets();
-          markDirty();
-        }
-
-        uploadSourceStatus.textContent = `Uploaded as "${data.id}".`;
-      } catch (err) {
-        uploadSourceStatus.textContent = err.message;
-        uploadSourceStatus.classList.add("error");
-      } finally {
-        uploadSourceInput.value = "";
-      }
-    });
-  }
 
   // ---------------------------------------------------------------------
   // Initial load
