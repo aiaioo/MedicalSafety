@@ -408,139 +408,40 @@
 
   function getCleanEditorHtml() {
     const clone = editor.cloneNode(true);
-    clone.querySelectorAll(".page-break, .page-filler, .resize-handle, .figure-align-toolbar").forEach((el) => el.remove());
-    clone.querySelectorAll(".doc-figure").forEach((fig) => {
-      fig.removeAttribute("contenteditable");
-      fig.removeAttribute("draggable");
-    });
+    clone.querySelectorAll(".page-break, .page-filler").forEach((el) => el.remove());
     return clone.innerHTML;
   }
 
   // ---------------------------------------------------------------------
   // Inserted snippet figures: no caption text (it used to get left behind
-  // when the browser's native contenteditable drag only picked up the
-  // <img>, not its <figcaption> sibling), original image size preserved
-  // (no forced max-width — see .editor .doc-figure img in style.css), and
-  // draggable/resizable/alignable as a single atomic unit.
+  // when a drag only picked up the <img>, not its <figcaption> sibling),
+  // and sized (see loadSnippets below) to match how large the snippet
+  // actually was on the source page — not the PNG's raw pixel dimensions,
+  // which are rasterized at a higher DPI than the page is displayed at
+  // and so look too big at native size. Otherwise plain, fully-editable
+  // content: dragging to reposition and the main toolbar's Align left/
+  // center/right buttons are the browser's native contenteditable
+  // behavior, not custom JS. An earlier version made the figure
+  // contenteditable="false" + draggable="true" to fix the caption-left-
+  // behind bug, but native HTML5 drag-and-drop over a contenteditable
+  // region doesn't reliably remove the drag source, which turned into a
+  // worse bug (dragging a snippet could leave duplicate copies behind).
+  // Dropping the caption fixes the original bug on its own, without
+  // needing the figure to be non-editable at all.
   // ---------------------------------------------------------------------
 
-  // .doc-figure defaults to block width:auto (100% of the editor column),
-  // which makes the CSS margin:auto alignment below a no-op -- there's no
-  // spare width to distribute. Keeping the figure's own width pinned to
-  // its image's width (natural size on first sight, then whatever a
-  // resize sets it to) is what makes left/center/right actually move it.
-  function syncFigureWidth(figure, img) {
-    if (!img.style.width) {
-      img.style.width = img.naturalWidth + "px";
-      img.style.height = img.naturalHeight + "px";
-    }
-    figure.style.width = img.style.width;
-  }
-
-  function startFigureResize(e, figure, img, corner) {
-    e.preventDefault();
-    e.stopPropagation();
-    const handle = e.currentTarget;
-    const startRect = img.getBoundingClientRect();
-    const aspect = startRect.width / (startRect.height || 1);
-    const startX = e.clientX;
-    const signX = corner.endsWith("e") ? 1 : -1;
-    const MIN_SIZE = 24;
-
-    function onMove(ev) {
-      const newWidth = Math.max(MIN_SIZE, startRect.width + (ev.clientX - startX) * signX);
-      img.style.width = newWidth + "px";
-      img.style.height = newWidth / aspect + "px";
-      img.style.maxWidth = "none";
-      figure.style.width = newWidth + "px";
-      schedulePaginate();
-    }
-    function onUp() {
-      handle.releasePointerCapture(e.pointerId);
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      markDirty();
-    }
-    handle.setPointerCapture(e.pointerId);
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-  }
-
-  // A dedicated mini alignment control for the figure, separate from the
-  // main formatting toolbar's Align left/center/right buttons -- those
-  // work via document.execCommand, which browsers exclude non-editable
-  // content from, so they silently do nothing to a figure that's
-  // contenteditable="false". Alignment is expressed as a class
-  // (align-center/align-right, default is left) rather than inline style
-  // so it reads the same way after a save/reload round-trip.
-  // Same glyphs as the main formatting toolbar's Align left/center/right
-  // buttons (#formatToolbar in document.html), so this control reads as
-  // the same action rather than a different one.
-  const ALIGN_ICONS = {
-    left: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="0" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="0" y="12" width="10" height="2"/></svg>',
-    center: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="3" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="3" y="12" width="10" height="2"/></svg>',
-    right: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="6" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="6" y="12" width="10" height="2"/></svg>',
-  };
-
-  function buildAlignToolbar(figure) {
-    const toolbar = document.createElement("div");
-    toolbar.className = "figure-align-toolbar";
-    toolbar.draggable = false;
-    const current = figure.classList.contains("align-center")
-      ? "center"
-      : figure.classList.contains("align-right")
-      ? "right"
-      : "left";
-    ["left", "center", "right"].forEach((align) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "figure-align-btn" + (align === current ? " active" : "");
-      btn.dataset.align = align;
-      btn.title = `Align ${align}`;
-      btn.innerHTML = ALIGN_ICONS[align];
-      btn.draggable = false;
-      // Keep clicks on this control from reaching the figure's own
-      // draggable=true / atomic-selection handling underneath it.
-      btn.addEventListener("pointerdown", (e) => e.stopPropagation());
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        figure.classList.remove("align-center", "align-right");
-        if (align !== "left") figure.classList.add(`align-${align}`);
-        toolbar.querySelectorAll(".figure-align-btn").forEach((b) => b.classList.toggle("active", b.dataset.align === align));
-        markDirty();
-      });
-      toolbar.appendChild(btn);
-    });
-    return toolbar;
-  }
-
-  // Idempotent: safe to call after every insertion and after loading a
-  // previously-saved document (which may predate this feature, or predate
-  // captions being dropped). Re-derives contenteditable/draggable and the
-  // resize/align controls from the live DOM rather than trusting persisted
-  // attributes, since the server sanitizer strips both anyway.
-  function enhanceDocFigures() {
+  // Cleans up `.doc-figure` snippets left over from that in-between
+  // approach (and drops legacy captions from further back), so an older
+  // saved document displays the same plain, native-editable figure this
+  // app inserts today. Idempotent and safe to call on every load.
+  function cleanLegacyDocFigures() {
     editor.querySelectorAll(".doc-figure").forEach((figure) => {
-      figure.querySelectorAll("figcaption").forEach((fc) => fc.remove());
-      figure.contentEditable = "false";
-      figure.draggable = true;
-      const img = figure.querySelector("img");
-      if (!img) return;
-      if (img.complete && img.naturalWidth) syncFigureWidth(figure, img);
-      else img.addEventListener("load", () => syncFigureWidth(figure, img), { once: true });
-      if (!figure.querySelector(":scope > .resize-handle")) {
-        ["nw", "ne", "sw", "se"].forEach((corner) => {
-          const handle = document.createElement("span");
-          handle.className = `resize-handle resize-handle-${corner}`;
-          handle.draggable = false;
-          handle.addEventListener("pointerdown", (e) => startFigureResize(e, figure, img, corner));
-          figure.appendChild(handle);
-        });
-      }
-      if (!figure.querySelector(":scope > .figure-align-toolbar")) {
-        figure.appendChild(buildAlignToolbar(figure));
-      }
+      figure.querySelectorAll("figcaption, .resize-handle, .figure-align-toolbar").forEach((el) => el.remove());
+      figure.removeAttribute("contenteditable");
+      figure.removeAttribute("draggable");
+      figure.classList.remove("align-center", "align-right");
+      figure.style.removeProperty("width");
+      figure.querySelectorAll("img").forEach((img) => img.style.removeProperty("max-width"));
     });
   }
 
@@ -814,6 +715,18 @@
     }
   }
 
+  // Snippet PNGs are rasterized at a fixed export DPI (300, see
+  // api_create_snippet in app.py) that's higher than the ~150dpi the
+  // source page itself is rendered at for on-screen viewing -- so the
+  // PNG's raw pixel dimensions render roughly 2x too large if dropped in
+  // at native size. The physically-correct size is independent of either
+  // of those DPI values: a snippet's fractional rect (x/y/w/h, 0-1) times
+  // its source page's real dimensions (in points, from /info) gives its
+  // true size, which converts to CSS px the same way margins do elsewhere
+  // in this file (PT_TO_PX = 96/72) -- that's "the same size it was in
+  // the source," matching the page as it's rendered at 96dpi.
+  const PT_TO_PX_SNIPPET = 96 / 72;
+
   async function loadSnippets() {
     const { source_doc, source_type } = currentSource();
     if (!source_doc) {
@@ -821,8 +734,12 @@
       return;
     }
     try {
-      const res = await fetch(`/api/doc/${encodeURIComponent(source_doc)}/snippets?type=${encodeURIComponent(source_type)}`);
-      const list = await res.json();
+      const [snippetsRes, infoRes] = await Promise.all([
+        fetch(`/api/doc/${encodeURIComponent(source_doc)}/snippets?type=${encodeURIComponent(source_type)}`),
+        fetch(`/api/doc/${encodeURIComponent(source_doc)}/info?type=${encodeURIComponent(source_type)}`),
+      ]);
+      const list = await snippetsRes.json();
+      const pages = infoRes.ok ? (await infoRes.json()).pages : [];
       snippetListEl.innerHTML = "";
       if (!list.length) {
         snippetListEl.innerHTML =
@@ -841,13 +758,18 @@
             <button type="button" class="insert-snippet">Insert</button>
           </div>`;
         card.querySelector(".insert-snippet").addEventListener("click", () => {
+          const pageInfo = pages[s.page - 1];
+          let sizeStyle = "";
+          if (pageInfo && s.rect) {
+            const w = s.rect.w * pageInfo.width * PT_TO_PX_SNIPPET;
+            const h = s.rect.h * pageInfo.height * PT_TO_PX_SNIPPET;
+            sizeStyle = ` style="width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;"`;
+          }
           const html =
-            `<figure class="doc-figure" contenteditable="false" draggable="true">` +
-            `<img src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}"></figure><p><br></p>`;
+            `<figure class="doc-figure"><img src="${escapeHtml(s.url)}" alt="${label} from page ${s.page}"${sizeStyle}></figure><p><br></p>`;
           restoreSelection();
           document.execCommand("insertHTML", false, html);
           saveSelection();
-          enhanceDocFigures();
           markDirty();
         });
         snippetListEl.appendChild(card);
@@ -922,7 +844,7 @@
       margins = normalizeMargins(data.margins);
       applyMarginsToCss();
       editor.innerHTML = data.html || "";
-      enhanceDocFigures();
+      cleanLegacyDocFigures();
       const combo = data.source_doc ? `${data.source_doc}|${data.source_type}` : "";
       sourceSelect.value = combo;
       if (sourceSelect.value !== combo) sourceSelect.value = "";

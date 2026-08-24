@@ -192,73 +192,72 @@ sidebar — independent from (but often initialized from) the report's own
 the sidebar via `GET /api/doc/<id>/snippets?type=...`, and marks the report dirty (since
 `source_doc`/`source_type` are themselves persisted fields on the report).
 
-Inserting a snippet (`.insert-snippet` button) wraps its `<img>` in
-`<figure class="doc-figure" contenteditable="false" draggable="true"><img>...</figure>`
-and inserts it at the caret via `execCommand("insertHTML", ...)`, followed by an empty
-paragraph so the caret has somewhere to continue typing below the figure. No caption is
-added — see § Snippet figures: caption, size, resize, alignment.
+Inserting a snippet (`.insert-snippet` button) wraps its `<img>` in a plain, fully-editable
+`<figure class="doc-figure"><img>...</figure>` and inserts it at the caret via
+`execCommand("insertHTML", ...)`, followed by an empty paragraph so the caret has
+somewhere to continue typing below the figure. No caption is added, and the image is
+explicitly sized to match the source page — see § Snippet figures: caption, size,
+alignment.
 
-### Snippet figures: caption, size, resize, alignment
+### Snippet figures: caption, size, alignment
 
 **No caption.** Snippets used to carry a `<figcaption>Snippet — page N</figcaption>`
-under the image. It's gone: the browser's native contenteditable drag only ever picked
-up the `<img>`, leaving the `<figcaption>` sibling behind, so the fix was to drop the
-caption rather than try to keep the two in sync. `enhanceDocFigures()` (below) also
-strips any `<figcaption>` still sitting inside a `.doc-figure` from a document saved
-before this change, the next time that document loads.
+under the image. It's gone, for a concrete reason: a plain click-drag on an image inside
+`contenteditable` only ever picks up the `<img>` itself, leaving a `<figcaption>` sibling
+behind — that's what "the text doesn't follow the snippet when dragged" meant in
+practice. Dropping the caption removes the thing that gets left behind, without needing
+anything cleverer. `cleanLegacyDocFigures()` (below) also strips any `<figcaption>` still
+sitting inside a `.doc-figure` from a document saved before this change, the next time
+that document loads.
 
-**Atomic, draggable figure.** `.doc-figure` is `contenteditable="false"` inside the
-`contenteditable="true"` editor — the same nested-editable-island pattern `.page-break`/
-`.page-filler` use for pagination spacers, except here it's a real content node the user
-interacts with. Making it non-editable is what actually fixes the drag bug: a
-`contenteditable="false"` island is always dragged as a single atomic unit (there's no
-longer a sub-part like a caption that could be left behind), and `draggable="true"` makes
-that native drag-to-reposition explicit rather than relying on default per-browser
-behavior.
+**Plain, fully-editable content — no custom drag JS.** An earlier version made
+`.doc-figure` `contenteditable="false"` + `draggable="true"` (the same nested-editable-
+island pattern `.page-break`/`.page-filler` use for pagination spacers) to guarantee the
+figure moved as one atomic unit. That fixed the caption-left-behind symptom but traded it
+for a worse one: native HTML5 drag-and-drop over a `contenteditable` region doesn't
+reliably remove the drag source on drop, so dragging a snippet could leave duplicate
+copies scattered through the document. The figure is back to being ordinary editable
+content with no special attributes — dragging to reposition it, and the main toolbar's
+Align left/center/right buttons acting on it, are the browser's native `contenteditable`
+behavior, not custom JS. (Verified: dragging the `<img>` now moves it — zero duplicates,
+and the browser cleans up the emptied-out source `<figure>` on its own.)
 
-**Original size, not shrunk to fit.** `.editor .doc-figure img` carries no `max-width`
-constraint, so a freshly inserted snippet renders at the same pixel size it has in the
-source document, even if that's wider than the editor column (it'll simply overflow
-horizontally — `.editor-container`'s `overflow: auto` handles that). This is a deliberate
-trade-off: previously `max-width: 100%` silently shrank oversized snippets, which is the
-opposite of what "keep the original size" means. The resize handles below are how a user
-brings an oversized snippet back down.
+**Sized to match the source page, not the export PNG's raw pixels.** A snippet's rect is
+captured as page-relative fractions (`x`/`y`/`w`/`h`, 0–1) and exported to PNG at a fixed
+300dpi (`api_create_snippet` in app.py) — deliberately higher than the ~150dpi the source
+page itself is rendered at for on-screen viewing, so the export stays crisp. Dropping the
+PNG in at its native pixel size would render it roughly 3x too large on the page (the
+300/96 dpi ratio) — not "the same size it was in the source" at all. `loadSnippets()`
+fixes this at the source: alongside `GET .../snippets`, it fetches
+`GET /api/doc/<id>/info` for each page's true dimensions in points, and computes the
+insert size as `rect.w * page.width * (96/72)` (and the equivalent for height) — the same
+pt→px convention used for page margins elsewhere in this file (`PT_TO_PX`). That's
+independent of whatever DPI the PNG or the annotator's on-screen view happen to use; it's
+the snippet's real physical size on the page, expressed in the same 96dpi convention this
+editor's own A4 page emulation already uses. The computed `width`/`height` are written as
+inline `style` directly on the inserted `<img>` (no `max-width` cap in `.editor
+.doc-figure img`, so this size is exactly what renders, not silently clamped to fit the
+column).
 
-**Resize handles.** `enhanceDocFigures()` (called after every snippet insertion and after
-`loadReport()` sets `editor.innerHTML`) adds four `.resize-handle` corner spans to each
-`.doc-figure` that doesn't already have them, each wired to `startFigureResize()` via
-`pointerdown`. Dragging a corner resizes the `<img>` with its aspect ratio locked
-(computed once from the image's rendered box at drag-start) and a 24px floor
-(`MIN_SIZE`), writing the new size to `img.style.width`/`height` (plus
-`max-width: none`, overriding nothing since the img rule already has none, but keeping
-the intent explicit). Handles are idempotent to add — gated on
-`figure.querySelector(":scope > .resize-handle")` — so re-running `enhanceDocFigures()`
-on an already-enhanced figure (e.g. a second insert elsewhere in the document) is a
-no-op for it.
+**Alignment is the main toolbar's job.** With the figure back to being ordinary editable
+content, `execCommand("justifyLeft"/"justifyCenter"/"justifyRight", ...)` — the same
+buttons used for text — works on it directly: clicking the image places the caret
+adjacent to/inside the `<figure>`, and `execCommand` sets `text-align` on that nearest
+block ancestor. That's why `.editor .doc-figure img` is `display: inline-block` rather
+than the block-level UA default — `text-align` only positions inline-level children, so a
+block-level image would just ignore it. No app-specific alignment code exists; this is
+exactly the same mechanism as centering a heading.
 
-**Alignment.** A separate small `.figure-align-toolbar` (three buttons, reusing the exact
-SVG icons from the main toolbar's Align left/center/right buttons) sits above each
-figure, visible on hover. This is deliberately *not* wired through the main toolbar's
-`execCommand("justifyLeft"/"justifyCenter"/"justifyRight", ...)` buttons — browsers
-exclude non-editable content from `execCommand`'s reach, so those silently no-op on a
-`contenteditable="false"` figure. Clicking a button instead toggles an `align-center`/
-`align-right` class on the figure (default/no class = left), which CSS turns into
-`margin-left`/`margin-right: auto` as appropriate. That only moves the figure if it has a
-*definite* width — a bare block defaults to `width: auto` (100% of the editor column),
-which leaves no spare width for `margin: auto` to distribute — so `syncFigureWidth()`
-pins `figure.style.width` to `img.style.width` whenever a figure is (re-)enhanced, and
-`startFigureResize()`'s drag handler keeps the two in sync live during a resize.
-
-**Keeping the controls out of the saved document.** `.resize-handle` spans and the
-`.figure-align-toolbar` are pure UI, recomputed by `enhanceDocFigures()` on every load —
-they must never reach the server. `getCleanEditorHtml()` strips both, alongside
-`.page-break`/`.page-filler`, and also removes the `contenteditable`/`draggable`
-attributes it added to `.doc-figure` (harmless either way, since neither is in the
-sanitizer's attribute whitelist and would be stripped server-side regardless — see
-§ HTML sanitization). `enhanceDocFigures()` re-derives all of this from the live DOM on
-next load rather than trusting anything persisted, which is also why a `<button>` inside
-`.figure-align-toolbar` is safe even though `button` isn't an allowed tag: it's stripped
-client-side before the HTML the server ever sees is generated.
+**Cleaning up a document that passed through the in-between (broken) version.**
+`cleanLegacyDocFigures()` runs once on `loadReport()` and removes anything the now-removed
+approach could have left behind in an already-saved document: legacy `<figcaption>`s,
+`.resize-handle`/`.figure-align-toolbar` elements, `.doc-figure`'s
+`contenteditable`/`draggable` attributes and `align-center`/`align-right` classes, its own
+`style="width:...;"` (only ever set to make the removed margin-based alignment work), and
+any stray inline `max-width` on the `<img>` from the (also-removed) resize feature. It
+deliberately does *not* touch the `<img>`'s own `width`/`height` — those are the
+correct-size values `loadSnippets()` computed at insert time and need to survive every
+reload untouched.
 
 ### Pagination — simulated A4 pages
 
@@ -333,9 +332,9 @@ the `beforeunload` sendBeacon) now call `getCleanEditorHtml()` instead, which cl
 (Even if either stray element did leak into a save, the server's HTML sanitizer would
 strip its `contenteditable` attribute — not in the attribute whitelist — but the `div`
 itself would survive, since `div` and `class` are both allowed; client-side stripping is
-the real safety net here, not the sanitizer.) `getCleanEditorHtml()` does the same job for
-snippet figures' own view-only additions (`.resize-handle`, `.figure-align-toolbar`,
-`contenteditable`/`draggable`) — see § Snippet figures: caption, size, resize, alignment.
+the real safety net here, not the sanitizer.) Snippet figures no longer need any special
+handling here — `.doc-figure` is plain editable content with no view-only additions of its
+own; see § Snippet figures: caption, size, alignment.
 
 **Known limitation — page breaks are an approximation, not exact.** The editor's
 pagination only ever moves whole blocks; the PDF exporter (`render_report_pdf`, via
@@ -466,13 +465,13 @@ type/format → editor DOM (contenteditable, source of truth in-browser)
             → MutationObserver → paginate() → visual .page-break/.page-filler spacers
               (view-only) + renderMarginGuides() (#marginGuides overlay, view-only)
 
-Insert snippet → execCommand("insertHTML", ...) (.doc-figure, no caption)
-              → enhanceDocFigures() → .resize-handle / .figure-align-toolbar (view-only)
+Insert snippet → loadSnippets() fetches page dims (/info) alongside /snippets
+              → execCommand("insertHTML", ...) (.doc-figure, no caption, <img
+                style="width/height"> sized to match the source page)
               → markDirty() → (same save path as below)
 
             → markDirty() → debounced saveReport()
-            → getCleanEditorHtml() (strips .page-break/.page-filler/.resize-handle/
-              .figure-align-toolbar, and .doc-figure's contenteditable/draggable)
+            → getCleanEditorHtml() (strips .page-break/.page-filler)
               → POST /api/report/<id> (html + margins)
             → sanitize_report_html() / sanitize_margins() → storage/reports/<id>.json
 
