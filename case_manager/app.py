@@ -64,6 +64,11 @@ def check_doc_id(doc_id):
         raise DocumentError(f"Invalid document id: {doc_id!r}", 400)
 
 
+def check_report_id(report_id):
+    if not report_id or not DOC_ID_RE.match(report_id):
+        raise DocumentError(f"Invalid document id: {report_id!r}", 400)
+
+
 def resolve_pdf_path(doc_id, raw_type):
     check_doc_id(doc_id)
     norm_type = normalize_type(raw_type)
@@ -125,8 +130,13 @@ def snippets_dir(doc_id, norm_type):
     return SNIPPETS_DIR / f"{doc_id}__{norm_type}"
 
 
-def reports_path(doc_id, norm_type):
-    return REPORTS_DIR / f"{doc_id}__{norm_type}.json"
+def report_path(report_id):
+    return REPORTS_DIR / f"{report_id}.json"
+
+
+def slugify_report_name(name):
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug[:50] or "document"
 
 
 # ---------------------------------------------------------------------------
@@ -417,19 +427,28 @@ def page_view():
 def document_view():
     pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
     docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
-    docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
-    docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
-    docs.sort(key=lambda d: d["id"])
+    source_docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
+    source_docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
+    source_docs.sort(key=lambda d: d["id"])
 
-    doc_id = request.args.get("doc", "")
-    raw_type = request.args.get("type", "pdf")
-    if not doc_id and docs:
-        doc_id, raw_type = docs[0]["id"], docs[0]["type"]
+    report_id = request.args.get("report", "")
+    if report_id:
+        check_report_id(report_id)
+        if not report_path(report_id).exists():
+            raise DocumentError(f"No document with id {report_id!r}", 404)
 
-    if doc_id:
-        resolve_pdf_path(doc_id, raw_type)  # 404s if the source document doesn't exist
+    preselect_source = request.args.get("source", "")
+    preselect_type = request.args.get("type", "pdf")
+    if preselect_source:
+        check_doc_id(preselect_source)
 
-    return render_template("document.html", docs=docs, doc_id=doc_id, doc_type=raw_type)
+    return render_template(
+        "document.html",
+        source_docs=source_docs,
+        report_id=report_id,
+        preselect_source=preselect_source,
+        preselect_type=preselect_type,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -616,34 +635,93 @@ def api_delete_snippet(doc_id, snippet_id):
     return jsonify({"status": "ok"})
 
 
-@app.route("/api/report/<doc_id>", methods=["GET", "POST"])
-def api_report(doc_id):
-    check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    path = reports_path(doc_id, norm_type)
-
+@app.route("/api/reports", methods=["GET", "POST"])
+def api_reports():
     if request.method == "GET":
-        data = load_json(path, default={})
-        return jsonify({"title": data.get("title", ""), "html": data.get("html", "")})
+        items = []
+        for f in REPORTS_DIR.glob("*.json"):
+            data = load_json(f, default=None)
+            if not isinstance(data, dict):
+                continue
+            items.append({
+                "id": f.stem,
+                "name": data.get("name") or f.stem,
+                "source_doc": data.get("source_doc", ""),
+                "source_type": data.get("source_type", "pdf"),
+                "created_at": data.get("created_at", ""),
+                "updated_at": data.get("updated_at", ""),
+            })
+        items.sort(key=lambda x: x["updated_at"], reverse=True)
+        return jsonify(items)
 
     body = request.get_json(silent=True) or {}
-    title = str(body.get("title") or "")[:300]
-    html_content = sanitize_report_html(body.get("html") or "")
+    name = str(body.get("name") or "").strip()[:200]
+    if not name:
+        raise DocumentError("A document name is required", 400)
+
+    source_doc = str(body.get("source_doc") or "")
+    source_type = "pdf"
+    if source_doc:
+        check_doc_id(source_doc)
+        source_type = normalize_type(body.get("source_type", "pdf"))
+
+    report_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
     data = {
-        "title": title,
+        "name": name,
+        "html": "",
+        "source_doc": source_doc,
+        "source_type": source_type,
+        "created_at": now,
+        "updated_at": now,
+    }
+    save_json(report_path(report_id), data)
+    return jsonify({"id": report_id, **data})
+
+
+@app.route("/api/report/<report_id>", methods=["GET", "POST"])
+def api_report(report_id):
+    check_report_id(report_id)
+    path = report_path(report_id)
+    existing = load_json(path, default=None)
+    if existing is None:
+        raise DocumentError(f"No document with id {report_id!r}", 404)
+
+    if request.method == "GET":
+        return jsonify(existing)
+
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", existing.get("name", ""))).strip()[:200]
+    if not name:
+        raise DocumentError("A document name is required", 400)
+
+    source_doc = str(body.get("source_doc", existing.get("source_doc", "")))
+    source_type = "pdf"
+    if source_doc:
+        check_doc_id(source_doc)
+        source_type = normalize_type(body.get("source_type", existing.get("source_type", "pdf")))
+
+    html_content = sanitize_report_html(body.get("html", existing.get("html", "")))
+    data = {
+        "name": name,
         "html": html_content,
+        "source_doc": source_doc,
+        "source_type": source_type,
+        "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     save_json(path, data)
-    return jsonify({"status": "ok"})
+    return jsonify(data)
 
 
-@app.route("/api/report/<doc_id>/export")
-def api_report_export(doc_id):
-    check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    data = load_json(reports_path(doc_id, norm_type), default={})
-    title = data.get("title") or doc_id
+@app.route("/api/report/<report_id>/export")
+def api_report_export(report_id):
+    check_report_id(report_id)
+    data = load_json(report_path(report_id), default=None)
+    if data is None:
+        raise DocumentError(f"No document with id {report_id!r}", 404)
+
+    title = data.get("name") or report_id
     body_html = inline_report_images(data.get("html") or "")
     if not body_html.strip():
         raise DocumentError("Document is empty — add some content before exporting", 400)
@@ -652,7 +730,7 @@ def api_report_export(doc_id):
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
-    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or doc_id
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
     return resp
 

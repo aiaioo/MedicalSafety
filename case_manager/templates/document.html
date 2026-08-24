@@ -3,72 +3,141 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Document{% if doc_id %} — {{ doc_id }}{% endif %}</title>
+<title>{% if report_id %}Document editor{% else %}Documents{% endif %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <div id="docApp"
-     data-doc="{{ doc_id }}"
-     data-type="{{ doc_type }}"
-     {% if doc_id %}
-     data-report-url="{{ url_for('api_report', doc_id=doc_id) }}?type={{ doc_type }}"
-     data-export-url="{{ url_for('api_report_export', doc_id=doc_id) }}?type={{ doc_type }}"
-     data-snippets-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}"
+     data-report="{{ report_id }}"
+     data-reports-url="{{ url_for('api_reports') }}"
+     data-preselect-source="{{ preselect_source }}"
+     data-preselect-type="{{ preselect_type }}"
+     {% if report_id %}
+     data-report-url="{{ url_for('api_report', report_id=report_id) }}"
+     data-export-url="{{ url_for('api_report_export', report_id=report_id) }}"
      {% endif %}
 >
-  <header class="topbar">
-    <div class="doc-title">
-      <a href="{{ url_for('index') }}" title="All documents">&larr;</a>
-      Document editor{% if doc_id %} <span class="tag">source: {{ doc_id }}</span>{% endif %}
-    </div>
-    <div class="pagenav">
-      {% if docs %}
-      <label class="jump">Source
-        <select id="sourceSelect">
-          {% for d in docs %}
-          <option value="{{ d.id }}|{{ d.type }}" {% if d.id == doc_id and d.type == doc_type %}selected{% endif %}>{{ d.id }} ({{ d.type }})</option>
+  <header class="docbar">
+    <a class="home-link" href="{{ url_for('index') }}" title="All documents">&larr;</a>
+
+    <nav class="file-menu">
+      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
+      <div class="menu-dropdown" id="fileMenuDropdown">
+        <button type="button" id="newDocBtn">New document&hellip;</button>
+        <button type="button" id="openDocBtn">Open&hellip;</button>
+        <hr>
+        <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
+      </div>
+    </nav>
+
+    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" {{ 'disabled' if not report_id }}>
+    <span id="saveStatus" class="save-status"></span>
+
+    <div class="source-picker">
+      <label class="jump">Insert from
+        <select id="sourceSelect" {{ 'disabled' if not report_id }}>
+          <option value="">&mdash; none &mdash;</option>
+          {% for d in source_docs %}
+          <option value="{{ d.id }}|{{ d.type }}">{{ d.id }} ({{ d.type }})</option>
           {% endfor %}
         </select>
       </label>
-      {% if doc_id %}
-      <a class="btn" href="{{ url_for('page_view') }}?doc={{ doc_id }}&type={{ doc_type }}&page=1">Annotate source &raquo;</a>
-      {% endif %}
-      {% endif %}
+      <a class="btn" id="annotateLink" href="#" style="display:none">Annotate source &raquo;</a>
     </div>
   </header>
 
-  {% if not doc_id %}
-  <div class="container">
-    <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
-  </div>
-  {% else %}
-  <div class="toolbar">
-    <input id="titleInput" type="text" placeholder="Document title" class="title-input">
-    <div class="mode-group" role="group" aria-label="Formatting">
-      <button type="button" class="fmt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
-      <button type="button" class="fmt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
-      <button type="button" class="fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
-      <button type="button" class="fmt-btn" data-cmd="formatBlock" data-arg="H2" title="Heading">H2</button>
-      <button type="button" class="fmt-btn" data-cmd="formatBlock" data-arg="P" title="Paragraph">P</button>
-      <button type="button" class="fmt-btn" data-cmd="insertUnorderedList" title="Bullet list">&bull; List</button>
-      <button type="button" class="fmt-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
-    </div>
-    <button type="button" id="saveReportBtn">Save</button>
-    <button type="button" id="exportBtn">Export to PDF</button>
-    <span id="reportStatus" class="status-msg"></span>
+  <div class="toolbar doc-toolbar {{ 'toolbar-hidden' if not report_id }}" id="formatToolbar">
+    <select id="fontFamilySelect" class="fmt-select" title="Font">
+      <option value="Arial" style="font-family:Arial">Arial</option>
+      <option value="Georgia" style="font-family:Georgia">Georgia</option>
+      <option value="'Times New Roman'" style="font-family:'Times New Roman'">Times New Roman</option>
+      <option value="'Courier New'" style="font-family:'Courier New'">Courier New</option>
+      <option value="Verdana" style="font-family:Verdana">Verdana</option>
+      <option value="'Trebuchet MS'" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+      <option value="'Comic Sans MS'" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+    </select>
+    <select id="fontSizeSelect" class="fmt-select fmt-select-narrow" title="Font size">
+      {% for pt in [8,9,10,11,12,14,18,24,30,36,48,60,72,96] %}
+      <option value="{{ pt }}" {{ 'selected' if pt == 11 }}>{{ pt }}</option>
+      {% endfor %}
+    </select>
+    <span class="toolbar-sep"></span>
+    <select id="blockFormatSelect" class="fmt-select" title="Paragraph style">
+      <option value="P">Normal text</option>
+      <option value="H1">Heading 1</option>
+      <option value="H2">Heading 2</option>
+      <option value="H3">Heading 3</option>
+    </select>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" class="fmt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" class="fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+    <label class="color-btn" title="Text color">
+      <span>A</span><span class="swatch" id="textColorSwatch"></span>
+      <input id="textColorInput" type="color" value="#1c1c1c">
+    </label>
+    <label class="color-btn" title="Highlight color">
+      <span>H</span><span class="swatch" id="highlightColorSwatch"></span>
+      <input id="highlightColorInput" type="color" value="#fff59d">
+    </label>
+    <button type="button" class="fmt-btn" id="clearHighlightBtn" title="Remove highlight">&#9099;</button>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" data-cmd="insertUnorderedList" title="Bullet list">&bull; List</button>
+    <button type="button" class="fmt-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
   </div>
 
   <main class="viewer-layout">
     <div class="editor-container">
+      {% if report_id %}
       <div id="editor" class="editor" contenteditable="true"
            data-placeholder="Start writing your document. Click a snippet on the right to insert it here."></div>
+      {% else %}
+      <div class="doc-landing">
+        <h2>Your documents</h2>
+        <p class="empty" id="landingEmptyHint">No documents yet. Use File &rarr; New document to create one.</p>
+        <div id="reportListLanding" class="report-grid"></div>
+      </div>
+      {% endif %}
     </div>
     <aside class="sidebar">
       <h3>Snippets &amp; annotations</h3>
-      <div id="reportSnippetList" class="snippet-list"></div>
+      <div id="reportSnippetList" class="snippet-list">
+        <p class="empty">Pick a source document above to see its snippets here.</p>
+      </div>
     </aside>
   </main>
-  {% endif %}
+
+  <div class="modal-overlay" id="newDocModal">
+    <div class="modal">
+      <h3>New document</h3>
+      <label class="modal-field">Name
+        <input id="newDocName" type="text" placeholder="e.g. Case summary — Jane Doe" maxlength="200">
+      </label>
+      <label class="modal-field">Source document (optional)
+        <select id="newDocSource">
+          <option value="">&mdash; none &mdash;</option>
+          {% for d in source_docs %}
+          <option value="{{ d.id }}|{{ d.type }}">{{ d.id }} ({{ d.type }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p id="newDocError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="newDocCancel">Cancel</button>
+        <button type="button" id="newDocCreate">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="openDocModal">
+    <div class="modal">
+      <h3>Open a document</h3>
+      <div id="openDocList" class="report-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="openDocCancel">Close</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script src="{{ url_for('static', filename='document.js') }}"></script>
 </body>
