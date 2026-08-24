@@ -212,7 +212,30 @@ a { color: #2266dd; }
    children. No max-width here -- a snippet keeps the pixel size it had
    in the source document rather than being shrunk to fit the page. */
 .editor .doc-figure { margin: 16px 0; }
-.editor .doc-figure img { display: inline-block; border: 1px solid #e0e2e8; }
+.editor .doc-figure img { display: inline-block; border: 1px solid #e0e2e8; cursor: grab; }
+.editor .doc-figure img.dragging { cursor: grabbing; }
+
+/* Resize handles for inserted snippets, rendered in the same kind of
+   overlay layer as .margin-guides above (a sibling of #editor, positioned
+   in JS from the hovered <img>'s live getBoundingClientRect()) rather than
+   as DOM children of the figure. Handles that lived inside the figure were
+   tried before and reverted: native contenteditable image drag detaches
+   only the bare <img> node, so any sibling markup around it (a caption,
+   or a handle wrapper) got left behind whenever a snippet was dragged.
+   Keeping handles entirely outside #editor means dragging still only ever
+   touches the plain, native-editable <img> -- nothing to strand. */
+.figure-resize-overlay {
+  position: absolute; inset: 0; pointer-events: none; user-select: none;
+}
+.figure-resize-overlay .resize-handle {
+  position: absolute; width: 10px; height: 10px; margin: -5px;
+  background: #2266dd; border: 1px solid white; border-radius: 2px;
+  pointer-events: auto; display: none;
+}
+.figure-resize-overlay .resize-handle-nw { cursor: nwse-resize; }
+.figure-resize-overlay .resize-handle-ne { cursor: nesw-resize; }
+.figure-resize-overlay .resize-handle-sw { cursor: nesw-resize; }
+.figure-resize-overlay .resize-handle-se { cursor: nwse-resize; }
 
 /* ---- pagination: visual gap between simulated A4 pages ---- */
 .editor .page-break {

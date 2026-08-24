@@ -10,6 +10,8 @@
 
   const editor = document.getElementById("editor");
   const marginGuidesEl = document.getElementById("marginGuides");
+  const figureResizeOverlay = document.getElementById("figureResizeOverlay");
+  const editorPageWrap = document.getElementById("editorPageWrap");
   const titleInput = document.getElementById("titleInput");
   const saveBtn = document.getElementById("saveBtn");
   const saveStatusEl = document.getElementById("saveStatus");
@@ -385,7 +387,13 @@
     }
   }
 
-  const paginationObserver = new MutationObserver(() => schedulePaginate());
+  const paginationObserver = new MutationObserver(() => {
+    // A mutation (e.g. deleting the paragraph a hovered snippet lived in)
+    // may have detached the image the resize handles are currently
+    // tracking -- drop them rather than leaving stale handles on screen.
+    if (hoveredImg && !hoveredImg.isConnected) hideResizeHandles();
+    schedulePaginate();
+  });
   paginationObserver.observe(editor, { childList: true, subtree: true, characterData: true });
   // Images load asynchronously, so a block's height is wrong until they do.
   editor.addEventListener(
@@ -421,7 +429,9 @@
   // and so look too big at native size. Otherwise plain, fully-editable
   // content: dragging to reposition and the main toolbar's Align left/
   // center/right buttons are the browser's native contenteditable
-  // behavior, not custom JS. An earlier version made the figure
+  // behavior, not custom JS (a grab/grabbing cursor and hover-to-resize
+  // handles are layered on top of that below, but neither changes what
+  // gets dragged). An earlier version made the figure
   // contenteditable="false" + draggable="true" to fix the caption-left-
   // behind bug, but native HTML5 drag-and-drop over a contenteditable
   // region doesn't reliably remove the drag source, which turned into a
@@ -444,6 +454,145 @@
       figure.querySelectorAll("img").forEach((img) => img.style.removeProperty("max-width"));
     });
   }
+
+  // Grab/grabbing cursor on a snippet's native contenteditable drag: purely
+  // cosmetic, toggled off the browser's own dragstart/dragend so it can't
+  // affect which node the drag actually moves.
+  editor.addEventListener("dragstart", (e) => {
+    if (e.target.tagName === "IMG" && e.target.closest(".doc-figure")) {
+      e.target.classList.add("dragging");
+    }
+  });
+  editor.addEventListener("dragend", (e) => {
+    if (e.target.tagName === "IMG") e.target.classList.remove("dragging");
+  });
+
+  // ---------------------------------------------------------------------
+  // Snippet resize handles: shown on hover, positioned in the
+  // #figureResizeOverlay layer (a sibling of #editor, same idea as
+  // #marginGuides above) rather than as DOM children of the figure -- see
+  // the .figure-resize-overlay comment in style.css for why they can't
+  // live inside the figure without risking the old drag-leaves-something-
+  // behind bug. Dragging a handle just writes width/height directly onto
+  // the <img>'s own inline style, the same style attribute loadSnippets()
+  // already sets on insert.
+  // ---------------------------------------------------------------------
+  const RESIZE_CORNERS = ["nw", "ne", "sw", "se"];
+  const resizeHandleEls = {};
+  RESIZE_CORNERS.forEach((corner) => {
+    const h = document.createElement("span");
+    h.className = `resize-handle resize-handle-${corner}`;
+    h.addEventListener("pointerdown", (e) => startFigureResize(e, corner));
+    figureResizeOverlay.appendChild(h);
+    resizeHandleEls[corner] = h;
+  });
+
+  let hoveredImg = null;
+  let resizingImg = null;
+  let hideHandlesTimer = null;
+
+  function positionResizeHandles(img) {
+    const wrapRect = editorPageWrap.getBoundingClientRect();
+    const r = img.getBoundingClientRect();
+    const corners = {
+      nw: [r.left, r.top],
+      ne: [r.right, r.top],
+      sw: [r.left, r.bottom],
+      se: [r.right, r.bottom],
+    };
+    for (const corner of RESIZE_CORNERS) {
+      const [x, y] = corners[corner];
+      resizeHandleEls[corner].style.left = x - wrapRect.left + "px";
+      resizeHandleEls[corner].style.top = y - wrapRect.top + "px";
+    }
+  }
+
+  function showResizeHandles(img) {
+    hoveredImg = img;
+    positionResizeHandles(img);
+    RESIZE_CORNERS.forEach((corner) => (resizeHandleEls[corner].style.display = "block"));
+  }
+
+  function hideResizeHandles() {
+    hoveredImg = null;
+    RESIZE_CORNERS.forEach((corner) => (resizeHandleEls[corner].style.display = "none"));
+  }
+
+  function cancelHideHandles() {
+    if (hideHandlesTimer) {
+      clearTimeout(hideHandlesTimer);
+      hideHandlesTimer = null;
+    }
+  }
+
+  // Debounced so moving the pointer from the image onto a handle (a
+  // separate element, overlapping only visually) doesn't hide the handles
+  // out from under the pointer before it arrives.
+  function scheduleHideHandles() {
+    cancelHideHandles();
+    hideHandlesTimer = setTimeout(() => {
+      if (!resizingImg) hideResizeHandles();
+    }, 100);
+  }
+
+  editor.addEventListener("mouseover", (e) => {
+    const img = e.target.closest && e.target.closest(".doc-figure img");
+    if (img) {
+      cancelHideHandles();
+      showResizeHandles(img);
+    }
+  });
+  editor.addEventListener("mouseout", (e) => {
+    if (e.target.closest && e.target.closest(".doc-figure img")) scheduleHideHandles();
+  });
+  figureResizeOverlay.addEventListener("mouseover", (e) => {
+    if (e.target.classList.contains("resize-handle")) cancelHideHandles();
+  });
+  figureResizeOverlay.addEventListener("mouseout", (e) => {
+    if (e.target.classList.contains("resize-handle")) scheduleHideHandles();
+  });
+
+  function startFigureResize(e, corner) {
+    if (!hoveredImg) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const img = hoveredImg;
+    resizingImg = img;
+    const handle = e.currentTarget;
+    const startRect = img.getBoundingClientRect();
+    const aspect = startRect.width / (startRect.height || 1);
+    const startX = e.clientX;
+    const signX = corner.endsWith("e") ? 1 : -1;
+    const MIN_SIZE = 24;
+
+    function onMove(ev) {
+      const newWidth = Math.max(MIN_SIZE, startRect.width + (ev.clientX - startX) * signX);
+      img.style.width = newWidth + "px";
+      img.style.height = newWidth / aspect + "px";
+      positionResizeHandles(img);
+      schedulePaginate();
+    }
+    function onUp(ev) {
+      handle.releasePointerCapture(ev.pointerId);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      resizingImg = null;
+      positionResizeHandles(img);
+      markDirty();
+    }
+    handle.setPointerCapture(e.pointerId);
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  }
+
+  // Keep handles glued to the image across repagination, window resize, and
+  // scrolling the (overflow:auto) editor container.
+  window.addEventListener("resize", () => {
+    if (hoveredImg) positionResizeHandles(hoveredImg);
+  });
+  document.querySelector(".editor-container").addEventListener("scroll", () => {
+    if (hoveredImg) positionResizeHandles(hoveredImg);
+  });
 
   downloadPdfBtn.addEventListener("click", async () => {
     try {
