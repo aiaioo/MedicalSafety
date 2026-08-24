@@ -14,7 +14,7 @@
     <h2>Your documents</h2>
     <p class="empty" id="indexReportsEmpty" style="display:none">No documents yet.</p>
     <div id="indexReportGrid" class="report-grid" data-reports-url="{{ url_for('api_reports') }}"></div>
-    <p><button type="button" id="newDocBtn">New document&hellip;</button></p>
+    <p><button type="button" id="newDocBtn" class="btn">New document&hellip;</button></p>
   </section>
 
   <section class="index-section">
@@ -33,7 +33,7 @@
     <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
     {% endif %}
     <div class="upload-form">
-      <button type="button" id="uploadSubmit">Upload source&hellip;</button>
+      <button type="button" id="uploadSubmit" class="btn">Upload source&hellip;</button>
       <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
       <span id="uploadStatus" class="upload-status"></span>
     </div>
