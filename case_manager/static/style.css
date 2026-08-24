@@ -116,6 +116,12 @@ a { color: #2266dd; }
 }
 .doc-name:hover { background: #f1f3f4; }
 .doc-name:focus { outline: none; background: white; border-color: #cfd4e0; }
+.save-btn {
+  border: 1px solid #cfd4e0; background: #f7f8fa; padding: 6px 14px; border-radius: 6px;
+  cursor: pointer; font-size: 13px; color: #1c1c1c;
+}
+.save-btn:hover { background: #e4e6e8; }
+.save-btn:disabled { color: #b0b4bd; cursor: default; background: #f7f8fa; }
 .save-status { font-size: 12px; color: #8a92a5; min-width: 44px; }
 
 .source-picker { display: flex; align-items: center; gap: 14px; margin-left: auto; font-size: 14px; }

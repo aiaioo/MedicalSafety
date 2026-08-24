@@ -9,6 +9,7 @@
 
   const editor = document.getElementById("editor");
   const titleInput = document.getElementById("titleInput");
+  const saveBtn = document.getElementById("saveBtn");
   const saveStatusEl = document.getElementById("saveStatus");
   const snippetListEl = document.getElementById("reportSnippetList");
   const sourceSelect = document.getElementById("sourceSelect");
@@ -190,6 +191,14 @@
     try {
       await saveReport();
       window.location.href = exportUrl;
+    } catch (e) {
+      setStatus("Save failed: " + e.message, true);
+    }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    try {
+      await saveReport();
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }
