@@ -408,7 +408,7 @@
 
   function getCleanEditorHtml() {
     const clone = editor.cloneNode(true);
-    clone.querySelectorAll(".page-break, .page-filler, .resize-handle").forEach((el) => el.remove());
+    clone.querySelectorAll(".page-break, .page-filler, .resize-handle, .figure-align-toolbar").forEach((el) => el.remove());
     clone.querySelectorAll(".doc-figure").forEach((fig) => {
       fig.removeAttribute("contenteditable");
       fig.removeAttribute("draggable");
@@ -421,9 +421,23 @@
   // when the browser's native contenteditable drag only picked up the
   // <img>, not its <figcaption> sibling), original image size preserved
   // (no forced max-width — see .editor .doc-figure img in style.css), and
-  // draggable/resizable as a single atomic unit.
+  // draggable/resizable/alignable as a single atomic unit.
   // ---------------------------------------------------------------------
-  function startFigureResize(e, img, corner) {
+
+  // .doc-figure defaults to block width:auto (100% of the editor column),
+  // which makes the CSS margin:auto alignment below a no-op -- there's no
+  // spare width to distribute. Keeping the figure's own width pinned to
+  // its image's width (natural size on first sight, then whatever a
+  // resize sets it to) is what makes left/center/right actually move it.
+  function syncFigureWidth(figure, img) {
+    if (!img.style.width) {
+      img.style.width = img.naturalWidth + "px";
+      img.style.height = img.naturalHeight + "px";
+    }
+    figure.style.width = img.style.width;
+  }
+
+  function startFigureResize(e, figure, img, corner) {
     e.preventDefault();
     e.stopPropagation();
     const handle = e.currentTarget;
@@ -438,6 +452,7 @@
       img.style.width = newWidth + "px";
       img.style.height = newWidth / aspect + "px";
       img.style.maxWidth = "none";
+      figure.style.width = newWidth + "px";
       schedulePaginate();
     }
     function onUp() {
@@ -451,26 +466,72 @@
     handle.addEventListener("pointerup", onUp);
   }
 
+  // A dedicated mini alignment control for the figure, separate from the
+  // main formatting toolbar's Align left/center/right buttons -- those
+  // work via document.execCommand, which browsers exclude non-editable
+  // content from, so they silently do nothing to a figure that's
+  // contenteditable="false". Alignment is expressed as a class
+  // (align-center/align-right, default is left) rather than inline style
+  // so it reads the same way after a save/reload round-trip.
+  function buildAlignToolbar(figure) {
+    const toolbar = document.createElement("div");
+    toolbar.className = "figure-align-toolbar";
+    toolbar.draggable = false;
+    const current = figure.classList.contains("align-center")
+      ? "center"
+      : figure.classList.contains("align-right")
+      ? "right"
+      : "left";
+    ["left", "center", "right"].forEach((align) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "figure-align-btn" + (align === current ? " active" : "");
+      btn.dataset.align = align;
+      btn.title = `Align ${align}`;
+      btn.textContent = align[0].toUpperCase();
+      btn.draggable = false;
+      // Keep clicks on this control from reaching the figure's own
+      // draggable=true / atomic-selection handling underneath it.
+      btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        figure.classList.remove("align-center", "align-right");
+        if (align !== "left") figure.classList.add(`align-${align}`);
+        toolbar.querySelectorAll(".figure-align-btn").forEach((b) => b.classList.toggle("active", b.dataset.align === align));
+        markDirty();
+      });
+      toolbar.appendChild(btn);
+    });
+    return toolbar;
+  }
+
   // Idempotent: safe to call after every insertion and after loading a
   // previously-saved document (which may predate this feature, or predate
   // captions being dropped). Re-derives contenteditable/draggable and the
-  // resize handles from the live DOM rather than trusting persisted
+  // resize/align controls from the live DOM rather than trusting persisted
   // attributes, since the server sanitizer strips both anyway.
   function enhanceDocFigures() {
     editor.querySelectorAll(".doc-figure").forEach((figure) => {
       figure.querySelectorAll("figcaption").forEach((fc) => fc.remove());
       figure.contentEditable = "false";
       figure.draggable = true;
-      if (figure.querySelector(":scope > .resize-handle")) return;
       const img = figure.querySelector("img");
       if (!img) return;
-      ["nw", "ne", "sw", "se"].forEach((corner) => {
-        const handle = document.createElement("span");
-        handle.className = `resize-handle resize-handle-${corner}`;
-        handle.draggable = false;
-        handle.addEventListener("pointerdown", (e) => startFigureResize(e, img, corner));
-        figure.appendChild(handle);
-      });
+      if (img.complete && img.naturalWidth) syncFigureWidth(figure, img);
+      else img.addEventListener("load", () => syncFigureWidth(figure, img), { once: true });
+      if (!figure.querySelector(":scope > .resize-handle")) {
+        ["nw", "ne", "sw", "se"].forEach((corner) => {
+          const handle = document.createElement("span");
+          handle.className = `resize-handle resize-handle-${corner}`;
+          handle.draggable = false;
+          handle.addEventListener("pointerdown", (e) => startFigureResize(e, figure, img, corner));
+          figure.appendChild(handle);
+        });
+      }
+      if (!figure.querySelector(":scope > .figure-align-toolbar")) {
+        figure.appendChild(buildAlignToolbar(figure));
+      }
     });
   }
 
