@@ -4,6 +4,7 @@
   const reportsUrl = appEl.dataset.reportsUrl;
   const reportUrl = appEl.dataset.reportUrl;
   const exportUrl = appEl.dataset.exportUrl;
+  const exportDocxUrl = appEl.dataset.exportDocxUrl;
   const preselectSource = appEl.dataset.preselectSource;
   const preselectType = appEl.dataset.preselectType || "pdf";
 
@@ -22,6 +23,7 @@
   const openDocBtn = document.getElementById("openDocBtn");
   const pageSetupBtn = document.getElementById("pageSetupBtn");
   const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+  const downloadDocxBtn = document.getElementById("downloadDocxBtn");
 
   const pageSetupModal = document.getElementById("pageSetupModal");
   const marginLeftInput = document.getElementById("marginLeftInput");
@@ -411,6 +413,15 @@
     try {
       await saveReport();
       window.location.href = exportUrl;
+    } catch (e) {
+      setStatus("Save failed: " + e.message, true);
+    }
+  });
+
+  downloadDocxBtn.addEventListener("click", async () => {
+    try {
+      await saveReport();
+      window.location.href = exportDocxUrl;
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }

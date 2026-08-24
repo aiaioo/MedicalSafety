@@ -10,6 +10,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import fitz  # PyMuPDF
+from docx import Document as DocxDocument
+from docx.image.image import Image as DocxImage
+from docx.oxml.ns import qn
+from docx.shared import Emu, Pt
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, url_for
 
 from converters import ConversionError, convert_to_pdf
@@ -408,6 +412,280 @@ def render_report_pdf(title, body_html, margins=None):
 
 
 # ---------------------------------------------------------------------------
+# Word (.docx) export
+#
+# python-docx has no HTML importer, so we walk the same whitelisted tag set
+# (REPORT_ALLOWED_TAGS) that sanitize_report_html/render_report_pdf already
+# rely on and build the document directly, tag by tag.
+# ---------------------------------------------------------------------------
+
+class _HTMLNode:
+    __slots__ = ("tag", "attrs", "children")
+
+    def __init__(self, tag, attrs=None):
+        self.tag = tag
+        self.attrs = attrs or {}
+        self.children = []
+
+
+class _HTMLTreeBuilder(HTMLParser):
+    """Lenient HTML -> tree parser. Auto-closes mismatched tags by popping
+    the stack up to the nearest matching ancestor, so it tolerates the same
+    imperfect nesting a browser's contenteditable might occasionally emit."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = _HTMLNode("root")
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = _HTMLNode(tag, dict(attrs))
+        self.stack[-1].children.append(node)
+        if tag not in REPORT_VOID_TAGS:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        self.stack[-1].children.append(_HTMLNode(tag, dict(attrs)))
+
+    def handle_endtag(self, tag):
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i].tag == tag:
+                del self.stack[i:]
+                return
+
+    def handle_data(self, data):
+        if data:
+            self.stack[-1].children.append(data)
+
+
+DOCX_BLOCK_TAGS = {
+    "p", "div", "h1", "h2", "h3", "h4", "ul", "ol", "li",
+    "blockquote", "table", "figure", "figcaption", "pre", "hr",
+}
+DOCX_HEADING_STYLE = {"h1": "Heading 1", "h2": "Heading 2", "h3": "Heading 3", "h4": "Heading 4"}
+
+
+def _docx_image_stream(src):
+    if not src or not src.startswith("data:image/"):
+        return None
+    try:
+        header, b64 = src.split(",", 1)
+        return io.BytesIO(base64.b64decode(b64))
+    except (ValueError, base64.binascii.Error):
+        return None
+
+
+def _docx_add_hyperlink(paragraph, url, text, fmt):
+    part = paragraph.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+    hyperlink = paragraph._p.makeelement(qn("w:hyperlink"), {qn("r:id"): r_id})
+    run_el = paragraph._p.makeelement(qn("w:r"), {})
+    rpr = paragraph._p.makeelement(qn("w:rPr"), {})
+    color = paragraph._p.makeelement(qn("w:color"), {qn("w:val"): "1155CC"})
+    underline = paragraph._p.makeelement(qn("w:u"), {qn("w:val"): "single"})
+    rpr.append(color)
+    rpr.append(underline)
+    if fmt.get("bold"):
+        rpr.append(paragraph._p.makeelement(qn("w:b"), {}))
+    if fmt.get("italic"):
+        rpr.append(paragraph._p.makeelement(qn("w:i"), {}))
+    run_el.append(rpr)
+    text_el = paragraph._p.makeelement(qn("w:t"), {})
+    text_el.text = text
+    text_el.set(qn("xml:space"), "preserve")
+    run_el.append(text_el)
+    hyperlink.append(run_el)
+    paragraph._p.append(hyperlink)
+
+
+def _docx_apply_run_format(run, fmt):
+    run.bold = bool(fmt.get("bold"))
+    run.italic = bool(fmt.get("italic"))
+    run.underline = bool(fmt.get("underline"))
+    run.font.strike = bool(fmt.get("strike"))
+    if fmt.get("code"):
+        run.font.name = "Courier New"
+
+
+def _docx_add_image(node, paragraph, max_width_emu):
+    stream = _docx_image_stream(node.attrs.get("src"))
+    if stream is None:
+        return
+    try:
+        info = DocxImage.from_blob(stream.getvalue())
+    except Exception:
+        return
+    native_w = info.width
+    width = Emu(min(int(native_w), max_width_emu)) if max_width_emu else None
+    stream.seek(0)
+    run = paragraph.add_run()
+    if width:
+        run.add_picture(stream, width=width)
+    else:
+        run.add_picture(stream)
+
+
+def _docx_render_inline(node, paragraph, fmt, max_width_emu):
+    if isinstance(node, str):
+        if node:
+            run = paragraph.add_run(node)
+            _docx_apply_run_format(run, fmt)
+        return
+
+    if node.tag == "br":
+        paragraph.add_run().add_break()
+        return
+    if node.tag == "img":
+        _docx_add_image(node, paragraph, max_width_emu)
+        return
+
+    child_fmt = dict(fmt)
+    if node.tag in ("strong", "b"):
+        child_fmt["bold"] = True
+    elif node.tag in ("em", "i"):
+        child_fmt["italic"] = True
+    elif node.tag == "u":
+        child_fmt["underline"] = True
+    elif node.tag == "s":
+        child_fmt["strike"] = True
+    elif node.tag == "code":
+        child_fmt["code"] = True
+
+    if node.tag == "a":
+        href = node.attrs.get("href")
+        text = "".join(c for c in node.children if isinstance(c, str))
+        if href and text:
+            _docx_add_hyperlink(paragraph, href, text, child_fmt)
+            return
+
+    for child in node.children:
+        _docx_render_inline(child, paragraph, child_fmt, max_width_emu)
+
+
+def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None):
+    for node in nodes:
+        if isinstance(node, str):
+            if node.strip():
+                p = doc.add_paragraph()
+                p.add_run(node)
+            continue
+
+        tag = node.tag
+        if tag in DOCX_HEADING_STYLE:
+            p = doc.add_paragraph(style=DOCX_HEADING_STYLE[tag])
+            for child in node.children:
+                _docx_render_inline(child, p, {}, max_width_emu)
+        elif tag == "hr":
+            p = doc.add_paragraph()
+            p.add_run("—" * 20)
+        elif tag in ("p", "div"):
+            p = doc.add_paragraph()
+            for child in node.children:
+                _docx_render_inline(child, p, {}, max_width_emu)
+        elif tag == "blockquote":
+            p = doc.add_paragraph(style="Intense Quote")
+            for child in node.children:
+                _docx_render_inline(child, p, {}, max_width_emu)
+        elif tag in ("ul", "ol"):
+            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=tag)
+        elif tag == "li":
+            style = "List Number" if list_ctx == "ol" else "List Bullet"
+            p = doc.add_paragraph(style=style)
+            for child in node.children:
+                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
+                    _docx_render_blocks([child], doc, max_width_emu)
+                else:
+                    _docx_render_inline(child, p, {}, max_width_emu)
+        elif tag == "pre":
+            text = _flatten_text(node)
+            p = doc.add_paragraph()
+            run = p.add_run(text)
+            run.font.name = "Courier New"
+        elif tag == "img":
+            p = doc.add_paragraph()
+            _docx_render_inline(node, p, {}, max_width_emu)
+        elif tag == "figure":
+            for child in node.children:
+                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
+                    _docx_render_blocks([child], doc, max_width_emu)
+                else:
+                    p = doc.add_paragraph()
+                    _docx_render_inline(child, p, {}, max_width_emu)
+        elif tag == "figcaption":
+            p = doc.add_paragraph()
+            run = p.add_run("".join(_flatten_text(c) if isinstance(c, _HTMLNode) else c for c in node.children))
+            run.italic = True
+            run.font.size = Pt(9)
+        elif tag == "table":
+            _docx_render_table(node, doc, max_width_emu)
+        else:
+            # Unknown/structural wrapper: descend into its children.
+            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=list_ctx)
+
+
+def _flatten_text(node):
+    if isinstance(node, str):
+        return node
+    return "".join(_flatten_text(c) for c in node.children)
+
+
+def _docx_render_table(table_node, doc, max_width_emu):
+    rows = []
+    for section in table_node.children:
+        if isinstance(section, _HTMLNode) and section.tag in ("thead", "tbody"):
+            rows.extend(c for c in section.children if isinstance(c, _HTMLNode) and c.tag == "tr")
+        elif isinstance(section, _HTMLNode) and section.tag == "tr":
+            rows.append(section)
+    if not rows:
+        return
+    n_cols = max((sum(1 for c in r.children if isinstance(c, _HTMLNode) and c.tag in ("td", "th")) for r in rows), default=0)
+    if n_cols == 0:
+        return
+    table = doc.add_table(rows=0, cols=n_cols)
+    table.style = "Table Grid"
+    for r in rows:
+        cells = [c for c in r.children if isinstance(c, _HTMLNode) and c.tag in ("td", "th")]
+        row_cells = table.add_row().cells
+        for i, cell_node in enumerate(cells[:n_cols]):
+            cell = row_cells[i]
+            cell.text = ""
+            p = cell.paragraphs[0]
+            is_header = cell_node.tag == "th"
+            for child in cell_node.children:
+                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
+                    for gc in child.children:
+                        _docx_render_inline(gc, p, {"bold": is_header}, max_width_emu)
+                else:
+                    _docx_render_inline(child, p, {"bold": is_header}, max_width_emu)
+
+
+def render_report_docx(title, body_html, margins=None):
+    doc = DocxDocument()
+    doc.styles["Normal"].font.name = "Arial"
+    doc.styles["Normal"].font.size = Pt(11)
+
+    section = doc.sections[0]
+    m = sanitize_margins(margins)
+    section.left_margin = Pt(m["left"])
+    section.right_margin = Pt(m["right"])
+    section.top_margin = Pt(m["header"])
+    section.bottom_margin = Pt(m["footer"])
+    max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+
+    if title:
+        doc.add_paragraph(title, style="Heading 1")
+
+    builder = _HTMLTreeBuilder()
+    builder.feed(body_html)
+    builder.close()
+    _docx_render_blocks(builder.root.children, doc, max_width_emu)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
 
@@ -761,6 +1039,30 @@ def api_report_export(report_id):
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
+    return resp
+
+
+@app.route("/api/report/<report_id>/export.docx")
+def api_report_export_docx(report_id):
+    check_report_id(report_id)
+    data = load_json(report_path(report_id), default=None)
+    if data is None:
+        raise DocumentError(f"No document with id {report_id!r}", 404)
+
+    title = data.get("name") or report_id
+    body_html = inline_report_images(data.get("html") or "")
+    if not body_html.strip():
+        raise DocumentError("Document is empty — add some content before exporting", 400)
+
+    docx_bytes = render_report_docx(title, body_html, data.get("margins"))
+
+    resp = Response(
+        docx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
+    resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.docx"'
     return resp
 
 

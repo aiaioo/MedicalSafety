@@ -15,6 +15,7 @@
      {% if report_id %}
      data-report-url="{{ url_for('api_report', report_id=report_id) }}"
      data-export-url="{{ url_for('api_report_export', report_id=report_id) }}"
+     data-export-docx-url="{{ url_for('api_report_export_docx', report_id=report_id) }}"
      {% endif %}
 >
   <header class="docbar">
@@ -29,6 +30,7 @@
         <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
         <hr>
         <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
+        <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
       </div>
     </nav>
 
