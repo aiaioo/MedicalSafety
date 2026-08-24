@@ -38,7 +38,12 @@ page 2 = image-only, simulating a scanned page).
 
 ## Adding documents
 
-Drop files into `documents/`:
+Easiest: in the document editor (`/document`), use **File → Upload source…**, or
+`POST /api/documents/upload` (multipart `file` field) directly — either way the file is
+validated (must actually open as a PDF/Word doc) and saved into `documents/` under a
+slugified id, de-duplicated automatically if that id is already taken.
+
+You can also drop files into `documents/` directly:
 - `<doc_id>.pdf` — used directly.
 - `<doc_id>.docx` / `<doc_id>.doc` — converted to PDF on first request via
   LibreOffice (`soffice --headless --convert-to pdf`), then cached in

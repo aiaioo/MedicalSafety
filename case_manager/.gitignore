@@ -2,10 +2,13 @@ __pycache__/
 *.pyc
 .venv/
 
-# Working storage — generated/cached at runtime, not source
+# Working storage — generated/cached at runtime, not source (and may hold real
+# case content, which shouldn't land in git history)
 storage/cache/
 storage/annotations/
 storage/snippets/
+storage/reports/
 !storage/cache/.gitkeep
 !storage/annotations/.gitkeep
 !storage/snippets/.gitkeep
+!storage/reports/.gitkeep

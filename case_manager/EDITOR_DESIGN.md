@@ -22,6 +22,8 @@ annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives
 | `/api/report/<id>` | GET | Fetch one report's full record (`name`, `html`, `source_doc`, `source_type`, `margins`, timestamps). |
 | `/api/report/<id>` | POST | Save/update a report. Body: `{name, html, source_doc, source_type, margins}`. Server re-sanitizes `html` and re-validates `margins` before persisting (§ Sanitization, § Page margins). |
 | `/api/report/<id>/export` | GET | Renders the saved `html` to a PDF (`render_report_pdf`) using the report's saved `margins`, and returns it as a download. |
+| `/api/report/<id>/export.docx` | GET | Renders the saved `html` to a `.docx` (`render_report_docx`) and returns it as a download. |
+| `/api/documents/upload` | POST | Multipart `file` field (`.pdf`/`.docx`/`.doc`). Validates the file actually opens (PyMuPDF for PDF, python-docx for Word), saves it into `documents/` under a slugified doc id, and returns `{id, type, filename}`. See § Uploading a source document. |
 
 Report records are stored one-per-file as `storage/reports/<id>.json`:
 
@@ -53,9 +55,11 @@ model, serialized as HTML.
 never has to construct API URLs itself beyond simple concatenation, and Jinja's
 `url_for` stays the single source of truth for route paths.
 
-- `.docbar` — top bar: back link, File menu (New/Open/Page setup/Download as PDF), the
-  document title `<input>`, an explicit **Save** button + autosave status text, and the
-  source picker (`<select id="sourceSelect">` + "Annotate source »" link).
+- `.docbar` — top bar: back link, File menu (New document / Open, then — in its own
+  group — Upload source, then Page setup, then Download as PDF / Download as Word), the
+  document title `<input>`, an explicit **Save** button + autosave status text, an
+  `#uploadSourceStatus` status span, and the source picker (`<select id="sourceSelect">`
+  + "Annotate source »" link).
 - `.doc-toolbar` (`#formatToolbar`) — a Google-Docs-style formatting toolbar: font
   family/size selects, paragraph style select (Normal/H1/H2/H3), bold/italic/underline,
   text color + highlight color pickers, alignment buttons (inline SVG icons), bullet/
@@ -88,6 +92,40 @@ wiring, pagination, autosave — only exists when actually editing a document.
   navigates to the newly created report's URL. If `?source=` was present in the current
   URL (arrived via the annotator's "Compile document »" link), the modal opens
   automatically pre-filled with that source.
+
+### Uploading a source document
+
+`File → Upload source…` (`uploadSourceMenuBtn`) is a plain menu `<button>` that
+programmatically clicks a hidden `<input type="file" id="uploadSourceInput">` sitting
+right next to it in the dropdown — the standard pattern for a custom-styled file picker
+trigger. It's deliberately in its own group (separated by `<hr>`s from New/Open above and
+Page setup below) since it's a different kind of action: it mutates the shared
+`documents/` library rather than the current report.
+
+On the input's `change` event, `document.js` posts the file as `multipart/form-data` to
+`POST /api/documents/upload`, which is the only way to add a source document short of
+dropping a file into `documents/` on the server directly (§ Document model in
+`ANNOTATOR_DESIGN.md`). On success it:
+
+- appends a new `<option>` (value `"<id>|<type>"`) to **both** `sourceSelect` and the New
+  Document modal's `newDocSource`, so the freshly uploaded doc is immediately choosable
+  in either place without a page reload;
+- if a report is currently open, selects it in `sourceSelect` and re-runs the same
+  `change` handling as picking it manually (`updateAnnotateLink()`, `loadSnippets()`,
+  `markDirty()`) — so uploading while editing a report both attaches the new source to
+  that report and immediately shows its (empty) snippet list;
+- writes a short status message into `#uploadSourceStatus` (next to the File menu, since
+  the menu itself has already closed by the time the async upload/response completes).
+
+Failure (wrong extension, corrupt/unparseable file, empty body) surfaces the server's
+`{"error": "..."}` message in the same status span with an `.error` class, and never
+touches `sourceSelect`/`newDocSource` or the report.
+
+Doc-id collisions are resolved server-side, not client-side: `api_upload_document`
+slugifies the uploaded filename's stem (reusing `slugify_report_name`) and, if a doc with
+that id already exists (as `.pdf`, `.docx`, or `.doc`), appends `-<6 hex chars>` until it
+finds a free id — so re-uploading a same-named file never silently overwrites an existing
+source document.
 
 ### Save / autosave
 

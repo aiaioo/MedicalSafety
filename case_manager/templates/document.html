@@ -27,12 +27,16 @@
         <button type="button" id="newDocBtn">New document&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
         <hr>
+        <button type="button" id="uploadSourceMenuBtn">Upload source&hellip;</button>
+        <input type="file" id="uploadSourceInput" accept=".pdf,.docx,.doc" hidden>
+        <hr>
         <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
         <hr>
         <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
         <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
       </div>
     </nav>
+    <span id="uploadSourceStatus" class="upload-status"></span>
 
     <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" {{ 'disabled' if not report_id }}>
     <button type="button" id="saveBtn" class="save-btn" {{ 'disabled' if not report_id }}>Save</button>

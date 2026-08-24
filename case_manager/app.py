@@ -57,6 +57,9 @@ def sanitize_margins(raw, fallback=None):
     return result
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
+
+UPLOAD_EXTENSIONS = {".pdf": "pdf", ".docx": "docx", ".doc": "docx"}
 
 
 class DocumentError(Exception):
@@ -751,6 +754,51 @@ def document_view():
         preselect_source=preselect_source,
         preselect_type=preselect_type,
     )
+
+
+# ---------------------------------------------------------------------------
+# API: document upload
+# ---------------------------------------------------------------------------
+
+@app.route("/api/documents/upload", methods=["POST"])
+def api_upload_document():
+    f = request.files.get("file")
+    if f is None or not f.filename:
+        raise DocumentError("No file uploaded (expected multipart field 'file')", 400)
+
+    ext = Path(f.filename).suffix.lower()
+    norm_type = UPLOAD_EXTENSIONS.get(ext)
+    if norm_type is None:
+        raise DocumentError(f"Unsupported file type {ext!r}. Upload a .pdf, .docx, or .doc file.", 400)
+
+    data = f.read()
+    if not data:
+        raise DocumentError("Uploaded file is empty", 400)
+
+    if norm_type == "pdf":
+        try:
+            with fitz.open(stream=data, filetype="pdf") as d:
+                if d.page_count == 0:
+                    raise DocumentError("PDF has no pages", 400)
+        except DocumentError:
+            raise
+        except Exception as exc:
+            raise DocumentError(f"File is not a valid PDF: {exc}", 400) from exc
+    else:
+        try:
+            DocxDocument(io.BytesIO(data))
+        except Exception as exc:
+            raise DocumentError(f"File is not a valid Word document: {exc}", 400) from exc
+
+    stem = slugify_report_name(Path(f.filename).stem)
+    doc_id = stem
+    while any((DOCUMENTS_DIR / f"{doc_id}{e}").exists() for e in (".pdf", ".docx", ".doc")):
+        doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
+
+    out_path = DOCUMENTS_DIR / f"{doc_id}{ext}"
+    out_path.write_bytes(data)
+
+    return jsonify({"id": doc_id, "type": norm_type, "filename": out_path.name})
 
 
 # ---------------------------------------------------------------------------
