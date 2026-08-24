@@ -186,6 +186,86 @@
   // rather than legacy <font>/... tags, which our sanitizer whitelist doesn't
   // allow and would otherwise strip the formatting right back out on save.
   document.execCommand("styleWithCSS", false, true);
+  // Keep top-level blocks as <p> (rather than Chrome's default bare <div>)
+  // so pagination has a predictable, semantic set of block children to walk.
+  document.execCommand("defaultParagraphSeparator", false, "p");
+
+  // ---------------------------------------------------------------------
+  // Pagination: simulate A4 pages inside the single contenteditable by
+  // inserting non-editable spacer elements between top-level blocks that
+  // would otherwise overflow past a page boundary. Blocks are never split
+  // mid-paragraph -- a block that doesn't fit on the current page moves to
+  // the next page whole. Spacers only ever sit *between* blocks, never
+  // inside the one the caret is in, so the current selection stays valid
+  // across repagination without any manual save/restore.
+  // ---------------------------------------------------------------------
+  const PAGE_CONTENT_HEIGHT = 1123 - 2 * 61.33; // px, matches the .editor CSS page box
+
+  let paginateScheduled = false;
+  let paginating = false;
+
+  function schedulePaginate() {
+    if (paginateScheduled) return;
+    paginateScheduled = true;
+    requestAnimationFrame(() => {
+      paginateScheduled = false;
+      paginate();
+    });
+  }
+
+  function paginate() {
+    if (paginating) return;
+    paginating = true;
+    paginationObserver.disconnect();
+    try {
+      editor.querySelectorAll(":scope > .page-break").forEach((el) => el.remove());
+
+      const blocks = Array.from(editor.childNodes).filter(
+        (n) => n.nodeType === 1 && !n.classList.contains("page-break")
+      );
+
+      let used = 0;
+      let pageNum = 1;
+      for (const block of blocks) {
+        const style = getComputedStyle(block);
+        const h =
+          block.getBoundingClientRect().height +
+          parseFloat(style.marginTop || 0) +
+          parseFloat(style.marginBottom || 0);
+        if (used > 0 && used + h > PAGE_CONTENT_HEIGHT) {
+          pageNum += 1;
+          const brk = document.createElement("div");
+          brk.className = "page-break";
+          brk.contentEditable = "false";
+          brk.dataset.page = String(pageNum);
+          editor.insertBefore(brk, block);
+          used = 0;
+        }
+        used += h;
+      }
+    } finally {
+      paginating = false;
+      paginationObserver.observe(editor, { childList: true, subtree: true, characterData: true });
+    }
+  }
+
+  const paginationObserver = new MutationObserver(() => schedulePaginate());
+  paginationObserver.observe(editor, { childList: true, subtree: true, characterData: true });
+  // Images load asynchronously, so a block's height is wrong until they do.
+  editor.addEventListener(
+    "load",
+    (e) => {
+      if (e.target.tagName === "IMG") schedulePaginate();
+    },
+    true
+  );
+  window.addEventListener("resize", schedulePaginate);
+
+  function getCleanEditorHtml() {
+    const clone = editor.cloneNode(true);
+    clone.querySelectorAll(".page-break").forEach((el) => el.remove());
+    return clone.innerHTML;
+  }
 
   downloadPdfBtn.addEventListener("click", async () => {
     try {
@@ -235,7 +315,7 @@
     const { source_doc, source_type } = currentSource();
     const payload = {
       name: titleInput.value.trim() || "Untitled document",
-      html: editor.innerHTML,
+      html: getCleanEditorHtml(),
       source_doc,
       source_type,
     };
@@ -266,7 +346,7 @@
     try {
       const { source_doc, source_type } = currentSource();
       const blob = new Blob(
-        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", html: editor.innerHTML, source_doc, source_type })],
+        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", html: getCleanEditorHtml(), source_doc, source_type })],
         { type: "application/json" }
       );
       navigator.sendBeacon(reportUrl, blob);
