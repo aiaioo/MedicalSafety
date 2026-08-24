@@ -46,14 +46,14 @@
       }
     });
 
-  const uploadForm = document.getElementById("uploadForm");
   const uploadInput = document.getElementById("uploadInput");
   const uploadSubmit = document.getElementById("uploadSubmit");
   const uploadStatus = document.getElementById("uploadStatus");
 
-  if (uploadForm) {
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
+  if (uploadSubmit && uploadInput) {
+    uploadSubmit.addEventListener("click", () => uploadInput.click());
+
+    uploadInput.addEventListener("change", async () => {
       const file = uploadInput.files[0];
       if (!file) return;
 
@@ -73,6 +73,7 @@
         uploadStatus.textContent = err.message;
         uploadStatus.classList.add("error");
         uploadSubmit.disabled = false;
+        uploadInput.value = "";
       }
     });
   }

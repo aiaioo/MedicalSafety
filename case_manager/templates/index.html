@@ -32,11 +32,11 @@
     {% else %}
     <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
     {% endif %}
-    <form id="uploadForm" class="upload-form">
-      <input type="file" id="uploadInput" accept=".pdf,.docx,.doc">
-      <button type="submit" id="uploadSubmit">Upload</button>
+    <div class="upload-form">
+      <button type="button" id="uploadSubmit">Upload source&hellip;</button>
+      <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
       <span id="uploadStatus" class="upload-status"></span>
-    </form>
+    </div>
   </section>
 </div>
 <script src="{{ url_for('static', filename='index.js') }}"></script>
