@@ -14,7 +14,7 @@
     <h2>Your documents</h2>
     <p class="empty" id="indexReportsEmpty" style="display:none">No documents yet.</p>
     <div id="indexReportGrid" class="report-grid" data-reports-url="{{ url_for('api_reports') }}"></div>
-    <p><a href="{{ url_for('document_view') }}">Open the document editor &raquo;</a></p>
+    <p><button type="button" id="newDocBtn">New document&hellip;</button></p>
   </section>
 
   <section class="index-section">
@@ -39,6 +39,29 @@
     </div>
   </section>
 </div>
+
+<div class="modal-overlay" id="newDocModal">
+  <div class="modal">
+    <h3>New document</h3>
+    <label class="modal-field">Name
+      <input id="newDocName" type="text" placeholder="e.g. Case summary — Jane Doe" maxlength="200">
+    </label>
+    <label class="modal-field">Source document (optional)
+      <select id="newDocSource">
+        <option value="">&mdash; none &mdash;</option>
+        {% for d in docs %}
+        <option value="{{ d.id }}|{{ d.type }}">{{ d.id }} ({{ d.type }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p id="newDocError" class="error-message" style="display:none"></p>
+    <div class="modal-actions">
+      <button type="button" id="newDocCancel">Cancel</button>
+      <button type="button" id="newDocCreate">Create</button>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='index.js') }}"></script>
 </body>
 </html>

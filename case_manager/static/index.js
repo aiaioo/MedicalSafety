@@ -46,6 +46,68 @@
       }
     });
 
+  const newDocBtn = document.getElementById("newDocBtn");
+  const newDocModal = document.getElementById("newDocModal");
+  const newDocName = document.getElementById("newDocName");
+  const newDocSource = document.getElementById("newDocSource");
+  const newDocError = document.getElementById("newDocError");
+  const newDocCancel = document.getElementById("newDocCancel");
+  const newDocCreate = document.getElementById("newDocCreate");
+
+  function openModal(el) {
+    el.classList.add("open");
+  }
+  function closeModal(el) {
+    el.classList.remove("open");
+  }
+
+  if (newDocBtn && newDocModal) {
+    newDocBtn.addEventListener("click", () => {
+      newDocName.value = "";
+      newDocSource.value = "";
+      newDocError.style.display = "none";
+      openModal(newDocModal);
+      setTimeout(() => newDocName.focus(), 0);
+    });
+    newDocCancel.addEventListener("click", () => closeModal(newDocModal));
+    newDocModal.addEventListener("click", (e) => {
+      if (e.target === newDocModal) closeModal(newDocModal);
+    });
+
+    async function createDocument() {
+      const name = newDocName.value.trim();
+      if (!name) {
+        newDocError.textContent = "Please enter a name for the document.";
+        newDocError.style.display = "block";
+        return;
+      }
+      let source_doc = "";
+      let source_type = "pdf";
+      if (newDocSource.value) {
+        [source_doc, source_type] = newDocSource.value.split("|");
+      }
+      newDocCreate.disabled = true;
+      try {
+        const res = await fetch(reportsUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, source_doc, source_type }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        window.location.href = `/document?report=${encodeURIComponent(data.id)}`;
+      } catch (err) {
+        newDocError.textContent = "Could not create document: " + err.message;
+        newDocError.style.display = "block";
+        newDocCreate.disabled = false;
+      }
+    }
+    newDocCreate.addEventListener("click", createDocument);
+    newDocName.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") createDocument();
+    });
+  }
+
   const uploadInput = document.getElementById("uploadInput");
   const uploadSubmit = document.getElementById("uploadSubmit");
   const uploadStatus = document.getElementById("uploadStatus");
