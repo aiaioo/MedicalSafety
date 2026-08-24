@@ -647,6 +647,229 @@
     if (hoveredImg) positionResizeHandles(hoveredImg);
   });
 
+  // ---------------------------------------------------------------------
+  // Tab / Shift+Tab indent. Two independent notions of "indent":
+  //  - A list item (<li>) indents by nesting under the <li> it directly
+  //    follows -- reusing that sibling's existing nested <ol>/<ul> if it has
+  //    one (so numbering continues) or creating a fresh one (so numbering
+  //    starts at 1). Outdent is the inverse: splice the <li> back into the
+  //    grandparent list right after its parent <li>, pushing any of its own
+  //    later siblings down another level (as its own new children) so they
+  //    stay nested under it rather than jumping out with it.
+  //  - Anything else (a paragraph/heading, or a standalone snippet image) is
+  //    "indented" by nudging its own left margin in fixed steps -- there's no
+  //    nesting structure to build, just a visual indent.
+  // Deliberately not implemented via execCommand("indent"/"outdent"): Chrome
+  // produces invalid markup for the list case (a bare <ol> dropped in as a
+  // sibling of <li>, not nested inside one), so list nesting is built by hand
+  // here instead of trusting the browser's own command.
+  // ---------------------------------------------------------------------
+  const INDENT_STEP_PX = 40;
+
+  function blockIndentEl(el, direction) {
+    if (el.tagName === "IMG" && el.style.marginLeft === "auto") {
+      // Centered/right-aligned snippet (see setSnippetAlign) -- its marginLeft
+      // is load-bearing for alignment, not indent. Leave it alone rather than
+      // clobber the alignment.
+      return false;
+    }
+    const cur = parseFloat(el.style.marginLeft) || 0;
+    const next = Math.max(0, cur + direction * INDENT_STEP_PX);
+    if (next === cur) return false;
+    if (next === 0) el.style.removeProperty("margin-left");
+    else el.style.marginLeft = next + "px";
+    return true;
+  }
+
+  // Nests `li` under the <li> it directly follows, reusing that sibling's
+  // trailing nested list (continuing its numbering) if it already has one.
+  // No-op if `li` is the first item in its list -- there's nothing to nest
+  // it under.
+  function listIndentItem(li) {
+    const prev = li.previousElementSibling;
+    if (!prev || prev.tagName !== "LI") return false;
+    const list = li.parentElement;
+    let nested = prev.querySelector(":scope > ol, :scope > ul");
+    if (!nested) {
+      nested = document.createElement(list.tagName);
+      prev.appendChild(nested);
+    }
+    nested.appendChild(li);
+    return true;
+  }
+
+  // Outdents a contiguous run of sibling <li>s (all direct children of the
+  // same nested list) together, preserving their relative order and re-
+  // nesting whatever followed the run (within that same nested list) as new
+  // children of the run's last item, so those later items stay a level
+  // below it instead of also popping out. No-op if the run is already at the
+  // top level of its list (no parent <li> to splice back into).
+  function listOutdentRun(items) {
+    if (!items.length) return false;
+    const nested = items[0].parentElement;
+    const parentLi = nested.parentElement;
+    if (!parentLi || parentLi.tagName !== "LI") return false;
+
+    const last = items[items.length - 1];
+    const restAfter = [];
+    for (let sib = last.nextElementSibling; sib; sib = sib.nextElementSibling) restAfter.push(sib);
+    if (restAfter.length) {
+      let ownSub = last.querySelector(":scope > ol, :scope > ul");
+      if (!ownSub) {
+        ownSub = document.createElement(nested.tagName);
+        last.appendChild(ownSub);
+      }
+      restAfter.forEach((n) => ownSub.appendChild(n));
+    }
+
+    const grandList = parentLi.parentElement;
+    const insertBefore = parentLi.nextElementSibling;
+    items.forEach((li) => grandList.insertBefore(li, insertBefore));
+    if (!nested.querySelector(":scope > li")) nested.remove();
+    return true;
+  }
+
+  // Closest actionable ancestor for a Tab press at a collapsed caret: the
+  // nearest enclosing <li> (however deeply nested), or else the top-level
+  // block (a direct child of #editor) the caret is in.
+  function closestListItemOrTopBlock(node) {
+    let n = node.nodeType === 1 ? node : node.parentElement;
+    while (n && n !== editor) {
+      if (n.tagName === "LI") return n;
+      if (n.parentElement === editor) return n;
+      n = n.parentElement;
+    }
+    return null;
+  }
+
+  // A range that selects exactly one node as a child (e.g. a click that
+  // landed the browser's own "select the whole image" behavior on a
+  // snippet), rather than text.
+  function rangeSelectedImage(range) {
+    if (range.startContainer !== range.endContainer) return null;
+    if (range.endOffset - range.startOffset !== 1) return null;
+    const node = range.startContainer.childNodes[range.startOffset];
+    return node && node.nodeType === 1 && node.tagName === "IMG" ? node : null;
+  }
+
+  function topLevelAncestor(node) {
+    let n = node.nodeType === 1 ? node : node.parentElement;
+    while (n && n.parentElement !== editor) n = n.parentElement;
+    return n && n.parentElement === editor ? n : null;
+  }
+
+  // Whether the range overlaps `li`'s own content -- its direct children
+  // other than a nested <ol>/<ul>. Deliberately not range.intersectsNode(li)
+  // itself: that's also true for an *ancestor* <li> that merely contains the
+  // selection by virtue of a nested sublist being (partly) selected, which
+  // would wrongly pull the ancestor in instead of just its selected children.
+  function liOwnContentIntersects(li, range) {
+    for (const child of li.childNodes) {
+      if (child.nodeType === 1 && (child.tagName === "OL" || child.tagName === "UL")) continue;
+      if (range.intersectsNode(child)) return true;
+    }
+    return false;
+  }
+
+  // All <li>s inside `listEl` (at any depth) whose own line the range
+  // actually touches, in document order.
+  function listItemsInRange(listEl, range) {
+    return Array.from(listEl.querySelectorAll("li")).filter((li) => liOwnContentIntersects(li, range));
+  }
+
+  // For a non-collapsed selection: the actionable nodes it spans, in
+  // document order -- <li>s for any selected list content, otherwise the
+  // top-level blocks (direct children of #editor) it touches.
+  function selectedTopLevelNodes(range) {
+    const startBlock = topLevelAncestor(range.startContainer);
+    const endBlock = topLevelAncestor(range.endContainer);
+    if (!startBlock || !endBlock) return [];
+    const spanned = [];
+    for (let n = startBlock; n; n = n.nextElementSibling) {
+      spanned.push(n);
+      if (n === endBlock) break;
+    }
+    const result = [];
+    for (const block of spanned) {
+      if (block.tagName === "OL" || block.tagName === "UL") {
+        result.push(...listItemsInRange(block, range));
+      } else if (!block.classList.contains("page-break") && !block.classList.contains("page-filler")) {
+        result.push(block);
+      }
+    }
+    return result;
+  }
+
+  // Groups a document-order node list into runs of DOM-adjacent sibling
+  // <li>s (outdented together, see listOutdentRun) versus lone non-<li>
+  // blocks (outdented individually).
+  function groupIntoRuns(nodes) {
+    const runs = [];
+    for (const n of nodes) {
+      const last = runs[runs.length - 1];
+      if (
+        n.tagName === "LI" &&
+        last &&
+        last.type === "li" &&
+        last.items[last.items.length - 1].nextElementSibling === n
+      ) {
+        last.items.push(n);
+      } else {
+        runs.push(n.tagName === "LI" ? { type: "li", items: [n] } : { type: "block", items: [n] });
+      }
+    }
+    return runs;
+  }
+
+  function applyTabIndent(direction) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    let changed = false;
+    if (range.collapsed) {
+      const node = closestListItemOrTopBlock(range.startContainer);
+      if (!node) return;
+      if (node.tagName === "LI") {
+        changed = direction === 1 ? listIndentItem(node) : listOutdentRun([node]);
+      } else {
+        changed = blockIndentEl(node, direction);
+      }
+    } else {
+      const img = rangeSelectedImage(range);
+      if (img) {
+        changed = blockIndentEl(img, direction);
+      } else {
+        const nodes = selectedTopLevelNodes(range);
+        if (!nodes.length) return;
+        if (direction === 1) {
+          nodes.forEach((n) => {
+            const did = n.tagName === "LI" ? listIndentItem(n) : blockIndentEl(n, 1);
+            changed = changed || did;
+          });
+        } else {
+          groupIntoRuns(nodes).forEach((run) => {
+            if (run.type === "li") {
+              changed = listOutdentRun(run.items) || changed;
+            } else {
+              run.items.forEach((n) => {
+                changed = blockIndentEl(n, -1) || changed;
+              });
+            }
+          });
+        }
+      }
+    }
+    if (changed) markDirty();
+  }
+
+  editor.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    applyTabIndent(e.shiftKey ? -1 : 1);
+  });
+
   downloadPdfBtn.addEventListener("click", async () => {
     try {
       await saveReport();
