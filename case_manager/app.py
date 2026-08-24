@@ -234,7 +234,7 @@ def page_view():
     page = max(1, min(page, page_count))
 
     return render_template(
-        "page.html",
+        "annotations.html",
         doc_id=doc_id,
         doc_type=raw_type,
         norm_type=norm_type,
