@@ -238,8 +238,10 @@ a { color: #2266dd; }
 .editor .doc-figure:hover .figure-align-toolbar { opacity: 1; pointer-events: auto; }
 .editor .figure-align-btn {
   width: 24px; height: 22px; border: none; background: none; border-radius: 4px;
-  cursor: pointer; font-size: 12px; font-weight: 700; color: #5f6368;
+  cursor: pointer; color: #5f6368;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.editor .figure-align-btn svg { display: block; }
 .editor .figure-align-btn:hover { background: #f1f3f4; }
 .editor .figure-align-btn.active { background: #e7ebf3; color: #2266dd; }
 

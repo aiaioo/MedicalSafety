@@ -473,6 +473,15 @@
   // contenteditable="false". Alignment is expressed as a class
   // (align-center/align-right, default is left) rather than inline style
   // so it reads the same way after a save/reload round-trip.
+  // Same glyphs as the main formatting toolbar's Align left/center/right
+  // buttons (#formatToolbar in document.html), so this control reads as
+  // the same action rather than a different one.
+  const ALIGN_ICONS = {
+    left: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="0" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="0" y="12" width="10" height="2"/></svg>',
+    center: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="3" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="3" y="12" width="10" height="2"/></svg>',
+    right: '<svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="6" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="6" y="12" width="10" height="2"/></svg>',
+  };
+
   function buildAlignToolbar(figure) {
     const toolbar = document.createElement("div");
     toolbar.className = "figure-align-toolbar";
@@ -488,7 +497,7 @@
       btn.className = "figure-align-btn" + (align === current ? " active" : "");
       btn.dataset.align = align;
       btn.title = `Align ${align}`;
-      btn.textContent = align[0].toUpperCase();
+      btn.innerHTML = ALIGN_ICONS[align];
       btn.draggable = false;
       // Keep clicks on this control from reaching the figure's own
       // draggable=true / atomic-selection handling underneath it.
