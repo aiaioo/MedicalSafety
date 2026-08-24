@@ -827,6 +827,24 @@
     const range = sel.getRangeAt(0);
     if (!editor.contains(range.commonAncestorContainer)) return;
 
+    // Moving a selected <li> out of its parent list (listIndentItem/
+    // listOutdentRun) makes the browser's own live selection snap to a
+    // boundary point in the *old* parent list -- e.g. indenting the <li> the
+    // caret was in collapses the selection to (that <ol>, index), not
+    // anywhere inside the (relocated) <li>. Left alone, a second Tab right
+    // after the first would then read the selection as sitting in the
+    // *list itself* rather than an item, and indent the whole list. Capture
+    // the original boundary points as plain node/offset pairs (not a Range,
+    // which is itself live and would suffer the same snap) before mutating,
+    // then rebuild an equivalent selection from them afterward -- the nodes
+    // themselves are only reparented, never removed, so the same reference
+    // still resolves to the right spot post-mutation.
+    const wasCollapsed = range.collapsed;
+    const startNode = range.startContainer;
+    const startOffset = range.startOffset;
+    const endNode = range.endContainer;
+    const endOffset = range.endOffset;
+
     let changed = false;
     if (range.collapsed) {
       const node = closestListItemOrTopBlock(range.startContainer);
@@ -861,7 +879,19 @@
         }
       }
     }
-    if (changed) markDirty();
+    if (!changed) return;
+    markDirty();
+    try {
+      const restored = document.createRange();
+      restored.setStart(startNode, startOffset);
+      if (wasCollapsed) restored.collapse(true);
+      else restored.setEnd(endNode, endOffset);
+      sel.removeAllRanges();
+      sel.addRange(restored);
+    } catch (err) {
+      // Boundary node/offset no longer valid -- leave selection wherever
+      // the mutation left it rather than throw.
+    }
   }
 
   editor.addEventListener("keydown", (e) => {
