@@ -9,22 +9,31 @@
 <body>
 <div class="container">
   <h1>Documents</h1>
-  {% if docs %}
-  <p><a href="{{ url_for('document_view') }}">Open the document editor &raquo;</a></p>
-  {% endif %}
-  {% if docs %}
-  <ul class="doc-list">
-    {% for d in docs %}
-    <li>
-      <a href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-        {{ d.id }} <span class="tag">{{ d.type }}</span>
-      </a>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
-  {% endif %}
+
+  <section class="index-section">
+    <h2>Your documents</h2>
+    <p class="empty" id="indexReportsEmpty" style="display:none">No documents yet.</p>
+    <div id="indexReportGrid" class="report-grid" data-reports-url="{{ url_for('api_reports') }}"></div>
+    <p><a href="{{ url_for('document_view') }}">Open the document editor &raquo;</a></p>
+  </section>
+
+  <section class="index-section">
+    <h2>Source PDF files for annotation</h2>
+    {% if docs %}
+    <ul class="doc-list">
+      {% for d in docs %}
+      <li>
+        <a href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
+          {{ d.id }} <span class="tag">{{ d.type }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
+    {% endif %}
+  </section>
 </div>
+<script src="{{ url_for('static', filename='index.js') }}"></script>
 </body>
 </html>
