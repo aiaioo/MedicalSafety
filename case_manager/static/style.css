@@ -178,6 +178,8 @@ a { color: #2266dd; }
 .fmt-select-narrow { width: 56px; }
 .fmt-btn { min-width: 32px; display: inline-flex; align-items: center; justify-content: center; }
 .fmt-btn svg { display: block; }
+.fmt-btn-group { position: relative; display: inline-flex; gap: 1px; }
+.fmt-btn-caret { min-width: 20px; padding-left: 2px; padding-right: 2px; font-size: 10px; }
 .color-btn {
   position: relative; display: flex; flex-direction: column; align-items: center;
   width: 30px; padding: 4px 0; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 13px;
@@ -218,6 +220,37 @@ a { color: #2266dd; }
 .editor h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
 .editor h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
 .editor h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
+
+/* ---- multilevel numbering ("section numbers") ----
+   Default (untemplated) look for a plain numbered list: each nesting level
+   counts independently, "N." -- matches the browser's native <ol> numbering
+   that this replaces, so lists created before this feature shipped (or any
+   <ol> a preset hasn't been applied to) render unchanged. Markers are drawn
+   via CSS counters/::before rather than native list-style so restart/
+   continue (see document.js setListStartValue) work uniformly for every
+   numbered list, not just ones with a custom template applied. Templated
+   lists (an <ol> carrying lvl1- and cascade classes -- see document.js's
+   numbering engine) get their own rules generated at runtime into
+   #dynamicListStyles; those class selectors outrank these plain-ol ones
+   by specificity, so they cleanly override this default. */
+.editor ol { list-style: none; counter-reset: c1; }
+.editor ol ol { counter-reset: c2; }
+.editor ol ol ol { counter-reset: c3; }
+.editor ol ol ol ol { counter-reset: c4; }
+.editor ol ol ol ol ol { counter-reset: c5; }
+.editor ol ol ol ol ol ol { counter-reset: c6; }
+.editor ol > li { counter-increment: c1; }
+.editor ol ol > li { counter-increment: c2; }
+.editor ol ol ol > li { counter-increment: c3; }
+.editor ol ol ol ol > li { counter-increment: c4; }
+.editor ol ol ol ol ol > li { counter-increment: c5; }
+.editor ol ol ol ol ol ol > li { counter-increment: c6; }
+.editor ol > li::before { content: counter(c1) ". "; display: inline-block; min-width: 1.6em; }
+.editor ol ol > li::before { content: counter(c2) ". "; display: inline-block; min-width: 1.6em; }
+.editor ol ol ol > li::before { content: counter(c3) ". "; display: inline-block; min-width: 1.6em; }
+.editor ol ol ol ol > li::before { content: counter(c4) ". "; display: inline-block; min-width: 1.6em; }
+.editor ol ol ol ol ol > li::before { content: counter(c5) ". "; display: inline-block; min-width: 1.6em; }
+.editor ol ol ol ol ol ol > li::before { content: counter(c6) ". "; display: inline-block; min-width: 1.6em; }
 /* Plain, fully-editable content -- no forced size/position machinery, and
    no wrapper element. A snippet used to be <figure class="doc-figure">
    wrapping the <img>, with the figure carrying alignment/cursor/border --
@@ -322,6 +355,15 @@ a { color: #2266dd; }
 }
 .modal-hint { font-size: 12px; color: #6b7280; margin: 4px 0 14px; }
 .margin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.modal-wide { width: 520px; }
+.list-cascade-field { display: flex; align-items: center; gap: 8px; }
+.list-cascade-field input { margin: 0; }
+.list-levels-grid {
+  display: grid; grid-template-columns: auto 1fr 1fr; gap: 8px 10px; align-items: center;
+  margin-top: 10px; font-size: 13px;
+}
+.list-levels-grid .list-level-label { color: #46536b; }
+.list-levels-grid select { width: 100%; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-actions button {
   border: 1px solid #cfd4e0; background: #f7f8fa; padding: 7px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;

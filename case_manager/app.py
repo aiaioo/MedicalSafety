@@ -392,12 +392,69 @@ REPORT_PDF_CSS = """
   figcaption { font-size: 9pt; color: #555; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }
+  ol, ul { list-style: none; margin: 0; padding-left: 0; }
+  li { margin: 2pt 0; }
+  li ol, li ul { margin-left: 18pt; }
 """
 
 
+def _serialize_html_tree(node):
+    """Renders an _HTMLTreeBuilder node (or its "root" wrapper) back to an
+    HTML string -- the inverse of that parser, used so the PDF exporter can
+    inject computed section-number marker text (see _inject_list_markers)
+    into the sanitized HTML before handing it to fitz.Story, rather than
+    depending on that renderer's own CSS counter/::before support, which is
+    unverified."""
+    if isinstance(node, str):
+        return html_escape(node)
+    if node.tag == "root":
+        return "".join(_serialize_html_tree(c) for c in node.children)
+    attrs = "".join(f' {k}="{html_escape(str(v), quote=True)}"' for k, v in node.attrs.items())
+    if node.tag in REPORT_VOID_TAGS:
+        return f"<{node.tag}{attrs}>"
+    inner = "".join(_serialize_html_tree(c) for c in node.children)
+    return f"<{node.tag}{attrs}>{inner}</{node.tag}>"
+
+
+def _inject_list_markers(nodes, list_ctx=None, num_state=None, depth=0):
+    """Walks a parsed HTML tree computing the same section numbers the live
+    editor's CSS counters render (see _ListNumberingState above), and
+    prepends each <ol> item's marker as literal text -- mirrors
+    _docx_render_blocks' ol/li recursion, just building marker strings
+    instead of docx paragraphs."""
+    for node in nodes:
+        if isinstance(node, str):
+            continue
+        tag = node.tag
+        if tag == "ol":
+            child_depth = depth + 1
+            if num_state is None:
+                cascade, levels = _parse_list_template(node.attrs.get("class"))
+                child_state = _ListNumberingState(cascade, levels)
+            else:
+                child_state = num_state
+            child_state.enter_list(child_depth, node.attrs.get("style"))
+            _inject_list_markers(node.children, list_ctx="ol", num_state=child_state, depth=child_depth)
+        elif tag == "ul":
+            _inject_list_markers(node.children, list_ctx="ul", depth=depth + 1)
+        elif tag == "li":
+            if list_ctx == "ol" and num_state is not None:
+                num_state.next_value(depth, node.attrs.get("style"))
+                node.children.insert(0, num_state.marker_text(depth))
+            _inject_list_markers(node.children, list_ctx=list_ctx, num_state=num_state, depth=depth)
+        else:
+            _inject_list_markers(node.children, list_ctx=list_ctx, num_state=num_state, depth=depth)
+
+
 def render_report_pdf(title, body_html, margins=None):
+    builder = _HTMLTreeBuilder()
+    builder.feed(body_html)
+    builder.close()
+    _inject_list_markers(builder.root.children)
+    numbered_body_html = _serialize_html_tree(builder.root)
+
     heading = f"<h1>{html_escape(title)}</h1>" if title else ""
-    full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{body_html}</body></html>"
+    full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{numbered_body_html}</body></html>"
 
     m = sanitize_margins(margins)
     mediabox = fitz.paper_rect("a4")
@@ -566,7 +623,128 @@ def _docx_render_inline(node, paragraph, fmt, max_width_emu):
         _docx_render_inline(child, paragraph, child_fmt, max_width_emu)
 
 
-def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None):
+# ---------------------------------------------------------------------------
+# Multilevel numbering ("section numbers") -- shared by the PDF and DOCX
+# exporters below. Mirrors the template/restart encoding document.js's
+# numbering engine writes directly onto the <ol>/<li> markup (see the
+# "Multilevel numbering" comment in static/document.js): a template lives in
+# classes on the top-level <ol> (`cascade`, `lvl<N>-<type>-<wrap>`), and a
+# restart/continue override lives in `style="counter-reset: c<level> <n>"`
+# on any <li> (or the <ol> itself). Neither exporter can rely on the live
+# browser's own CSS counter engine, so both compute the same numbers here in
+# Python instead and render them as literal marker text.
+# ---------------------------------------------------------------------------
+LIST_MAX_LEVELS = 6
+LIST_WRAPS = {
+    "none": ("", ""),
+    "period": ("", "."),
+    "paren": ("(", ")"),
+    "trail": ("", ")"),
+}
+_LIST_TEMPLATE_CLASS_RE = re.compile(r"^lvl(\d+)-([a-z]+)-([a-z]+)$")
+_COUNTER_RESET_RE_CACHE = {}
+
+
+def _to_alpha(n, upper=False):
+    s = ""
+    while n > 0:
+        n -= 1
+        s = chr(97 + (n % 26)) + s
+        n //= 26
+    return s.upper() if upper else s
+
+
+_ROMAN_TABLE = [
+    (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
+    (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+]
+
+
+def _to_roman(n, upper=False):
+    s = ""
+    for value, sym in _ROMAN_TABLE:
+        while n >= value:
+            s += sym
+            n -= value
+    return s.upper() if upper else s
+
+
+def _format_counter_value(n, type_):
+    if type_ == "alpha":
+        return _to_alpha(n)
+    if type_ == "upalpha":
+        return _to_alpha(n, upper=True)
+    if type_ == "roman":
+        return _to_roman(n)
+    if type_ == "uproman":
+        return _to_roman(n, upper=True)
+    return str(n)
+
+
+def _parse_list_template(class_attr):
+    """(cascade, levels) for a top-level <ol>'s `class`, levels[i] = (type,
+    wrap) for level i+1 -- falls back to plain decimal/period (the default,
+    untemplated look) for any level without an explicit class, exactly like
+    document.js's parseListTemplateFromClassList."""
+    classes = (class_attr or "").split()
+    cascade = "cascade" in classes
+    levels = []
+    for i in range(1, LIST_MAX_LEVELS + 1):
+        found = None
+        for c in classes:
+            m = _LIST_TEMPLATE_CLASS_RE.match(c)
+            if m and int(m.group(1)) == i:
+                found = (m.group(2), m.group(3))
+                break
+        levels.append(found or ("decimal", "period"))
+    return cascade, levels
+
+
+def _counter_reset_value(style_attr, counter_name):
+    if not style_attr:
+        return None
+    pattern = _COUNTER_RESET_RE_CACHE.get(counter_name)
+    if pattern is None:
+        pattern = re.compile(r"counter-reset:\s*" + re.escape(counter_name) + r"\s+(-?\d+)")
+        _COUNTER_RESET_RE_CACHE[counter_name] = pattern
+    m = pattern.search(style_attr)
+    return int(m.group(1)) if m else None
+
+
+class _ListNumberingState:
+    """One of these per top-level <ol>, threaded through the ol/li recursion
+    of both exporters below. Tracks a running per-level counter exactly like
+    the live editor's CSS counters do, including any restart/continue
+    override found in an element's own `style`."""
+
+    def __init__(self, cascade, levels):
+        self.cascade = cascade
+        self.levels = levels
+        self.counters = [0] * LIST_MAX_LEVELS
+
+    def enter_list(self, depth, list_style_attr):
+        reset = _counter_reset_value(list_style_attr, f"c{depth}")
+        if reset is not None:
+            self.counters[depth - 1] = reset
+
+    def next_value(self, depth, li_style_attr):
+        reset = _counter_reset_value(li_style_attr, f"c{depth}")
+        if reset is not None:
+            self.counters[depth - 1] = reset
+        self.counters[depth - 1] += 1
+        return self.counters[depth - 1]
+
+    def marker_text(self, depth):
+        start = 1 if self.cascade else depth
+        parts = []
+        for i in range(start, depth + 1):
+            type_, wrap = self.levels[i - 1]
+            pre, suf = LIST_WRAPS.get(wrap, LIST_WRAPS["period"])
+            parts.append(pre + _format_counter_value(self.counters[i - 1], type_) + suf)
+        return "".join(parts) + " "
+
+
+def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None, num_state=None, depth=0):
     for node in nodes:
         if isinstance(node, str):
             if node.strip():
@@ -590,14 +768,29 @@ def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None):
             p = doc.add_paragraph(style="Intense Quote")
             for child in node.children:
                 _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag in ("ul", "ol"):
-            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=tag)
+        elif tag == "ul":
+            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx="ul", depth=depth + 1)
+        elif tag == "ol":
+            child_depth = depth + 1
+            if num_state is None:
+                cascade, levels = _parse_list_template(node.attrs.get("class"))
+                child_state = _ListNumberingState(cascade, levels)
+            else:
+                child_state = num_state
+            child_state.enter_list(child_depth, node.attrs.get("style"))
+            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx="ol", num_state=child_state, depth=child_depth)
         elif tag == "li":
-            style = "List Number" if list_ctx == "ol" else "List Bullet"
-            p = doc.add_paragraph(style=style)
+            if list_ctx == "ol" and num_state is not None:
+                num_state.next_value(depth, node.attrs.get("style"))
+                p = doc.add_paragraph(style="List Paragraph")
+                p.paragraph_format.left_indent = Pt(18 * depth)
+                p.paragraph_format.first_line_indent = Pt(-18)
+                p.add_run(num_state.marker_text(depth))
+            else:
+                p = doc.add_paragraph(style="List Bullet")
             for child in node.children:
                 if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
-                    _docx_render_blocks([child], doc, max_width_emu)
+                    _docx_render_blocks([child], doc, max_width_emu, num_state=num_state, depth=depth)
                 else:
                     _docx_render_inline(child, p, {}, max_width_emu)
         elif tag == "pre":
@@ -624,7 +817,7 @@ def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None):
             _docx_render_table(node, doc, max_width_emu)
         else:
             # Unknown/structural wrapper: descend into its children.
-            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=list_ctx)
+            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=list_ctx, num_state=num_state, depth=depth)
 
 
 def _flatten_text(node):

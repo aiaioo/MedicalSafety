@@ -947,6 +947,522 @@
     applyTabIndent(e.shiftKey ? -1 : 1);
   });
 
+  // ---------------------------------------------------------------------
+  // Multilevel numbering ("section numbers"), e.g. 1(2)(3) or 1(b)3(c).
+  //
+  // A template is encoded entirely as classes/inline styles on the list
+  // markup itself -- both already pass the server's HTML sanitizer
+  // unrestricted (see _clean_report_attrs in app.py), so no backend changes
+  // are needed and a list's template/restart state survives save/reload for
+  // free:
+  //   - `cascade` on the top-level <ol> (the list root -- not itself nested
+  //     in an <li>): level N's marker concatenates levels 1..N, needed for
+  //     "1(2)(3)"/"1(b)3(c)". Absent = each level counts independently
+  //     (today's native look; the default for the plain "1. List" button).
+  //   - `lvl1-<type>-<wrap> ... lvl6-<type>-<wrap>` on the top-level <ol>:
+  //     the per-level numbering style. Absent entirely = the default
+  //     template (plain decimal, no cascade; see the static CSS in
+  //     style.css, which this only overrides when a template is present).
+  //   - `style="counter-reset: c<level> <n>"` on any <li> (or the top-level
+  //     <ol> itself): restart/continue/set-number-to support, using the
+  //     same standard CSS "restart a counter on one item" technique for
+  //     both cases -- just a different n.
+  // Nested <ol>s created by listIndentItem/listOutdentRun above need no
+  // classes of their own: depth is just DOM nesting, and the generated CSS
+  // below keys off "ol ol ol..." descendant chains from the classed root,
+  // so indent/outdent didn't need to change at all.
+  // ---------------------------------------------------------------------
+  const LIST_MAX_LEVELS = 6;
+  const LIST_CSS_COUNTER_STYLE = {
+    decimal: "decimal",
+    alpha: "lower-alpha",
+    upalpha: "upper-alpha",
+    roman: "lower-roman",
+    uproman: "upper-roman",
+  };
+  const LIST_WRAPS = {
+    none: ["", ""],
+    period: ["", "."],
+    paren: ["(", ")"],
+    trail: ["", ")"],
+  };
+  const LIST_PRESETS = {
+    simple: { cascade: false, levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "decimal", wrap: "period" })) },
+    "legal-numeric": {
+      cascade: true,
+      levels: Array.from({ length: LIST_MAX_LEVELS }, (_, i) => (i === 0 ? { type: "decimal", wrap: "none" } : { type: "decimal", wrap: "paren" })),
+    },
+    "legal-alpha": {
+      cascade: true,
+      levels: Array.from({ length: LIST_MAX_LEVELS }, (_, i) => (i % 2 === 0 ? { type: "decimal", wrap: "none" } : { type: "alpha", wrap: "paren" })),
+    },
+    alpha: { cascade: false, levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "alpha", wrap: "period" })) },
+    roman: { cascade: false, levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "roman", wrap: "period" })) },
+  };
+  // Walks from a (possibly nested) <ol>/<ul> up to the outermost list it's
+  // nested inside of (the one that carries the template classes).
+  function topLevelListRoot(list) {
+    let cur = list;
+    for (;;) {
+      const parentLi = cur.parentElement;
+      if (!parentLi || parentLi.tagName !== "LI") return cur;
+      const grand = parentLi.parentElement;
+      if (!grand || (grand.tagName !== "OL" && grand.tagName !== "UL")) return cur;
+      cur = grand;
+    }
+  }
+
+  // 1-based nesting depth of `list` (an <ol>/<ul>) within its own list chain.
+  function listDepth(list) {
+    let depth = 1;
+    let cur = list;
+    for (;;) {
+      const parentLi = cur.parentElement;
+      if (!parentLi || parentLi.tagName !== "LI") return depth;
+      const grand = parentLi.parentElement;
+      if (!grand || (grand.tagName !== "OL" && grand.tagName !== "UL")) return depth;
+      cur = grand;
+      depth += 1;
+    }
+  }
+
+  function listTemplateClassNames(spec) {
+    const classes = [];
+    if (spec.cascade) classes.push("cascade");
+    spec.levels.slice(0, LIST_MAX_LEVELS).forEach((lvl, i) => {
+      classes.push(`lvl${i + 1}-${lvl.type}-${lvl.wrap}`);
+    });
+    return classes;
+  }
+
+  function parseListTemplateFromClassList(classes) {
+    const cascade = classes.includes("cascade");
+    const levels = [];
+    for (let i = 1; i <= LIST_MAX_LEVELS; i++) {
+      const cls = classes.find((c) => c.startsWith(`lvl${i}-`));
+      const m = cls && cls.match(/^lvl\d+-([a-z]+)-([a-z]+)$/);
+      levels.push(m ? { type: m[1], wrap: m[2] } : { type: "decimal", wrap: "period" });
+    }
+    return { cascade, levels };
+  }
+
+  // Applies a preset (by key) or a custom {cascade, levels} spec to the
+  // top-level <ol> `root` is inside of (or `root` itself, if it already is
+  // the root), replacing any template classes it already carries.
+  function applyListTemplate(root, presetKeyOrSpec) {
+    const ol = topLevelListRoot(root);
+    if (!ol || ol.tagName !== "OL") return;
+    const spec = typeof presetKeyOrSpec === "string" ? LIST_PRESETS[presetKeyOrSpec] : presetKeyOrSpec;
+    if (!spec) return;
+    Array.from(ol.classList).forEach((c) => {
+      if (c === "cascade" || /^lvl\d+-/.test(c)) ol.classList.remove(c);
+    });
+    listTemplateClassNames(spec).forEach((c) => ol.classList.add(c));
+    regenerateListStyles();
+  }
+
+  function parseListTemplate(ol) {
+    return parseListTemplateFromClassList(Array.from(ol.classList));
+  }
+
+  // Builds the `content:` value for a level-`depth` marker under a list
+  // whose template is `spec`, e.g. depth 3 under the legal-numeric preset
+  // becomes `counter(c1) "(" counter(c2) ")" "(" counter(c3) ")" " "`.
+  function listMarkerContent(spec, depth) {
+    const from = spec.cascade ? 1 : depth;
+    const parts = [];
+    for (let i = from; i <= depth; i++) {
+      const lvl = spec.levels[i - 1] || { type: "decimal", wrap: "period" };
+      const [pre, suf] = LIST_WRAPS[lvl.wrap] || LIST_WRAPS.period;
+      const style = LIST_CSS_COUNTER_STYLE[lvl.type] || "decimal";
+      if (pre) parts.push(JSON.stringify(pre));
+      parts.push(`counter(c${i}, ${style})`);
+      if (suf) parts.push(JSON.stringify(suf));
+    }
+    parts.push(JSON.stringify(" "));
+    return parts.join(" ");
+  }
+
+  function listSelectorForRoot(rootClasses, depth) {
+    const rootSel = "ol." + rootClasses.join(".");
+    return depth === 1 ? rootSel : rootSel + " " + Array(depth - 1).fill("ol").join(" ");
+  }
+
+  const dynamicListStyleEl = document.getElementById("dynamicListStyles");
+
+  // Regenerates the CSS for every templated (non-default) numbered list
+  // currently in the document into #dynamicListStyles, a <style> element
+  // that lives outside #editor so it's never part of saved/exported
+  // content -- it's rebuilt from the classes on the lists themselves
+  // whenever a template is applied and once on document load.
+  function regenerateListStyles() {
+    if (!dynamicListStyleEl) return;
+    const seen = new Map();
+    editor.querySelectorAll("ol").forEach((ol) => {
+      if (topLevelListRoot(ol) !== ol) return;
+      const templateClasses = Array.from(ol.classList).filter((c) => c === "cascade" || /^lvl\d+-/.test(c));
+      if (!templateClasses.length) return;
+      const key = templateClasses.slice().sort().join(" ");
+      if (!seen.has(key)) seen.set(key, templateClasses);
+    });
+
+    let css = "";
+    seen.forEach((classes) => {
+      const spec = parseListTemplateFromClassList(classes);
+      for (let depth = 1; depth <= LIST_MAX_LEVELS; depth++) {
+        const sel = listSelectorForRoot(classes, depth);
+        css += `.editor ${sel} { list-style: none; counter-reset: c${depth}; }\n`;
+        css += `.editor ${sel} > li { counter-increment: c${depth}; }\n`;
+        css += `.editor ${sel} > li::before { content: ${listMarkerContent(spec, depth)}; display: inline-block; min-width: 1.6em; }\n`;
+      }
+    });
+    dynamicListStyleEl.textContent = css;
+  }
+
+  function parseCounterReset(styleAttr, counterName) {
+    if (!styleAttr) return null;
+    const m = styleAttr.match(new RegExp(`counter-reset:\\s*${counterName}\\s+(-?\\d+)`));
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  // The number `li` displays at its own level, honoring any restart/
+  // continue override (a counter-reset in its own or its list's `style`)
+  // encountered along the way -- mirrors the CSS counter semantics the
+  // live rendering above uses, so this always agrees with what's on screen.
+  function computeCounterValueAtLevel(li) {
+    const list = li.parentElement;
+    if (!list || list.tagName !== "OL") return null;
+    const counterName = "c" + listDepth(list);
+    let running = parseCounterReset(list.getAttribute("style"), counterName) ?? 0;
+    for (const child of list.children) {
+      if (child.tagName !== "LI") continue;
+      const reset = parseCounterReset(child.getAttribute("style"), counterName);
+      if (reset !== null) running = reset;
+      running += 1;
+      if (child === li) return running;
+    }
+    return running;
+  }
+
+  // Sets `el` (an <li> or <ol>) so the counter at `depth` reads `n` from
+  // that point on -- the shared mechanism behind restart/set-value/continue,
+  // preserving any other inline style declarations already on `el`.
+  function setListStartValue(el, depth, n) {
+    const counterName = "c" + depth;
+    const cur = el.getAttribute("style") || "";
+    const stripped = cur.replace(new RegExp(`counter-reset:\\s*${counterName}\\s+-?\\d+;?\\s*`), "").trim();
+    const decl = `counter-reset: ${counterName} ${n - 1};`;
+    el.setAttribute("style", stripped ? `${stripped} ${decl}` : decl);
+  }
+
+  // ---------------------------------------------------------------------
+  // Right-click on a numbered-list item: restart / set value / continue.
+  // ---------------------------------------------------------------------
+  const listContextMenu = document.createElement("div");
+  listContextMenu.className = "context-menu";
+  listContextMenu.innerHTML = [
+    '<button type="button" data-action="restart">Restart numbering (start at 1)</button>',
+    '<button type="button" data-action="setvalue">Set numbering value&hellip;</button>',
+    '<button type="button" data-action="continue">Continue from previous list</button>',
+  ].join("");
+  document.body.appendChild(listContextMenu);
+  let listContextTarget = null;
+
+  function hideListContextMenu() {
+    listContextMenu.classList.remove("open");
+    listContextTarget = null;
+  }
+  editor.addEventListener("contextmenu", (e) => {
+    const li = e.target.closest && e.target.closest("li");
+    if (!li || !editor.contains(li) || !li.parentElement || li.parentElement.tagName !== "OL") return;
+    e.preventDefault();
+    listContextTarget = li;
+    listContextMenu.style.left = e.clientX + "px";
+    listContextMenu.style.top = e.clientY + "px";
+    listContextMenu.classList.add("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!listContextMenu.contains(e.target)) hideListContextMenu();
+  });
+  window.addEventListener("blur", hideListContextMenu);
+  window.addEventListener("resize", hideListContextMenu);
+
+  // Nearest earlier sibling list within the same parent -- what "continue
+  // from previous list" picks up numbering from.
+  function previousSiblingList(list) {
+    let n = list.previousElementSibling;
+    while (n) {
+      if (n.tagName === list.tagName) return n;
+      n = n.previousElementSibling;
+    }
+    return null;
+  }
+
+  listContextMenu.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn || !listContextTarget) return;
+    const li = listContextTarget;
+    const list = li.parentElement;
+    const depth = listDepth(list);
+    if (btn.dataset.action === "restart") {
+      setListStartValue(li, depth, 1);
+    } else if (btn.dataset.action === "setvalue") {
+      const current = computeCounterValueAtLevel(li) || 1;
+      const input = window.prompt("Set this item's number to:", String(current));
+      const n = input === null ? NaN : parseInt(input, 10);
+      if (Number.isFinite(n) && n > 0) setListStartValue(li, depth, n);
+      else {
+        hideListContextMenu();
+        return;
+      }
+    } else if (btn.dataset.action === "continue") {
+      const prev = previousSiblingList(list);
+      if (prev) {
+        const prevItems = Array.from(prev.children).filter((c) => c.tagName === "LI");
+        const prevLast = prevItems[prevItems.length - 1];
+        const prevValue = prevLast ? computeCounterValueAtLevel(prevLast) || 0 : 0;
+        setListStartValue(list, depth, prevValue + 1);
+      }
+    }
+    markDirty();
+    hideListContextMenu();
+  });
+
+  // ---------------------------------------------------------------------
+  // Enter on an empty list item exits the list, converting that line to a
+  // plain paragraph, instead of leaving native contentEditable behavior to
+  // produce a stray/malformed empty line that can split the list awkwardly.
+  // Every other Enter case (splitting a non-empty item) is left to the
+  // browser's native behavior, which isn't reported as broken.
+  // ---------------------------------------------------------------------
+  const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
+  function isListItemEmpty(li) {
+    if (li.querySelector(":scope > ol, :scope > ul")) return false;
+    return li.textContent.split(ZERO_WIDTH_SPACE).join("").trim() === "";
+  }
+
+  // Removes `li` from its list, splitting any following siblings into a new
+  // list of the same type (same pattern as listOutdentRun's sibling splice
+  // above) so the list before/after the removal point stay intact, and
+  // inserts a plain <p> in its place.
+  function splitListAt(li) {
+    const list = li.parentElement;
+    const parent = list.parentElement;
+    const after = [];
+    for (let sib = li.nextElementSibling; sib; sib = sib.nextElementSibling) after.push(sib);
+    li.remove();
+
+    const p = document.createElement("p");
+    p.appendChild(document.createElement("br"));
+
+    let newList = null;
+    if (after.length) {
+      newList = document.createElement(list.tagName);
+      newList.className = list.className;
+      after.forEach((n) => newList.appendChild(n));
+    }
+
+    const listStillHasItems = !!list.querySelector(":scope > li");
+    if (!listStillHasItems) {
+      parent.insertBefore(p, list);
+      if (newList) parent.insertBefore(newList, list);
+      list.remove();
+    } else {
+      if (list.nextSibling) parent.insertBefore(p, list.nextSibling);
+      else parent.appendChild(p);
+      if (newList) {
+        if (p.nextSibling) parent.insertBefore(newList, p.nextSibling);
+        else parent.appendChild(newList);
+      }
+    }
+    return { p, newList };
+  }
+
+  editor.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed || !editor.contains(range.startContainer)) return;
+    const container = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    const li = container && container.closest && container.closest("li");
+    if (!li || !editor.contains(li) || !isListItemEmpty(li)) return;
+
+    e.preventDefault();
+    const isOl = li.parentElement.tagName === "OL";
+    const depth = isOl ? listDepth(li.parentElement) : null;
+    const resumeAt = isOl ? computeCounterValueAtLevel(li) : null;
+
+    const { p, newList } = splitListAt(li);
+    if (isOl && newList) setListStartValue(newList, depth, resumeAt);
+
+    const newRange = document.createRange();
+    newRange.setStart(p, 0);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    markDirty();
+  });
+
+  // Defensive repair for documents saved before this fix shipped, whose
+  // markup may already contain a stray <li> sitting directly under #editor
+  // (not inside an <ol>/<ul>) from the old native split-on-empty-Enter
+  // behavior -- convert it to a plain paragraph so Tab/numbering treat it
+  // like the ordinary text line it visually is.
+  function repairOrphanedListItems() {
+    Array.from(editor.children).forEach((el) => {
+      if (el.tagName !== "LI") return;
+      const p = document.createElement("p");
+      while (el.firstChild) p.appendChild(el.firstChild);
+      if (!p.hasChildNodes()) p.appendChild(document.createElement("br"));
+      el.replaceWith(p);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Numbering-style toolbar: split button + preset dropdown + custom-levels
+  // modal (see the numbering engine above).
+  // ---------------------------------------------------------------------
+  let defaultListPreset = "simple";
+  const numListStyleBtn = document.getElementById("numListStyleBtn");
+  const numListStyleDropdown = document.getElementById("numListStyleDropdown");
+  const customLevelsBtn = document.getElementById("customLevelsBtn");
+  const listLevelsModal = document.getElementById("listLevelsModal");
+  const listLevelsGrid = document.getElementById("listLevelsGrid");
+  const listCascadeInput = document.getElementById("listCascadeInput");
+  const listLevelsCancel = document.getElementById("listLevelsCancel");
+  const listLevelsApply = document.getElementById("listLevelsApply");
+
+  if (numListStyleBtn) {
+    numListStyleBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      numListStyleDropdown.classList.toggle("open");
+    });
+    document.addEventListener("click", () => numListStyleDropdown.classList.remove("open"));
+  }
+
+  // Finds the <ol> the current selection is inside of, if any (for applying
+  // a template to a list already on the page rather than one about to be
+  // created).
+  function currentListRoot() {
+    if (!savedRange || !editor.contains(savedRange.startContainer)) return null;
+    const container = savedRange.startContainer.nodeType === 1 ? savedRange.startContainer : savedRange.startContainer.parentElement;
+    const li = container && container.closest && container.closest("li");
+    return li && li.parentElement && li.parentElement.tagName === "OL" ? li.parentElement : null;
+  }
+
+  if (numListStyleDropdown) {
+    numListStyleDropdown.querySelectorAll("button[data-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const preset = btn.dataset.preset;
+        defaultListPreset = preset;
+        const existing = currentListRoot();
+        if (existing) {
+          restoreSelection();
+          applyListTemplate(existing, preset);
+          saveSelection();
+          markDirty();
+        } else {
+          restoreSelection();
+          document.execCommand("insertOrderedList", false, null);
+          saveSelection();
+          const created = currentListRoot();
+          if (created) applyListTemplate(created, preset);
+          markDirty();
+        }
+        numListStyleDropdown.classList.remove("open");
+      });
+    });
+  }
+
+  function populateListLevelsGrid(spec) {
+    listCascadeInput.checked = !!spec.cascade;
+    listLevelsGrid.innerHTML = "";
+    for (let i = 1; i <= LIST_MAX_LEVELS; i++) {
+      const lvl = spec.levels[i - 1] || { type: "decimal", wrap: "period" };
+      const label = document.createElement("span");
+      label.className = "list-level-label";
+      label.textContent = `Level ${i}`;
+      const typeSelect = document.createElement("select");
+      typeSelect.dataset.role = "type";
+      [["decimal", "1, 2, 3"], ["alpha", "a, b, c"], ["upalpha", "A, B, C"], ["roman", "i, ii, iii"], ["uproman", "I, II, III"]].forEach(
+        ([val, text]) => {
+          const opt = document.createElement("option");
+          opt.value = val;
+          opt.textContent = text;
+          if (val === lvl.type) opt.selected = true;
+          typeSelect.appendChild(opt);
+        }
+      );
+      const wrapSelect = document.createElement("select");
+      wrapSelect.dataset.role = "wrap";
+      [["none", "1"], ["period", "1."], ["paren", "(1)"], ["trail", "1)"]].forEach(([val, text]) => {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = text;
+        if (val === lvl.wrap) opt.selected = true;
+        wrapSelect.appendChild(opt);
+      });
+      listLevelsGrid.appendChild(label);
+      listLevelsGrid.appendChild(typeSelect);
+      listLevelsGrid.appendChild(wrapSelect);
+    }
+  }
+
+  function readListLevelsGrid() {
+    const rows = [];
+    const types = listLevelsGrid.querySelectorAll('select[data-role="type"]');
+    const wraps = listLevelsGrid.querySelectorAll('select[data-role="wrap"]');
+    for (let i = 0; i < LIST_MAX_LEVELS; i++) {
+      rows.push({ type: types[i].value, wrap: wraps[i].value });
+    }
+    return { cascade: listCascadeInput.checked, levels: rows };
+  }
+
+  if (customLevelsBtn) {
+    customLevelsBtn.addEventListener("click", () => {
+      numListStyleDropdown.classList.remove("open");
+      const existing = currentListRoot();
+      const spec = existing ? parseListTemplate(topLevelListRoot(existing)) : LIST_PRESETS[defaultListPreset];
+      populateListLevelsGrid(spec);
+      openModal(listLevelsModal);
+    });
+    listLevelsCancel.addEventListener("click", () => closeModal(listLevelsModal));
+    listLevelsModal.addEventListener("click", (e) => {
+      if (e.target === listLevelsModal) closeModal(listLevelsModal);
+    });
+    listLevelsApply.addEventListener("click", () => {
+      const spec = readListLevelsGrid();
+      const existing = currentListRoot();
+      if (existing) {
+        restoreSelection();
+        applyListTemplate(existing, spec);
+        saveSelection();
+        markDirty();
+      } else {
+        restoreSelection();
+        document.execCommand("insertOrderedList", false, null);
+        saveSelection();
+        const created = currentListRoot();
+        if (created) applyListTemplate(created, spec);
+        markDirty();
+      }
+      closeModal(listLevelsModal);
+    });
+  }
+
+  // Plain "1. List" button click: tag the newly created <ol> with the
+  // last-used template (defaults to "simple", today's native look) so it
+  // renders/restarts/continues consistently with the rest of the engine.
+  document.querySelectorAll('.fmt-btn[data-cmd="insertOrderedList"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setTimeout(() => {
+        const created = currentListRoot();
+        if (created && !created.className) applyListTemplate(created, defaultListPreset);
+      }, 0);
+    });
+  });
+
   downloadPdfBtn.addEventListener("click", async () => {
     try {
       await saveReport();
@@ -1328,6 +1844,8 @@
       applyMarginsToCss();
       editor.innerHTML = data.html || "";
       cleanLegacyDocFigures();
+      repairOrphanedListItems();
+      regenerateListStyles();
       const combo = data.source_doc ? `${data.source_doc}|${data.source_type}` : "";
       sourceSelect.value = combo;
       if (sourceSelect.value !== combo) sourceSelect.value = "";

@@ -107,8 +107,21 @@
     </button>
     <span class="toolbar-sep"></span>
     <button type="button" class="fmt-btn" data-cmd="insertUnorderedList" title="Bullet list">&bull; List</button>
-    <button type="button" class="fmt-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+    <span class="fmt-btn-group">
+      <button type="button" class="fmt-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+      <button type="button" class="fmt-btn fmt-btn-caret" id="numListStyleBtn" title="Numbering style" aria-haspopup="true">&#9662;</button>
+      <div class="menu-dropdown" id="numListStyleDropdown">
+        <button type="button" data-preset="simple">Simple &mdash; 1. 2. 3.</button>
+        <button type="button" data-preset="legal-numeric">Legal numeric &mdash; 1 (2) (3)</button>
+        <button type="button" data-preset="legal-alpha">Legal alpha &mdash; 1 (b) 3 (c)</button>
+        <button type="button" data-preset="alpha">Alpha &mdash; a. b. c.</button>
+        <button type="button" data-preset="roman">Roman &mdash; i. ii. iii.</button>
+        <hr>
+        <button type="button" id="customLevelsBtn">Custom levels&hellip;</button>
+      </div>
+    </span>
   </div>
+  <style id="dynamicListStyles"></style>
 
   <main class="viewer-layout">
     <div class="editor-container">
@@ -189,6 +202,23 @@
       <div class="modal-actions">
         <button type="button" id="pageSetupCancel">Cancel</button>
         <button type="button" id="pageSetupApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="listLevelsModal">
+    <div class="modal modal-wide">
+      <h3>Custom numbering levels</h3>
+      <p class="modal-hint">Set the section-number style for each indent level. Levels beyond the deepest one you use are ignored.</p>
+      <label class="modal-field list-cascade-field">
+        <input type="checkbox" id="listCascadeInput">
+        Build each level's number from all the levels above it (e.g. 1(2)(3))
+      </label>
+      <div class="list-levels-grid" id="listLevelsGrid"></div>
+      <p id="listLevelsError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="listLevelsCancel">Cancel</button>
+        <button type="button" id="listLevelsApply">Apply</button>
       </div>
     </div>
   </div>
