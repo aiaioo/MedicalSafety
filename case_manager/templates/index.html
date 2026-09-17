@@ -19,6 +19,12 @@
   </section>
 
   <section class="index-section">
+    <h2>Case allegations</h2>
+    <p class="empty">Track the main allegations and the inculpatory/exculpatory evidence for each.</p>
+    <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
+  </section>
+
+  <section class="index-section">
     <h2>Source PDF files for annotation</h2>
     {% if docs %}
     <ul class="doc-list">

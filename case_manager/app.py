@@ -26,8 +26,9 @@ CACHE_DIR = STORAGE_DIR / "cache"
 ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
 SNIPPETS_DIR = STORAGE_DIR / "snippets"
 REPORTS_DIR = STORAGE_DIR / "reports"
+ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, ALLEGATIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -226,6 +227,62 @@ def report_path(report_id):
 def slugify_report_name(name):
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
     return slug[:50] or "document"
+
+
+def allegation_case_path(case_id):
+    return ALLEGATIONS_DIR / f"{case_id}.json"
+
+
+# ---------------------------------------------------------------------------
+# Allegations workspace: an allegation case is a name plus an ordered list of
+# allegations, each carrying its own ordered inculpatory/exculpatory evidence
+# lists (see templates/allegations.html, static/allegations.js). Plain text
+# only (no rich formatting), so sanitizing is just shape/length whitelisting
+# -- unlike sanitize_report_doc there's no HTML/ProseMirror tree to walk.
+# ---------------------------------------------------------------------------
+ALLEGATION_MAX_TITLE_CHARS = 300
+ALLEGATION_MAX_TEXT_CHARS = 10_000
+ALLEGATION_MAX_ITEMS = 300
+EVIDENCE_MAX_ITEMS = 300
+
+
+def _sanitize_item_id(raw):
+    return raw[:64] if isinstance(raw, str) and raw else uuid.uuid4().hex[:12]
+
+
+def _sanitize_text(raw, max_chars):
+    return raw.strip()[:max_chars] if isinstance(raw, str) else ""
+
+
+def sanitize_evidence_list(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:EVIDENCE_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "text": _sanitize_text(item.get("text"), ALLEGATION_MAX_TEXT_CHARS),
+        })
+    return out
+
+
+def sanitize_allegations(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:ALLEGATION_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
+            "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
+            "inculpatory": sanitize_evidence_list(item.get("inculpatory")),
+            "exculpatory": sanitize_evidence_list(item.get("exculpatory")),
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1238,17 @@ def document_view():
     )
 
 
+@app.route("/allegations")
+def allegations_view():
+    case_id = request.args.get("case", "")
+    if case_id:
+        check_report_id(case_id)
+        if not allegation_case_path(case_id).exists():
+            raise DocumentError(f"No case with id {case_id!r}", 404)
+
+    return render_template("allegations.html", case_id=case_id)
+
+
 # ---------------------------------------------------------------------------
 # API: document upload
 # ---------------------------------------------------------------------------
@@ -1558,6 +1626,67 @@ def api_report_export_docx(report_id):
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.docx"'
     return resp
+
+
+@app.route("/api/allegation-cases", methods=["GET", "POST"])
+def api_allegation_cases():
+    if request.method == "GET":
+        items = []
+        for f in ALLEGATIONS_DIR.glob("*.json"):
+            data = load_json(f, default=None)
+            if not isinstance(data, dict):
+                continue
+            items.append({
+                "id": f.stem,
+                "name": data.get("name") or f.stem,
+                "allegation_count": len(data.get("allegations") or []),
+                "created_at": data.get("created_at", ""),
+                "updated_at": data.get("updated_at", ""),
+            })
+        items.sort(key=lambda x: x["updated_at"], reverse=True)
+        return jsonify(items)
+
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name") or "").strip()[:200]
+    if not name:
+        raise DocumentError("A case name is required", 400)
+
+    case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "name": name,
+        "allegations": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    save_json(allegation_case_path(case_id), data)
+    return jsonify({"id": case_id, **data})
+
+
+@app.route("/api/allegation-case/<case_id>", methods=["GET", "POST"])
+def api_allegation_case(case_id):
+    check_report_id(case_id)
+    path = allegation_case_path(case_id)
+    existing = load_json(path, default=None)
+    if existing is None:
+        raise DocumentError(f"No case with id {case_id!r}", 404)
+
+    if request.method == "GET":
+        return jsonify(existing)
+
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", existing.get("name", ""))).strip()[:200]
+    if not name:
+        raise DocumentError("A case name is required", 400)
+
+    data = {
+        "name": name,
+        "allegations": sanitize_allegations(body.get("allegations")),
+        "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_json(path, data)
+    return jsonify(data)
 
 
 @app.route("/media/snippets/<doc_id>/<path:filename>")
