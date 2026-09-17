@@ -13,6 +13,17 @@
   const EDGE_ZONE = 24; // px from the right screen edge that can start an "open" swipe
   const SWIPE_THRESHOLD = 60; // px of horizontal travel needed to trigger a toggle
 
+  // Visual hint (see .sidebar-grip in style.css) that pokes out from the
+  // hidden sidebar's edge so the swipe gesture isn't the only way to
+  // discover it; also doubles as a tap target to open the panel.
+  const grip = document.createElement("button");
+  grip.type = "button";
+  grip.className = "sidebar-grip";
+  grip.setAttribute("aria-label", "Show annotations panel");
+  grip.textContent = "⋮";
+  grip.addEventListener("click", () => sidebar.classList.add("is-open"));
+  layout.appendChild(grip);
+
   let startX = null;
   let startY = null;
   let mode = null; // "open" | "close" | null

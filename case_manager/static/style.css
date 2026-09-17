@@ -83,19 +83,39 @@ a { color: #2266dd; }
 
 .sidebar { width: 260px; flex-shrink: 0; background: white; border-left: 1px solid #e0e2e8;
   padding: 12px; overflow-y: auto; }
+.sidebar-grip { display: none; }
 
 /* Below this width the sidebar can't coexist with the document/source view,
    so it docks off-screen and slides in over the content on a swipe instead
    of sharing the row (see sidebar-swipe.js for the gesture). */
 @media (max-width: 780px) {
   .viewer-layout { position: relative; overflow: hidden; }
+  /* Fixed (viewport-relative), not absolute (ancestor-relative): the document
+     editor's root doesn't get the #app { height: 100vh } shell the source
+     viewer does, so .viewer-layout there is as tall as the whole scrollable
+     document, not just the visible screen -- an absolutely positioned
+     sidebar would inherit that height and end up centered off-screen. */
   .sidebar {
-    position: absolute; top: 0; right: 0; z-index: 30;
-    width: min(85vw, 320px); height: 100%;
+    position: fixed; top: 0; right: 0; z-index: 30;
+    width: min(85vw, 320px); height: 100vh;
     transform: translateX(100%);
     transition: transform 0.25s ease;
     box-shadow: -4px 0 14px rgba(0,0,0,0.2);
   }
+  /* A sibling of .sidebar (not a child of it) -- .sidebar has overflow-y:
+     auto, and per spec that forces overflow-x to auto too, which would clip
+     anything poking out past its left edge. Sitting flush against the
+     shared right edge instead gives the same "tab attached to the dock"
+     look without being clipped by the sidebar's own scroll container. */
+  .sidebar-grip {
+    display: flex; align-items: center; justify-content: center;
+    position: fixed; top: 50%; right: 0; transform: translateY(-50%);
+    width: 22px; height: 64px; padding: 0; z-index: 29;
+    background: white; border: 1px solid #e0e2e8; border-right: none;
+    border-radius: 8px 0 0 8px; box-shadow: -2px 0 8px rgba(0,0,0,0.15);
+    color: #8a92a5; font-size: 16px; line-height: 1; cursor: pointer;
+  }
+  .viewer-layout:has(.sidebar.is-open) .sidebar-grip { display: none; }
   .sidebar.is-open { transform: translateX(0); }
 }
 .sidebar h3 { margin-top: 0; font-size: 14px; }
