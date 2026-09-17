@@ -1218,6 +1218,15 @@ def index():
 def page_view():
     doc_id = request.args.get("doc", "")
     raw_type = request.args.get("type", "pdf")
+
+    if not doc_id:
+        pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
+        docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
+        docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
+        docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
+        docs.sort(key=lambda d: d["id"])
+        return render_template("annotations.html", doc_id="", docs=docs)
+
     try:
         page = int(request.args.get("page", 1))
     except ValueError:
