@@ -650,11 +650,45 @@ import { Pagination, repaginate } from "./pagination.js";
     editor.chain().focus().setFontSize(fontSizeSelect.value + "pt").run();
   });
 
+  // Every textblock spanned by the current selection, as a single
+  // {start, end} content range -- used below to strip a leftover explicit
+  // font-size override across a whole paragraph/heading, not just whatever
+  // substring happens to be selected (often nothing, if the caret is just
+  // sitting in the block with no selection at all).
+  function selectedBlockContentRange(state) {
+    const { $from, $to } = state.selection;
+    let start = null;
+    let end = null;
+    state.doc.nodesBetween($from.pos, $to.pos, (node, pos) => {
+      if (!node.isTextblock) return;
+      const s = pos + 1;
+      const e = pos + node.nodeSize - 1;
+      start = start === null ? s : Math.min(start, s);
+      end = end === null ? e : Math.max(end, e);
+    });
+    return start === null ? null : { from: start, to: end };
+  }
+
   const blockFormatSelect = document.getElementById("blockFormatSelect");
   blockFormatSelect.addEventListener("change", () => {
     const val = blockFormatSelect.value;
-    if (val === "P") editor.chain().focus().setParagraph().run();
-    else editor.chain().focus().setHeading({ level: Number(val.slice(1)) }).run();
+    const { from: cursorFrom, to: cursorTo } = editor.state.selection;
+    // setHeading/setParagraph only change the block's node type, never the
+    // doc's size, so a content range measured beforehand still lines up
+    // with the same text afterward.
+    const blockRange = selectedBlockContentRange(editor.state);
+
+    let chain = editor.chain().focus();
+    chain = val === "P" ? chain.setParagraph() : chain.setHeading({ level: Number(val.slice(1)) });
+    if (blockRange) {
+      // A character-level font-size override (set via the font-size
+      // dropdown) otherwise keeps overriding the heading/paragraph's own
+      // size forever, even though nothing about it still looks like the
+      // newly chosen style -- so applying a block format also clears any
+      // such override across the whole affected block(s).
+      chain = chain.setTextSelection(blockRange).unsetFontSize().setTextSelection({ from: cursorFrom, to: cursorTo });
+    }
+    chain.run();
   });
 
   const textColorInput = document.getElementById("textColorInput");
