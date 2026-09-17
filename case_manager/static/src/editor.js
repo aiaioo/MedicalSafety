@@ -718,6 +718,7 @@ import { Pagination, repaginate } from "./pagination.js";
   // selection-only change too, not just a doc change).
   const DEFAULT_FONT_FAMILY = fontFamilySelect.options[0].value;
   const DEFAULT_FONT_SIZE = "11";
+  const DEFAULT_TEXT_COLOR = textColorInput.value;
 
   function syncToolbarToSelection() {
     const styleAttrs = editor.getAttributes("textStyle");
@@ -725,6 +726,20 @@ import { Pagination, repaginate } from "./pagination.js";
 
     const size = styleAttrs.fontSize ? styleAttrs.fontSize.replace(/pt$/, "") : DEFAULT_FONT_SIZE;
     if ([...fontSizeSelect.options].some((opt) => opt.value === size)) fontSizeSelect.value = size;
+
+    const color = styleAttrs.color || DEFAULT_TEXT_COLOR;
+    textColorInput.value = color;
+    textColorSwatch.style.background = color;
+
+    const highlightColor = editor.getAttributes("highlight").color;
+    if (highlightColor) {
+      highlightColorInput.value = highlightColor;
+      highlightColorSwatch.style.background = highlightColor;
+      highlightColorSwatch.style.outline = "";
+    } else {
+      highlightColorSwatch.style.background = "transparent";
+      highlightColorSwatch.style.outline = "1px solid #b8bfcf";
+    }
 
     let headingLevel = null;
     for (let level = 1; level <= 3; level++) {
