@@ -244,6 +244,10 @@ ALLEGATION_MAX_TITLE_CHARS = 300
 ALLEGATION_MAX_TEXT_CHARS = 10_000
 ALLEGATION_MAX_ITEMS = 300
 EVIDENCE_MAX_ITEMS = 300
+CASE_MAX_COURT_CHARS = 200
+CASE_MAX_NUMBER_CHARS = 100
+CASE_MAX_DATE_CHARS = 40
+HEARING_MAX_ITEMS = 300
 
 
 def _sanitize_item_id(raw):
@@ -281,6 +285,21 @@ def sanitize_allegations(raw):
             "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
             "inculpatory": sanitize_evidence_list(item.get("inculpatory")),
             "exculpatory": sanitize_evidence_list(item.get("exculpatory")),
+        })
+    return out
+
+
+def sanitize_hearings(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:HEARING_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "date": _sanitize_text(item.get("date"), CASE_MAX_DATE_CHARS),
+            "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
         })
     return out
 
@@ -1249,6 +1268,11 @@ def allegations_view():
     return render_template("allegations.html", case_id=case_id)
 
 
+@app.route("/cases")
+def cases_view():
+    return render_template("cases.html")
+
+
 # ---------------------------------------------------------------------------
 # API: document upload
 # ---------------------------------------------------------------------------
@@ -1639,7 +1663,11 @@ def api_allegation_cases():
             items.append({
                 "id": f.stem,
                 "name": data.get("name") or f.stem,
+                "court": data.get("court", ""),
+                "case_number": data.get("case_number", ""),
+                "summary": data.get("summary", ""),
                 "allegation_count": len(data.get("allegations") or []),
+                "hearing_count": len(data.get("hearings") or []),
                 "created_at": data.get("created_at", ""),
                 "updated_at": data.get("updated_at", ""),
             })
@@ -1655,7 +1683,11 @@ def api_allegation_cases():
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "name": name,
+        "court": _sanitize_text(body.get("court"), CASE_MAX_COURT_CHARS),
+        "case_number": _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS),
+        "summary": _sanitize_text(body.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
         "allegations": [],
+        "hearings": [],
         "created_at": now,
         "updated_at": now,
     }
@@ -1679,9 +1711,17 @@ def api_allegation_case(case_id):
     if not name:
         raise DocumentError("A case name is required", 400)
 
+    # Each caller (the allegations editor, the cases workspace) only ever
+    # sends the fields it owns -- falling back to the value already on disk
+    # for everything else (via dict.get's default, not truthiness) means one
+    # page's save can never clobber the other's data.
     data = {
         "name": name,
-        "allegations": sanitize_allegations(body.get("allegations")),
+        "court": _sanitize_text(body.get("court", existing.get("court", "")), CASE_MAX_COURT_CHARS),
+        "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
+        "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
+        "allegations": sanitize_allegations(body.get("allegations", existing.get("allegations", []))),
+        "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", []))),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cases</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="casesApp"
+     data-cases-url="{{ url_for('api_allegation_cases') }}"
+     data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
+     data-allegations-url-base="{{ url_for('allegations_view') }}"
+>
+  <header class="docbar">
+    <a class="home-link" href="{{ url_for('index') }}" title="All documents">&larr;</a>
+    <span class="doc-name doc-name-static">Cases</span>
+    <span id="saveStatus" class="save-status"></span>
+  </header>
+
+  <main class="allegations-layout">
+    <div class="allegations-workspace" id="casesWorkspace">
+      <aside class="allegations-column cases-column">
+        <div class="allegations-column-head">
+          <h2>Cases</h2>
+          <button type="button" class="btn" id="addCaseBtn">+ New case</button>
+        </div>
+        <p class="empty" id="caseListEmpty" style="display:none">No cases yet. Add one to get started.</p>
+        <div class="allegation-list" id="caseList"></div>
+      </aside>
+      <section class="allegation-detail" id="caseDetail">
+        <p class="empty">Select or add a case on the left to see its hearings.</p>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='cases.js') }}"></script>
+</body>
+</html>

@@ -10,21 +10,13 @@
 <body>
 <div id="allegationsApp"
      data-case="{{ case_id }}"
-     data-cases-url="{{ url_for('api_allegation_cases') }}"
      {% if case_id %}
      data-case-url="{{ url_for('api_allegation_case', case_id=case_id) }}"
      {% endif %}
 >
   <header class="docbar">
     <a class="home-link" href="{{ url_for('index') }}" title="All documents">&larr;</a>
-
-    <nav class="file-menu">
-      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
-      <div class="menu-dropdown" id="fileMenuDropdown">
-        <button type="button" id="newCaseBtn">New case&hellip;</button>
-        <button type="button" id="openCaseBtn">Open&hellip;</button>
-      </div>
-    </nav>
+    <a class="btn" href="{{ url_for('cases_view') }}">Cases</a>
 
     {% if case_id %}
     <input id="titleInput" class="doc-name" type="text" placeholder="Untitled case">
@@ -50,36 +42,11 @@
     </div>
     {% else %}
     <div class="doc-landing">
-      <h2>Allegation cases</h2>
-      <p class="empty" id="landingEmptyHint">No cases yet. Use File &rarr; New case to create one.</p>
-      <div id="caseListLanding" class="report-grid"></div>
+      <h2>No case selected</h2>
+      <p class="empty">Open a case from the <a href="{{ url_for('cases_view') }}">Cases</a> page to edit its allegations.</p>
     </div>
     {% endif %}
   </main>
-
-  <div class="modal-overlay" id="newCaseModal">
-    <div class="modal">
-      <h3>New case</h3>
-      <label class="modal-field">Name
-        <input id="newCaseName" type="text" placeholder="e.g. State v. Smith" maxlength="200">
-      </label>
-      <p id="newCaseError" class="error-message" style="display:none"></p>
-      <div class="modal-actions">
-        <button type="button" id="newCaseCancel">Cancel</button>
-        <button type="button" id="newCaseCreate">Create</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="openCaseModal">
-    <div class="modal">
-      <h3>Open a case</h3>
-      <div id="openCaseList" class="report-list"></div>
-      <div class="modal-actions">
-        <button type="button" id="openCaseCancel">Close</button>
-      </div>
-    </div>
-  </div>
 </div>
 <script src="{{ url_for('static', filename='allegations.js') }}"></script>
 </body>

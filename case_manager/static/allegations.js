@@ -2,30 +2,11 @@
   const appEl = document.getElementById("allegationsApp");
   if (!appEl) return;
   const caseId = appEl.dataset.case;
-  const casesUrl = appEl.dataset.casesUrl;
   const caseUrl = appEl.dataset.caseUrl;
 
   const titleInput = document.getElementById("titleInput");
   const saveBtn = document.getElementById("saveBtn");
   const saveStatusEl = document.getElementById("saveStatus");
-
-  const fileMenuBtn = document.getElementById("fileMenuBtn");
-  const fileMenuDropdown = document.getElementById("fileMenuDropdown");
-  const newCaseBtn = document.getElementById("newCaseBtn");
-  const openCaseBtn = document.getElementById("openCaseBtn");
-
-  const newCaseModal = document.getElementById("newCaseModal");
-  const newCaseName = document.getElementById("newCaseName");
-  const newCaseError = document.getElementById("newCaseError");
-  const newCaseCancel = document.getElementById("newCaseCancel");
-  const newCaseCreate = document.getElementById("newCaseCreate");
-
-  const openCaseModal = document.getElementById("openCaseModal");
-  const openCaseList = document.getElementById("openCaseList");
-  const openCaseCancel = document.getElementById("openCaseCancel");
-
-  const caseListLanding = document.getElementById("caseListLanding");
-  const landingEmptyHint = document.getElementById("landingEmptyHint");
 
   const allegationListEl = document.getElementById("allegationList");
   const allegationListEmpty = document.getElementById("allegationListEmpty");
@@ -42,25 +23,9 @@
       .replace(/>/g, "&gt;");
   }
 
-  function fmtDate(iso) {
-    if (!iso) return "";
-    try {
-      return new Date(iso).toLocaleString();
-    } catch (e) {
-      return iso;
-    }
-  }
-
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  }
-
-  function openModal(el) {
-    el.classList.add("open");
-  }
-  function closeModal(el) {
-    el.classList.remove("open");
   }
 
   function wireConfirmDelete(btn, onConfirm) {
@@ -79,111 +44,6 @@
       onConfirm();
     });
   }
-
-  // -------------------------------------------------------------------
-  // File menu
-  // -------------------------------------------------------------------
-  if (fileMenuBtn) {
-    fileMenuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      fileMenuDropdown.classList.toggle("open");
-    });
-    document.addEventListener("click", () => fileMenuDropdown.classList.remove("open"));
-  }
-
-  async function fetchCases() {
-    const res = await fetch(casesUrl);
-    return res.json();
-  }
-
-  function renderCaseCard(c, container) {
-    const card = document.createElement("a");
-    card.className = "report-card";
-    card.href = `/allegations?case=${encodeURIComponent(c.id)}`;
-    const countLabel = `${c.allegation_count} allegation${c.allegation_count === 1 ? "" : "s"}`;
-    card.innerHTML = `
-      <div class="report-card-name">${escapeHtml(c.name || c.id)}</div>
-      <div class="report-card-meta">${escapeHtml(countLabel)}</div>
-      <div class="report-card-meta">Updated ${escapeHtml(fmtDate(c.updated_at))}</div>`;
-    container.appendChild(card);
-  }
-
-  async function loadLanding() {
-    if (!caseListLanding) return;
-    try {
-      const list = await fetchCases();
-      caseListLanding.innerHTML = "";
-      landingEmptyHint.style.display = list.length ? "none" : "block";
-      for (const c of list) renderCaseCard(c, caseListLanding);
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  if (newCaseBtn && newCaseModal) {
-    newCaseBtn.addEventListener("click", () => {
-      newCaseName.value = "";
-      newCaseError.style.display = "none";
-      openModal(newCaseModal);
-      setTimeout(() => newCaseName.focus(), 0);
-    });
-    newCaseCancel.addEventListener("click", () => closeModal(newCaseModal));
-    newCaseModal.addEventListener("click", (e) => {
-      if (e.target === newCaseModal) closeModal(newCaseModal);
-    });
-
-    async function createCase() {
-      const name = newCaseName.value.trim();
-      if (!name) {
-        newCaseError.textContent = "Please enter a name for the case.";
-        newCaseError.style.display = "block";
-        return;
-      }
-      newCaseCreate.disabled = true;
-      try {
-        const res = await fetch(casesUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        window.location.href = `/allegations?case=${encodeURIComponent(data.id)}`;
-      } catch (err) {
-        newCaseError.textContent = "Could not create case: " + err.message;
-        newCaseError.style.display = "block";
-        newCaseCreate.disabled = false;
-      }
-    }
-    newCaseCreate.addEventListener("click", createCase);
-    newCaseName.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") createCase();
-    });
-  }
-
-  if (openCaseBtn && openCaseModal) {
-    openCaseBtn.addEventListener("click", async () => {
-      openCaseList.innerHTML = '<p class="empty">Loading&hellip;</p>';
-      openModal(openCaseModal);
-      try {
-        const list = await fetchCases();
-        openCaseList.innerHTML = "";
-        if (!list.length) {
-          openCaseList.innerHTML = '<p class="empty">No cases yet.</p>';
-          return;
-        }
-        for (const c of list) renderCaseCard(c, openCaseList);
-      } catch (e) {
-        openCaseList.innerHTML = '<p class="empty">Failed to load cases.</p>';
-      }
-    });
-    openCaseCancel.addEventListener("click", () => closeModal(openCaseModal));
-    openCaseModal.addEventListener("click", (e) => {
-      if (e.target === openCaseModal) closeModal(openCaseModal);
-    });
-  }
-
-  loadLanding();
 
   // -------------------------------------------------------------------
   // Case editor (only present once a case is open)

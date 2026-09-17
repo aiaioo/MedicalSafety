@@ -9,6 +9,20 @@
 </head>
 <body>
 <div class="container">
+  <h1>Cases</h1>
+
+  <section class="index-section">
+    <p class="empty">Track cases by court, case identifier and hearings.</p>
+    <p><a class="btn" href="{{ url_for('cases_view') }}">Open cases workspace</a></p>
+  </section>
+
+  <h1>Allegations</h1>
+
+  <section class="index-section">
+    <p class="empty">Track the main allegations and the inculpatory/exculpatory evidence for each.</p>
+    <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
+  </section>
+
   <h1>Documents</h1>
 
   <section class="index-section">
@@ -18,11 +32,7 @@
     <p><button type="button" id="newDocBtn" class="btn">New document&hellip;</button></p>
   </section>
 
-  <section class="index-section">
-    <h2>Case allegations</h2>
-    <p class="empty">Track the main allegations and the inculpatory/exculpatory evidence for each.</p>
-    <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
-  </section>
+  <h1>Source Annotations</h1>
 
   <section class="index-section">
     <h2>Source PDF files for annotation</h2>
