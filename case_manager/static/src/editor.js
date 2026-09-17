@@ -69,6 +69,8 @@ import { Pagination, repaginate } from "./pagination.js";
   const marginFooterInput = document.getElementById("marginFooterInput");
   const pageNumberPositionInput = document.getElementById("pageNumberPositionInput");
   const pageNumberSkipInput = document.getElementById("pageNumberSkipInput");
+  const pageNumberFontInput = document.getElementById("pageNumberFontInput");
+  const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
   const pageSetupError = document.getElementById("pageSetupError");
   const pageSetupCancel = document.getElementById("pageSetupCancel");
   const pageSetupApply = document.getElementById("pageSetupApply");
@@ -81,7 +83,15 @@ import { Pagination, repaginate } from "./pagination.js";
     "bottom-left", "bottom-center", "bottom-right",
     "none",
   ]);
-  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0 };
+  // Kept in sync with the #pageNumberFontInput <option> values in
+  // document.html (and with REPORT_PAGE_NUMBER_FONTS in app.py).
+  const PAGE_NUMBER_FONTS = new Set([
+    "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
+    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
+  ]);
+  const PAGE_NUMBER_FONT_SIZE_MIN = 6;
+  const PAGE_NUMBER_FONT_SIZE_MAX = 72;
+  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, font: "Arial", fontSize: 11 };
   let pageNumbers = { ...DEFAULT_PAGE_NUMBERS };
 
   const newDocModal = document.getElementById("newDocModal");
@@ -312,7 +322,11 @@ import { Pagination, repaginate } from "./pagination.js";
     const position = raw && PAGE_NUMBER_POSITIONS.has(raw.position) ? raw.position : DEFAULT_PAGE_NUMBERS.position;
     const skipRaw = raw && typeof raw === "object" ? Number(raw.skip) : NaN;
     const skip = Number.isInteger(skipRaw) && skipRaw >= 0 && skipRaw <= 50 ? skipRaw : DEFAULT_PAGE_NUMBERS.skip;
-    return { position, skip };
+    const font = raw && PAGE_NUMBER_FONTS.has(raw.font) ? raw.font : DEFAULT_PAGE_NUMBERS.font;
+    const fontSizeRaw = raw && typeof raw === "object" ? Number(raw.fontSize) : NaN;
+    const fontSize = Number.isFinite(fontSizeRaw) && fontSizeRaw >= PAGE_NUMBER_FONT_SIZE_MIN && fontSizeRaw <= PAGE_NUMBER_FONT_SIZE_MAX
+      ? fontSizeRaw : DEFAULT_PAGE_NUMBERS.fontSize;
+    return { position, skip, font, fontSize };
   }
 
   function marginsPx() {
@@ -362,6 +376,8 @@ import { Pagination, repaginate } from "./pagination.js";
       if (pageNumbers.position !== "none" && i >= pageNumbers.skip) {
         const label = document.createElement("div");
         label.className = `page-number-label page-number-${pageNumbers.position}`;
+        label.style.fontFamily = pageNumbers.font;
+        label.style.fontSize = pageNumbers.fontSize + "pt";
         label.textContent = String(i - pageNumbers.skip + 1);
         rect.appendChild(label);
       }
@@ -383,6 +399,12 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(50, Math.max(0, n));
   }
 
+  function clampPageNumberFontSize(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return Math.min(PAGE_NUMBER_FONT_SIZE_MAX, Math.max(PAGE_NUMBER_FONT_SIZE_MIN, n));
+  }
+
   pageSetupBtn.addEventListener("click", () => {
     marginLeftInput.value = margins.left;
     marginRightInput.value = margins.right;
@@ -390,6 +412,8 @@ import { Pagination, repaginate } from "./pagination.js";
     marginFooterInput.value = margins.footer;
     pageNumberPositionInput.value = pageNumbers.position;
     pageNumberSkipInput.value = pageNumbers.skip;
+    pageNumberFontInput.value = pageNumbers.font;
+    pageNumberFontSizeInput.value = pageNumbers.fontSize;
     pageSetupError.style.display = "none";
     openModal(pageSetupModal);
   });
@@ -413,8 +437,14 @@ import { Pagination, repaginate } from "./pagination.js";
       pageSetupError.style.display = "block";
       return;
     }
+    const fontSize = clampPageNumberFontSize(pageNumberFontSizeInput.value);
+    if (fontSize === null || !PAGE_NUMBER_FONTS.has(pageNumberFontInput.value)) {
+      pageSetupError.textContent = "Enter a page number font size between 6 and 72.";
+      pageSetupError.style.display = "block";
+      return;
+    }
     margins = { left, right, header, footer };
-    pageNumbers = { position: pageNumberPositionInput.value, skip };
+    pageNumbers = { position: pageNumberPositionInput.value, skip, font: pageNumberFontInput.value, fontSize };
     applyMarginsToCss();
     markDirty();
     closeModal(pageSetupModal);

@@ -58,15 +58,24 @@ def sanitize_margins(raw, fallback=None):
     return result
 
 
-# Report page-number settings: where to print them (or "none"), and how many
-# leading pages to leave unnumbered (e.g. a cover page).
-REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0}
+# Report page-number settings: where to print them (or "none"), how many
+# leading pages to leave unnumbered (e.g. a cover page), and the font/size to
+# draw them in. Font names mirror the #pageNumberFontInput <option> values in
+# document.html (quoted where the CSS family name has a space, so the same
+# string can be dropped straight into a font-family declaration).
+REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11}
 REPORT_PAGE_NUMBER_POSITIONS = {
     "top-left", "top-center", "top-right",
     "bottom-left", "bottom-center", "bottom-right",
     "none",
 }
+REPORT_PAGE_NUMBER_FONTS = {
+    "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
+    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
+}
 REPORT_PAGE_NUMBER_SKIP_MAX = 50
+REPORT_PAGE_NUMBER_FONT_SIZE_MIN = 6
+REPORT_PAGE_NUMBER_FONT_SIZE_MAX = 72
 
 
 def sanitize_page_numbers(raw, fallback=None):
@@ -88,7 +97,23 @@ def sanitize_page_numbers(raw, fallback=None):
         if not isinstance(skip, int) or not (0 <= skip <= REPORT_PAGE_NUMBER_SKIP_MAX):
             skip = REPORT_DEFAULT_PAGE_NUMBERS["skip"]
 
-    return {"position": position, "skip": skip}
+    font = raw.get("font") if isinstance(raw, dict) else None
+    if font not in REPORT_PAGE_NUMBER_FONTS:
+        font = fallback.get("font")
+        if font not in REPORT_PAGE_NUMBER_FONTS:
+            font = REPORT_DEFAULT_PAGE_NUMBERS["font"]
+
+    font_size = raw.get("fontSize") if isinstance(raw, dict) else None
+    try:
+        font_size = float(font_size)
+    except (TypeError, ValueError):
+        font_size = None
+    if font_size is None or not (REPORT_PAGE_NUMBER_FONT_SIZE_MIN <= font_size <= REPORT_PAGE_NUMBER_FONT_SIZE_MAX):
+        font_size = fallback.get("fontSize")
+        if not isinstance(font_size, (int, float)) or not (REPORT_PAGE_NUMBER_FONT_SIZE_MIN <= font_size <= REPORT_PAGE_NUMBER_FONT_SIZE_MAX):
+            font_size = REPORT_DEFAULT_PAGE_NUMBERS["fontSize"]
+
+    return {"position": position, "skip": skip, "font": font, "fontSize": font_size}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
@@ -617,23 +642,41 @@ def _flatten_json_text(node):
     return "".join(_flatten_json_text(c) for c in node.get("content") or [])
 
 
-PAGE_NUMBER_CSS = "font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #555; margin: 0;"
-
-
-def _pdf_draw_page_number(device, mediabox, m, position, page_num):
+def _pdf_draw_page_number(device, mediabox, m, position, page_num, font, font_size):
     """Draws a page-number string into the header or footer margin band of
-    the page already written to `device`, reusing a second (tiny) fitz.Story
-    for layout/alignment rather than hand-computing text placement."""
+    the page already written to `device`, reusing fitz.Story for
+    layout/alignment rather than hand-computing text placement.
+
+    fitz's Story lays a block out from the top of whatever rect it's given,
+    and (at least for a fresh Story with no stylesheet) reserves noticeably
+    more line-box height than the font size alone would suggest -- handing
+    it a rect exactly as tall as the header/footer margin, as a naive
+    top/bottom-anchored placement would, can silently overflow (Story then
+    draws nothing at all) once the font size is large relative to the
+    margin, e.g. the "large page-number font, default margins" combination
+    Page setup now allows. So this measures the real single-line height
+    first with a throwaway Story placed in a tall scratch rect, then hands a
+    *second* Story (place() consumes a Story's layout state) a rect of that
+    measured height, centered on the margin band's vertical midpoint --
+    matching the vertical centering the on-screen preview achieves via
+    line-height (see .page-number-label in style.css) while still fitting
+    whatever font size was chosen."""
     vert, _, horiz = position.partition("-")
     band_height = m["header"] if vert == "top" else m["footer"]
     if band_height <= 0:
         return  # no room in the margin to draw into
-    if vert == "top":
-        rect = fitz.Rect(mediabox.x0, mediabox.y0, mediabox.x1, mediabox.y0 + band_height)
-    else:
-        rect = fitz.Rect(mediabox.x0, mediabox.y1 - band_height, mediabox.x1, mediabox.y1)
-    rect = fitz.Rect(rect.x0 + m["left"], rect.y0, rect.x1 - m["right"], rect.y1)
-    html = f'<p style="text-align:{horiz}; {PAGE_NUMBER_CSS}">{page_num}</p>'
+    css = f"font-family: {font}, Helvetica, Arial, sans-serif; font-size: {font_size}pt; color: #555; margin: 0;"
+    html = f'<p style="text-align:{horiz}; {css}">{page_num}</p>'
+
+    x0, x1 = mediabox.x0 + m["left"], mediabox.x1 - m["right"]
+    probe_rect = fitz.Rect(x0, mediabox.y0, x1, mediabox.y1)
+    more, filled = fitz.Story(html=html).place(probe_rect)
+    line_height = (filled[3] - filled[1]) if not more else font_size * 1.3
+
+    band_top = mediabox.y0 if vert == "top" else mediabox.y1 - band_height
+    center_y = band_top + band_height / 2
+    rect = fitz.Rect(x0, center_y - line_height / 2, x1, center_y + line_height / 2)
+
     story = fitz.Story(html=html)
     story.place(rect)
     story.draw(device)
@@ -659,7 +702,7 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
         more, _ = story.place(where)
         story.draw(device)
         if pn["position"] != "none" and page_index >= pn["skip"]:
-            _pdf_draw_page_number(device, mediabox, m, pn["position"], page_index - pn["skip"] + 1)
+            _pdf_draw_page_number(device, mediabox, m, pn["position"], page_index - pn["skip"] + 1, pn["font"], pn["fontSize"])
         writer.end_page()
         page_index += 1
     writer.close()
@@ -984,6 +1027,14 @@ def _docx_add_conditional_page_field(paragraph, skip):
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
 
 
+def _docx_clean_font_name(name):
+    """Strips the CSS-quoting single quotes multi-word font values carry
+    (e.g. "'Times New Roman'", matching the #pageNumberFontInput option
+    values in document.html) -- python-docx's run.font.name wants the bare
+    family name, not a CSS font-family value."""
+    return name.strip("'") if isinstance(name, str) else name
+
+
 def _docx_apply_page_numbers(doc, page_numbers):
     position = page_numbers.get("position", "none")
     if position == "none":
@@ -1006,6 +1057,14 @@ def _docx_apply_page_numbers(doc, page_numbers):
         _docx_add_conditional_page_field(paragraph, skip)
     else:
         _docx_add_page_field(paragraph)
+
+    font_name = _docx_clean_font_name(page_numbers.get("font"))
+    font_size = page_numbers.get("fontSize")
+    for run in paragraph.runs:
+        if font_name:
+            run.font.name = font_name
+        if font_size:
+            run.font.size = Pt(font_size)
 
     # Word normally shows a field's *cached* value until it's recalculated
     # (on manual refresh, or a print); force recalculation on open so the

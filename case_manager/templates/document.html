@@ -217,6 +217,22 @@
         </label>
       </div>
       <p class="modal-hint">Skipped pages are left unnumbered; numbering then restarts at 1 on the next page.</p>
+      <div class="margin-grid">
+        <label class="modal-field">Page number font
+          <select id="pageNumberFontInput">
+            <option value="Arial" style="font-family:Arial">Arial</option>
+            <option value="Georgia" style="font-family:Georgia">Georgia</option>
+            <option value="'Times New Roman'" style="font-family:'Times New Roman'">Times New Roman</option>
+            <option value="'Courier New'" style="font-family:'Courier New'">Courier New</option>
+            <option value="Verdana" style="font-family:Verdana">Verdana</option>
+            <option value="'Trebuchet MS'" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+            <option value="'Comic Sans MS'" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+          </select>
+        </label>
+        <label class="modal-field">Page number font size
+          <input id="pageNumberFontSizeInput" type="number" min="6" max="72" step="1">
+        </label>
+      </div>
       <p id="pageSetupError" class="error-message" style="display:none"></p>
       <div class="modal-actions">
         <button type="button" id="pageSetupCancel">Cancel</button>
