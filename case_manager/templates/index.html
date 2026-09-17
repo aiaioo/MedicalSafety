@@ -26,59 +26,16 @@
   <h1>Documents</h1>
 
   <section class="index-section">
-    <h2>Your documents</h2>
-    <p class="empty" id="indexReportsEmpty" style="display:none">No documents yet.</p>
-    <div id="indexReportGrid" class="report-grid" data-reports-url="{{ url_for('api_reports') }}"></div>
-    <p><button type="button" id="newDocBtn" class="btn">New document&hellip;</button></p>
+    <p class="empty">Write up case documents, optionally drawing on an annotated source.</p>
+    <p><a class="btn" href="{{ url_for('document_view') }}">Open documents workspace</a></p>
   </section>
 
   <h1>Source Annotations</h1>
 
   <section class="index-section">
-    <h2>Source PDF files for annotation</h2>
-    {% if docs %}
-    <ul class="doc-list">
-      {% for d in docs %}
-      <li>
-        <a href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-          {{ d.id }} <span class="tag">{{ d.type }}</span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p>No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload.</p>
-    {% endif %}
-    <div class="upload-form">
-      <button type="button" id="uploadSubmit" class="btn">Upload source&hellip;</button>
-      <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
-      <span id="uploadStatus" class="upload-status"></span>
-    </div>
+    <p class="empty">Upload source PDFs or Word files and mark them up with boxes, freehand and snippets.</p>
+    <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
   </section>
 </div>
-
-<div class="modal-overlay" id="newDocModal">
-  <div class="modal">
-    <h3>New document</h3>
-    <label class="modal-field">Name
-      <input id="newDocName" type="text" placeholder="e.g. Case summary — Jane Doe" maxlength="200">
-    </label>
-    <label class="modal-field">Source document (optional)
-      <select id="newDocSource">
-        <option value="">&mdash; none &mdash;</option>
-        {% for d in docs %}
-        <option value="{{ d.id }}|{{ d.type }}">{{ d.id }} ({{ d.type }})</option>
-        {% endfor %}
-      </select>
-    </label>
-    <p id="newDocError" class="error-message" style="display:none"></p>
-    <div class="modal-actions">
-      <button type="button" id="newDocCancel">Cancel</button>
-      <button type="button" id="newDocCreate">Create</button>
-    </div>
-  </div>
-</div>
-
-<script src="{{ url_for('static', filename='index.js') }}"></script>
 </body>
 </html>

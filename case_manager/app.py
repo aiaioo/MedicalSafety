@@ -1206,12 +1206,7 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None):
 
 @app.route("/")
 def index():
-    pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
-    docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
-    docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
-    docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
-    docs.sort(key=lambda d: d["id"])
-    return render_template("index.html", docs=docs)
+    return render_template("index.html")
 
 
 @app.route("/annotations")

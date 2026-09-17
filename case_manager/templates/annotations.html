@@ -24,10 +24,16 @@
       {% endfor %}
     </ul>
     {% else %}
-    <p class="empty">No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload, or upload one from the <a href="{{ url_for('index') }}">home page</a>.</p>
+    <p class="empty">No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload, or upload one below.</p>
     {% endif %}
+    <div class="upload-form">
+      <button type="button" id="uploadSubmit" class="btn">Upload source&hellip;</button>
+      <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
+      <span id="uploadStatus" class="upload-status"></span>
+    </div>
   </section>
 </div>
+<script src="{{ url_for('static', filename='annotations-landing.js') }}"></script>
 {% else %}
 <div id="app"
      data-doc="{{ doc_id }}"
