@@ -26,10 +26,10 @@ CACHE_DIR = STORAGE_DIR / "cache"
 ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
 SNIPPETS_DIR = STORAGE_DIR / "snippets"
 REPORTS_DIR = STORAGE_DIR / "reports"
+CASES_DIR = STORAGE_DIR / "cases"
 ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
-ALLEGATION_ITEMS_DIR = STORAGE_DIR / "allegation_items"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, ALLEGATIONS_DIR, ALLEGATION_ITEMS_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, ALLEGATIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -231,11 +231,11 @@ def slugify_report_name(name):
 
 
 def allegation_case_path(case_id):
-    return ALLEGATIONS_DIR / f"{case_id}.json"
+    return CASES_DIR / f"{case_id}.json"
 
 
 def allegation_item_path(allegation_id):
-    return ALLEGATION_ITEMS_DIR / f"{allegation_id}.json"
+    return ALLEGATIONS_DIR / f"{allegation_id}.json"
 
 
 # Allegations are stored one-file-per-record (see api_allegations below), so
@@ -243,7 +243,7 @@ def allegation_item_path(allegation_id):
 # the way case-scoped allegations used to be ordered. This tracks the
 # user's chosen display order separately; ids that fall out of it (freshly
 # created, or the order file predating them) are appended in creation order.
-ALLEGATION_ORDER_PATH = STORAGE_DIR / "allegation_order.json"
+ALLEGATION_ORDER_PATH = ALLEGATIONS_DIR / "allegation_order.json"
 
 
 def load_allegation_order():
@@ -1683,7 +1683,7 @@ def api_report_export_docx(report_id):
 def count_linked_allegations():
     """Case id -> number of global allegations that link to it."""
     counts = {}
-    for f in ALLEGATION_ITEMS_DIR.glob("*.json"):
+    for f in ALLEGATIONS_DIR.glob("*.json"):
         data = load_json(f, default=None)
         if not isinstance(data, dict):
             continue
@@ -1697,7 +1697,7 @@ def api_allegation_cases():
     if request.method == "GET":
         allegation_counts = count_linked_allegations()
         items = []
-        for f in ALLEGATIONS_DIR.glob("*.json"):
+        for f in CASES_DIR.glob("*.json"):
             data = load_json(f, default=None)
             if not isinstance(data, dict):
                 continue
@@ -1776,7 +1776,7 @@ def api_allegation_case(case_id):
 def api_allegations():
     if request.method == "GET":
         by_id = {}
-        for f in ALLEGATION_ITEMS_DIR.glob("*.json"):
+        for f in ALLEGATIONS_DIR.glob("*.json"):
             data = load_json(f, default=None)
             if not isinstance(data, dict):
                 continue
