@@ -236,7 +236,13 @@ a { color: #2266dd; }
    editor did. list-style stays suppressed here purely to hide the browser's
    own native marker so it doesn't double up with the injected one. */
 .editor .tiptap-content ol { list-style: none; }
-.editor .tiptap-content .list-marker { display: inline-block; min-width: 1.6em; }
+/* margin-right (not a trailing space in the marker's own text, which
+   display:inline-block would trim as trailing whitespace at the edge of
+   its own line box -- invisible for a short "1." marker whose min-width
+   padding happens to cover for it, but a real missing-space bug for a
+   longer cascaded marker like "1(2)(3)" that already exceeds min-width) is
+   what actually separates a marker from the item's text. */
+.editor .tiptap-content .list-marker { display: inline-block; min-width: 1.6em; margin-right: 0.3em; }
 /* A snippet image is rendered by a ProseMirror NodeView (see
    static/src/resizableImage.js) as <span class="img-wrap"><img
    class="doc-snippet">, plus four resize-handle spans>. Unlike the old

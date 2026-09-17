@@ -61,6 +61,16 @@ export const LIST_PRESETS = {
   },
   alpha: { cascade: false, levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "alpha", wrap: "period" })) },
   roman: { cascade: false, levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "roman", wrap: "period" })) },
+  "decimal-dotted": {
+    cascade: true,
+    levels: Array.from({ length: LIST_MAX_LEVELS }, () => ({ type: "decimal", wrap: "period" })),
+  },
+  "decimal-alpha-dotted": {
+    cascade: true,
+    levels: Array.from({ length: LIST_MAX_LEVELS }, (_, i) =>
+      i % 2 === 0 ? { type: "decimal", wrap: "period" } : { type: "alpha", wrap: "period" }
+    ),
+  },
 };
 
 function toAlpha(n, upper) {

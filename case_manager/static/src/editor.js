@@ -511,7 +511,7 @@ import { Pagination, repaginate } from "./pagination.js";
   // Numbering-style toolbar: split button + preset dropdown + custom-levels
   // modal.
   // -----------------------------------------------------------------
-  let defaultListPreset = "simple";
+  let defaultListPreset = "legal-numeric";
   const numListStyleBtn = document.getElementById("numListStyleBtn");
   const numListStyleDropdown = document.getElementById("numListStyleDropdown");
   const customLevelsBtn = document.getElementById("customLevelsBtn");
