@@ -171,10 +171,12 @@
   function evidenceCountLabel(allegation) {
     const inc = allegation.inculpatory.length;
     const exc = allegation.exculpatory.length;
-    const base = `${inc} inculpatory · ${exc} exculpatory`;
+    return `${inc} inculpatory · ${exc} exculpatory`;
+  }
+
+  function linkedCasesLabel(allegation) {
     const links = allegation.case_ids || [];
-    if (!links.length) return base;
-    return `${base} · Linked: ${links.map(caseName).join(", ")}`;
+    return links.length ? links.map(caseName).join(", ") : "None";
   }
 
   function updateAllegationCardMeta(id) {
@@ -182,6 +184,8 @@
     const card = allegationListEl.querySelector(`.allegation-card[data-id="${id}"]`);
     if (allegation && card) {
       card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
+      const summaryEl = card.querySelector(".case-links-summary");
+      if (summaryEl) summaryEl.textContent = linkedCasesLabel(allegation);
     }
   }
 
@@ -197,7 +201,8 @@
         <button type="button" class="card-delete-btn" title="Delete allegation">✕</button>
       </div>
       <textarea class="allegation-summary-input" rows="2" placeholder="Brief description of the allegation…" maxlength="10000"></textarea>
-      <div class="allegation-card-meta"></div>`;
+      <div class="allegation-card-meta"></div>
+      <div class="case-links-inline"></div>`;
 
     const titleEl = card.querySelector(".allegation-title-input");
     titleEl.value = allegation.title;
@@ -218,9 +223,10 @@
     });
 
     card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
+    card.querySelector(".case-links-inline").appendChild(buildCaseLinksInline(allegation));
 
     card.addEventListener("click", (e) => {
-      if (e.target.closest("input, textarea, button")) return;
+      if (e.target.closest("input, textarea, button, .case-links-popover")) return;
       selectAllegation(allegation.id);
     });
 
@@ -230,6 +236,7 @@
   }
 
   function renderAllegationList() {
+    closeOpenCaseLinksPopover();
     const visible = visibleAllegations();
     allegationListEl.innerHTML = "";
     allegationListEmpty.style.display = visible.length ? "none" : "block";
@@ -385,36 +392,79 @@
   }
 
   // ---------------------------------------------------------------------
-  // Linked cases picker
+  // Linked cases picker — a small popover anchored to the "Linked cases"
+  // toggle inside each allegation card, so linking/unlinking a case never
+  // requires opening the detail pane.
   // ---------------------------------------------------------------------
-  function buildCaseLinks(allegation) {
+  let closeOpenCaseLinksPopover = () => {};
+
+  function buildCaseLinksInline(allegation) {
     const wrap = document.createElement("div");
-    wrap.className = "case-links";
-    if (!cases.length) {
-      wrap.innerHTML = `<h3>Linked cases</h3><p class="empty">No cases yet. Create one in the <a href="${casesPageUrl}">Cases</a> workspace.</p>`;
-      return wrap;
-    }
-    const linked = new Set(allegation.case_ids || []);
-    const rows = cases
-      .map(
-        (c) => `
-      <label class="case-link-row">
-        <input type="checkbox" value="${escapeHtml(c.id)}" ${linked.has(c.id) ? "checked" : ""}>
-        ${escapeHtml(c.name || c.id)}
-      </label>`
-      )
-      .join("");
-    wrap.innerHTML = `<h3>Linked cases</h3><div class="case-link-list">${rows}</div>`;
-    wrap.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-      cb.addEventListener("change", () => {
-        const set = new Set(allegation.case_ids || []);
-        if (cb.checked) set.add(cb.value);
-        else set.delete(cb.value);
-        allegation.case_ids = [...set];
-        updateAllegationCardMeta(allegation.id);
-        scheduleSave(allegation.id);
+    wrap.className = "case-links-inline-inner";
+    wrap.draggable = false;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "case-links-toggle";
+    toggle.innerHTML = `Linked cases: <span class="case-links-summary">${escapeHtml(linkedCasesLabel(allegation))}</span>`;
+
+    const popover = document.createElement("div");
+    popover.className = "case-links-popover";
+    popover.hidden = true;
+    popover.draggable = false;
+
+    function renderPopoverBody() {
+      if (!cases.length) {
+        popover.innerHTML = `<p class="empty">No cases yet. Create one in the <a href="${casesPageUrl}">Cases</a> workspace.</p>`;
+        return;
+      }
+      const linked = new Set(allegation.case_ids || []);
+      popover.innerHTML = cases
+        .map(
+          (c) => `
+        <label class="case-link-row">
+          <input type="checkbox" value="${escapeHtml(c.id)}" ${linked.has(c.id) ? "checked" : ""}>
+          ${escapeHtml(c.name || c.id)}
+        </label>`
+        )
+        .join("");
+      popover.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const set = new Set(allegation.case_ids || []);
+          if (cb.checked) set.add(cb.value);
+          else set.delete(cb.value);
+          allegation.case_ids = [...set];
+          toggle.querySelector(".case-links-summary").textContent = linkedCasesLabel(allegation);
+          scheduleSave(allegation.id);
+        });
       });
+    }
+    renderPopoverBody();
+
+    function onOutsideClick(e) {
+      if (!wrap.contains(e.target)) closePopover();
+    }
+
+    function closePopover() {
+      popover.hidden = true;
+      document.removeEventListener("click", onOutsideClick, true);
+      closeOpenCaseLinksPopover = () => {};
+    }
+
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = !popover.hidden;
+      closeOpenCaseLinksPopover();
+      if (!wasOpen) {
+        popover.hidden = false;
+        document.addEventListener("click", onOutsideClick, true);
+        closeOpenCaseLinksPopover = closePopover;
+      }
     });
+    popover.addEventListener("click", (e) => e.stopPropagation());
+
+    wrap.appendChild(toggle);
+    wrap.appendChild(popover);
     return wrap;
   }
 
@@ -432,7 +482,6 @@
     const columnsEl = allegationDetailEl.querySelector(".evidence-columns");
     columnsEl.appendChild(buildEvidenceColumn(allegation, "inculpatory", "Inculpatory Evidence"));
     columnsEl.appendChild(buildEvidenceColumn(allegation, "exculpatory", "Exculpatory Evidence"));
-    allegationDetailEl.appendChild(buildCaseLinks(allegation));
   }
 
   // ---------------------------------------------------------------------

@@ -528,16 +528,30 @@ a { color: #2266dd; }
 .hearing-date-input:hover { background: #f7f8fa; }
 .hearing-date-input:focus { outline: none; background: white; border-color: #cfd4e0; }
 
-/* ---- allegations: case-filter banner + the linked-cases picker in the
-   detail pane (an allegation can link to zero or more cases) ---- */
+/* ---- allegations: case-filter banner ---- */
 .allegations-filter-bar {
   margin: 0 0 14px; padding: 8px 10px; background: #eef1f7; border-radius: 6px;
   font-size: 12px; color: #46536b;
 }
 .allegations-filter-bar a { color: #2266dd; text-decoration: none; }
 .allegations-filter-bar a:hover { text-decoration: underline; }
-.case-links { margin-top: 26px; padding-top: 18px; border-top: 1px solid #e0e2e8; }
-.case-links h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #46536b; }
-.case-link-list { display: flex; flex-direction: column; gap: 8px; }
-.case-link-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; }
-.case-link-row input { margin: 0; }
+
+/* ---- allegations: linked-cases popover inside each allegation card
+   (an allegation can link to zero or more cases) ---- */
+.case-links-inline { margin-top: 6px; padding: 0 6px; position: relative; }
+.case-links-toggle {
+  display: inline-flex; align-items: center; gap: 4px; border: none; background: none;
+  color: #8a92a5; font-size: 11px; cursor: pointer; padding: 2px 0; font-family: inherit;
+}
+.case-links-toggle:hover { color: #2266dd; }
+.case-links-toggle .case-links-summary { color: #46536b; font-weight: 500; }
+.case-links-toggle:hover .case-links-summary { color: #2266dd; text-decoration: underline; }
+.case-links-popover {
+  position: absolute; top: 100%; left: 6px; right: 6px; z-index: 20; margin-top: 4px;
+  background: white; border: 1px solid #cfd4e0; border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.14); padding: 10px 12px; box-sizing: border-box;
+  cursor: default;
+}
+.case-links-popover .case-link-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; padding: 3px 0; }
+.case-links-popover .case-link-row input { margin: 0; }
+.case-links-popover .empty { margin: 0; font-size: 12px; }
