@@ -316,10 +316,13 @@ a { color: #2266dd; }
    its own (that lives one level up, on #editor), so a full-width break
    already spans exactly the printable column. */
 .editor .page-break {
-  /* height is set inline by pagination.js per pass (a fixed ~1cm gap) */
+  /* height is set inline by pagination.js per pass (a fixed ~1cm gap).
+     background matches .editor-container's own backdrop (not white, like
+     the page itself) so the gap reads as flat space between pages rather
+     than a distinct bar -- no box-shadow, which previously drew a
+     dark-to-light gradient across the gap's top/bottom edges. */
   box-sizing: border-box;
   background: #e8eaed;
-  box-shadow: inset 0 8px 8px -8px rgba(0,0,0,0.25), inset 0 -8px 8px -8px rgba(0,0,0,0.25);
   display: flex; align-items: center; justify-content: center;
   /* pointer-events stays enabled (unlike a typical decorative overlay) so
      this element itself captures hover/clicks instead of letting them fall
