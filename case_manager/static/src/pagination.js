@@ -40,8 +40,15 @@ function marginsPx(margins) {
 function computeBreaks(view, margins) {
   const m = marginsPx(margins);
   const pageContentHeight = PAGE_HEIGHT_PX - m.header - m.footer;
+  // view.dom is the .tiptap-content child of #editor (see editor.js's
+  // `element: editorEl` + editorProps.attributes), and #editor is the
+  // element carrying the real top-padding (m.header) via CSS -- so
+  // view.dom's own rect.top already sits just below that padding. Adding
+  // m.header again here would double-count it, pushing the first page's
+  // content-top (and every fillerBefore/break computed off it) down by a
+  // full header's height.
   const editorRect = view.dom.getBoundingClientRect();
-  let pageContentTop = editorRect.top + m.header;
+  let pageContentTop = editorRect.top;
   let prevBottom = null;
   const breaks = [];
   let pageNum = 1;
@@ -58,15 +65,40 @@ function computeBreaks(view, margins) {
     }
     prevBottom = rect.bottom;
   });
+
+  // Pad the last page out to full page height too. Unlike the mid-document
+  // fillerBefore above, this trailing filler doesn't need + m.footer: it
+  // butts up against #editor's own real bottom padding (m.footer, applied
+  // once via CSS), not a simulated one, so it only needs to fill the
+  // remainder of the page's *content* area.
+  if (prevBottom !== null) {
+    const trailingFiller = Math.max(0, pageContentHeight - (prevBottom - pageContentTop));
+    if (trailingFiller > 0.5) {
+      breaks.push({ pos: view.state.doc.content.size, fillerBefore: trailingFiller, trailing: true });
+    }
+  }
   return breaks;
 }
 
 function breaksEqual(a, b) {
   if (a.length !== b.length) return false;
-  return a.every((x, i) => x.pos === b[i].pos && Math.abs(x.fillerBefore - b[i].fillerBefore) < 0.5);
+  return a.every(
+    (x, i) => x.pos === b[i].pos && Math.abs(x.fillerBefore - b[i].fillerBefore) < 0.5 && !x.trailing === !b[i].trailing
+  );
 }
 
 function renderBreakWidget(b) {
+  // The trailing filler (after the last node) just pads the last page out
+  // to full height -- there's no next page to break into, so it's a bare
+  // blank div, not the filler/break-bar/filler triplet used mid-document.
+  if (b.trailing) {
+    const filler = document.createElement("div");
+    filler.className = "page-filler";
+    filler.contentEditable = "false";
+    filler.style.height = b.fillerBefore + "px";
+    return filler;
+  }
+
   const wrap = document.createElement("div");
   wrap.className = "page-break-group";
 
