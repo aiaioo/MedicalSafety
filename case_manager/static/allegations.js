@@ -1,20 +1,26 @@
 (function () {
   const appEl = document.getElementById("allegationsApp");
   if (!appEl) return;
-  const caseId = appEl.dataset.case;
-  const caseUrl = appEl.dataset.caseUrl;
+  const allegationsUrl = appEl.dataset.allegationsUrl;
+  const allegationUrlBase = appEl.dataset.allegationUrlBase;
+  const allegationsOrderUrl = appEl.dataset.allegationsOrderUrl;
+  const casesUrl = appEl.dataset.casesUrl;
+  const casesPageUrl = appEl.dataset.casesPageUrl;
+  const filterCaseId = appEl.dataset.filterCase || "";
 
-  const titleInput = document.getElementById("titleInput");
-  const saveBtn = document.getElementById("saveBtn");
+  function allegationUrl(id) {
+    return allegationUrlBase.replace("__ID__", encodeURIComponent(id));
+  }
+
   const saveStatusEl = document.getElementById("saveStatus");
-
+  const addAllegationBtn = document.getElementById("addAllegationBtn");
+  const filterBarEl = document.getElementById("filterBar");
   const allegationListEl = document.getElementById("allegationList");
   const allegationListEmpty = document.getElementById("allegationListEmpty");
   const allegationDetailEl = document.getElementById("allegationDetail");
-  const addAllegationBtn = document.getElementById("addAllegationBtn");
 
   // -------------------------------------------------------------------
-  // Small helpers shared with the other pages
+  // Small helpers (mirrors static/cases.js)
   // -------------------------------------------------------------------
   function escapeHtml(s) {
     return String(s)
@@ -45,91 +51,10 @@
     });
   }
 
-  // -------------------------------------------------------------------
-  // Case editor (only present once a case is open)
-  // -------------------------------------------------------------------
-  if (!caseId || !allegationListEl) return;
-
-  let caseData = null;
-  let selectedId = null;
-  let dirty = false;
-  let saving = false;
-  let saveAgainAfter = false;
-  let autosaveTimer = null;
-
   function setStatus(text, isError) {
     saveStatusEl.textContent = text || "";
     saveStatusEl.style.color = isError ? "#c0392b" : "#8a92a5";
   }
-
-  function markDirty() {
-    dirty = true;
-    setStatus("Saving…");
-    if (autosaveTimer) clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(() => {
-      saveCase().catch((e) => setStatus("Save failed: " + e.message, true));
-    }, 1200);
-  }
-
-  async function saveCase() {
-    if (saving) {
-      saveAgainAfter = true;
-      return;
-    }
-    saving = true;
-    if (autosaveTimer) {
-      clearTimeout(autosaveTimer);
-      autosaveTimer = null;
-    }
-    const payload = {
-      name: titleInput.value.trim() || "Untitled case",
-      allegations: caseData.allegations,
-    };
-    try {
-      const res = await fetch(caseUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      dirty = false;
-      setStatus("Saved");
-    } finally {
-      saving = false;
-      if (saveAgainAfter) {
-        saveAgainAfter = false;
-        await saveCase();
-      }
-    }
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    try {
-      await saveCase();
-    } catch (e) {
-      setStatus("Save failed: " + e.message, true);
-    }
-  });
-  document.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
-      e.preventDefault();
-      saveCase().catch((err) => setStatus("Save failed: " + err.message, true));
-    }
-  });
-  titleInput.addEventListener("input", markDirty);
-
-  window.addEventListener("beforeunload", () => {
-    if (!dirty || !caseData) return;
-    try {
-      const blob = new Blob(
-        [JSON.stringify({ name: titleInput.value.trim() || "Untitled case", allegations: caseData.allegations })],
-        { type: "application/json" }
-      );
-      navigator.sendBeacon(caseUrl, blob);
-    } catch (err) {
-      // best effort only
-    }
-  });
 
   // ---------------------------------------------------------------------
   // Drag-to-reorder — plain HTML5 drag and drop. `onDrop` runs once, after
@@ -173,16 +98,87 @@
   }
 
   // ---------------------------------------------------------------------
+  // State: allegations are global records, each optionally linked to one or
+  // more cases (allegation.case_ids) rather than owned by a single case.
+  // ---------------------------------------------------------------------
+  let allegations = [];
+  let cases = []; // [{id, name, ...}] for the link picker + filter label
+  let selectedId = null;
+  let filterActive = !!filterCaseId;
+  const saveTimers = {};
+
+  function caseName(id) {
+    const c = cases.find((x) => x.id === id);
+    return c ? c.name || id : id;
+  }
+
+  function visibleAllegations() {
+    if (!filterActive) return allegations;
+    return allegations.filter((a) => (a.case_ids || []).includes(filterCaseId));
+  }
+
+  function renderFilterBar() {
+    if (!filterCaseId) {
+      filterBarEl.style.display = "none";
+      return;
+    }
+    filterBarEl.style.display = "block";
+    filterBarEl.innerHTML = filterActive
+      ? `Showing allegations linked to <strong>${escapeHtml(caseName(filterCaseId))}</strong> &middot; <a href="#" id="showAllLink">Show all</a>`
+      : `Showing all allegations &middot; <a href="#" id="showAllLink">Show only ${escapeHtml(caseName(filterCaseId))}</a>`;
+    const link = filterBarEl.querySelector("#showAllLink");
+    if (link) {
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        filterActive = !filterActive;
+        renderFilterBar();
+        renderAllegationList();
+      });
+    }
+  }
+
+  function scheduleSave(id) {
+    setStatus("Saving…");
+    if (saveTimers[id]) clearTimeout(saveTimers[id]);
+    saveTimers[id] = setTimeout(() => {
+      saveTimers[id] = null;
+      saveAllegation(id).catch((e) => setStatus("Save failed: " + e.message, true));
+    }, 900);
+  }
+
+  async function saveAllegation(id) {
+    const allegation = allegations.find((a) => a.id === id);
+    if (!allegation) return;
+    const payload = {
+      title: allegation.title,
+      description: allegation.description,
+      inculpatory: allegation.inculpatory,
+      exculpatory: allegation.exculpatory,
+      case_ids: allegation.case_ids,
+    };
+    const res = await fetch(allegationUrl(id), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    setStatus("Saved");
+  }
+
+  // ---------------------------------------------------------------------
   // Allegation list (left column)
   // ---------------------------------------------------------------------
   function evidenceCountLabel(allegation) {
     const inc = allegation.inculpatory.length;
     const exc = allegation.exculpatory.length;
-    return `${inc} inculpatory · ${exc} exculpatory`;
+    const base = `${inc} inculpatory · ${exc} exculpatory`;
+    const links = allegation.case_ids || [];
+    if (!links.length) return base;
+    return `${base} · Linked: ${links.map(caseName).join(", ")}`;
   }
 
   function updateAllegationCardMeta(id) {
-    const allegation = caseData.allegations.find((a) => a.id === id);
+    const allegation = allegations.find((a) => a.id === id);
     const card = allegationListEl.querySelector(`.allegation-card[data-id="${id}"]`);
     if (allegation && card) {
       card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
@@ -207,14 +203,18 @@
     titleEl.value = allegation.title;
     titleEl.addEventListener("input", () => {
       allegation.title = titleEl.value;
-      markDirty();
+      if (selectedId === allegation.id) {
+        const h2 = allegationDetailEl.querySelector(".allegation-detail-head h2");
+        if (h2) h2.textContent = allegation.title || "Untitled allegation";
+      }
+      scheduleSave(allegation.id);
     });
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = allegation.description;
     summaryEl.addEventListener("input", () => {
       allegation.description = summaryEl.value;
-      markDirty();
+      scheduleSave(allegation.id);
     });
 
     card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
@@ -230,19 +230,40 @@
   }
 
   function renderAllegationList() {
+    const visible = visibleAllegations();
     allegationListEl.innerHTML = "";
-    allegationListEmpty.style.display = caseData.allegations.length ? "none" : "block";
-    for (const allegation of caseData.allegations) {
+    allegationListEmpty.style.display = visible.length ? "none" : "block";
+    for (const allegation of visible) {
       allegationListEl.appendChild(buildAllegationCard(allegation));
     }
   }
 
   function reorderAllegationsFromDom() {
     const ids = [...allegationListEl.querySelectorAll(".allegation-card")].map((el) => el.dataset.id);
-    caseData.allegations.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-    markDirty();
+    // Only the visible (possibly filtered) subset was reordered; splice that
+    // subset back into `allegations` in its new order, leaving the rest
+    // (hidden by the filter) exactly where they were.
+    const idSet = new Set(ids);
+    const reordered = ids.map((id) => allegations.find((a) => a.id === id));
+    let cursor = 0;
+    allegations = allegations.map((a) => (idSet.has(a.id) ? reordered[cursor++] : a));
+    saveOrder();
   }
   enableDragReorder(allegationListEl, ".allegation-card", reorderAllegationsFromDom);
+
+  function saveOrder() {
+    setStatus("Saving…");
+    fetch(allegationsOrderUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: allegations.map((a) => a.id) }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        setStatus("Saved");
+      })
+      .catch((e) => setStatus("Save failed: " + e.message, true));
+  }
 
   function selectAllegation(id) {
     selectedId = id;
@@ -251,29 +272,52 @@
   }
 
   function addAllegation() {
-    const allegation = { id: genId(), title: "", description: "", inculpatory: [], exculpatory: [] };
-    caseData.allegations.push(allegation);
-    selectedId = allegation.id;
-    renderAllegationList();
-    renderDetail();
-    markDirty();
-    const card = allegationListEl.querySelector(`.allegation-card[data-id="${allegation.id}"]`);
-    if (card) setTimeout(() => card.querySelector(".allegation-title-input").focus(), 0);
+    const payload = {
+      title: "",
+      description: "",
+      inculpatory: [],
+      exculpatory: [],
+      // Creating from a case-filtered view links the new allegation to that
+      // case immediately, since that's almost always the intent.
+      case_ids: filterCaseId ? [filterCaseId] : [],
+    };
+    setStatus("Saving…");
+    fetch(allegationsUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then((data) => {
+        allegations.push(data);
+        selectedId = data.id;
+        renderAllegationList();
+        renderDetail();
+        setStatus("Saved");
+        const card = allegationListEl.querySelector(`.allegation-card[data-id="${data.id}"]`);
+        if (card) setTimeout(() => card.querySelector(".allegation-title-input").focus(), 0);
+      })
+      .catch((e) => setStatus("Could not create allegation: " + e.message, true));
   }
   addAllegationBtn.addEventListener("click", addAllegation);
 
   function deleteAllegation(id) {
-    caseData.allegations = caseData.allegations.filter((a) => a.id !== id);
-    if (selectedId === id) {
-      selectedId = caseData.allegations.length ? caseData.allegations[0].id : null;
-    }
-    renderAllegationList();
-    renderDetail();
-    markDirty();
+    fetch(allegationUrl(id), { method: "DELETE" })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        allegations = allegations.filter((a) => a.id !== id);
+        if (selectedId === id) selectedId = null;
+        renderAllegationList();
+        renderDetail();
+      })
+      .catch((e) => setStatus("Could not delete allegation: " + e.message, true));
   }
 
   // ---------------------------------------------------------------------
-  // Evidence sublists (right pane, one allegation at a time)
+  // Evidence sublists (part of the detail pane, one allegation at a time)
   // ---------------------------------------------------------------------
   function buildEvidenceCard(allegation, kind, item) {
     const card = document.createElement("div");
@@ -289,14 +333,14 @@
     textEl.value = item.text;
     textEl.addEventListener("input", () => {
       item.text = textEl.value;
-      markDirty();
+      scheduleSave(allegation.id);
     });
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       allegation[kind] = allegation[kind].filter((e) => e.id !== item.id);
       renderDetail();
       updateAllegationCardMeta(allegation.id);
-      markDirty();
+      scheduleSave(allegation.id);
     });
 
     return card;
@@ -321,7 +365,7 @@
     function reorderFromDom() {
       const ids = [...listEl.querySelectorAll(".evidence-card")].map((el) => el.dataset.id);
       allegation[kind].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-      markDirty();
+      scheduleSave(allegation.id);
     }
     enableDragReorder(listEl, ".evidence-card", reorderFromDom);
 
@@ -330,7 +374,7 @@
       allegation[kind].push(item);
       renderDetail();
       updateAllegationCardMeta(allegation.id);
-      markDirty();
+      scheduleSave(allegation.id);
       const newCard = allegationDetailEl.querySelector(
         `.evidence-column.evidence-${kind} .evidence-card[data-id="${item.id}"] textarea`
       );
@@ -340,8 +384,42 @@
     return col;
   }
 
+  // ---------------------------------------------------------------------
+  // Linked cases picker
+  // ---------------------------------------------------------------------
+  function buildCaseLinks(allegation) {
+    const wrap = document.createElement("div");
+    wrap.className = "case-links";
+    if (!cases.length) {
+      wrap.innerHTML = `<h3>Linked cases</h3><p class="empty">No cases yet. Create one in the <a href="${casesPageUrl}">Cases</a> workspace.</p>`;
+      return wrap;
+    }
+    const linked = new Set(allegation.case_ids || []);
+    const rows = cases
+      .map(
+        (c) => `
+      <label class="case-link-row">
+        <input type="checkbox" value="${escapeHtml(c.id)}" ${linked.has(c.id) ? "checked" : ""}>
+        ${escapeHtml(c.name || c.id)}
+      </label>`
+      )
+      .join("");
+    wrap.innerHTML = `<h3>Linked cases</h3><div class="case-link-list">${rows}</div>`;
+    wrap.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const set = new Set(allegation.case_ids || []);
+        if (cb.checked) set.add(cb.value);
+        else set.delete(cb.value);
+        allegation.case_ids = [...set];
+        updateAllegationCardMeta(allegation.id);
+        scheduleSave(allegation.id);
+      });
+    });
+    return wrap;
+  }
+
   function renderDetail() {
-    const allegation = caseData.allegations.find((a) => a.id === selectedId);
+    const allegation = allegations.find((a) => a.id === selectedId);
     if (!allegation) {
       allegationDetailEl.innerHTML = '<p class="empty">Select or add an allegation on the left to see its evidence.</p>';
       return;
@@ -354,19 +432,19 @@
     const columnsEl = allegationDetailEl.querySelector(".evidence-columns");
     columnsEl.appendChild(buildEvidenceColumn(allegation, "inculpatory", "Inculpatory Evidence"));
     columnsEl.appendChild(buildEvidenceColumn(allegation, "exculpatory", "Exculpatory Evidence"));
+    allegationDetailEl.appendChild(buildCaseLinks(allegation));
   }
 
   // ---------------------------------------------------------------------
   // Initial load
   // ---------------------------------------------------------------------
-  (async function loadCase() {
+  (async function init() {
     try {
-      const res = await fetch(caseUrl);
-      if (!res.ok) throw new Error(await res.text());
-      caseData = await res.json();
-      if (!Array.isArray(caseData.allegations)) caseData.allegations = [];
-      titleInput.value = caseData.name || "";
-      selectedId = caseData.allegations.length ? caseData.allegations[0].id : null;
+      const [allegationsRes, casesRes] = await Promise.all([fetch(allegationsUrl), fetch(casesUrl)]);
+      if (!allegationsRes.ok) throw new Error(await allegationsRes.text());
+      allegations = await allegationsRes.json();
+      cases = casesRes.ok ? await casesRes.json() : [];
+      renderFilterBar();
       renderAllegationList();
       renderDetail();
     } catch (e) {

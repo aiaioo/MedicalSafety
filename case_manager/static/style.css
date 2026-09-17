@@ -527,3 +527,17 @@ a { color: #2266dd; }
 }
 .hearing-date-input:hover { background: #f7f8fa; }
 .hearing-date-input:focus { outline: none; background: white; border-color: #cfd4e0; }
+
+/* ---- allegations: case-filter banner + the linked-cases picker in the
+   detail pane (an allegation can link to zero or more cases) ---- */
+.allegations-filter-bar {
+  margin: 0 0 14px; padding: 8px 10px; background: #eef1f7; border-radius: 6px;
+  font-size: 12px; color: #46536b;
+}
+.allegations-filter-bar a { color: #2266dd; text-decoration: none; }
+.allegations-filter-bar a:hover { text-decoration: underline; }
+.case-links { margin-top: 26px; padding-top: 18px; border-top: 1px solid #e0e2e8; }
+.case-links h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #46536b; }
+.case-link-list { display: flex; flex-direction: column; gap: 8px; }
+.case-link-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; }
+.case-link-row input { margin: 0; }

@@ -3,36 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if case_id %}Allegations editor{% else %}Allegations{% endif %}</title>
+<title>Allegations</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <div id="allegationsApp"
-     data-case="{{ case_id }}"
-     {% if case_id %}
-     data-case-url="{{ url_for('api_allegation_case', case_id=case_id) }}"
-     {% endif %}
+     data-allegations-url="{{ url_for('api_allegations') }}"
+     data-allegation-url-base="{{ url_for('api_allegation_item', allegation_id='__ID__') }}"
+     data-allegations-order-url="{{ url_for('api_allegations_order') }}"
+     data-cases-url="{{ url_for('api_allegation_cases') }}"
+     data-cases-page-url="{{ url_for('cases_view') }}"
+     data-filter-case="{{ filter_case_id }}"
 >
   <header class="docbar">
     <a class="home-link" href="{{ url_for('index') }}" title="All documents">&larr;</a>
     <a class="btn" href="{{ url_for('cases_view') }}">Cases</a>
-
-    {% if case_id %}
-    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled case">
-    <button type="button" id="saveBtn" class="save-btn">Save</button>
-    {% endif %}
     <span id="saveStatus" class="save-status"></span>
   </header>
 
   <main class="allegations-layout">
-    {% if case_id %}
     <div class="allegations-workspace" id="allegationsWorkspace">
       <aside class="allegations-column">
         <div class="allegations-column-head">
           <h2>Allegations</h2>
           <button type="button" class="btn" id="addAllegationBtn">+ Add allegation</button>
         </div>
+        <p class="allegations-filter-bar" id="filterBar" style="display:none"></p>
         <p class="empty" id="allegationListEmpty" style="display:none">No allegations yet. Add one to get started.</p>
         <div class="allegation-list" id="allegationList"></div>
       </aside>
@@ -40,12 +37,6 @@
         <p class="empty">Select or add an allegation on the left to see its evidence.</p>
       </section>
     </div>
-    {% else %}
-    <div class="doc-landing">
-      <h2>No case selected</h2>
-      <p class="empty">Open a case from the <a href="{{ url_for('cases_view') }}">Cases</a> page to edit its allegations.</p>
-    </div>
-    {% endif %}
   </main>
 </div>
 <script src="{{ url_for('static', filename='allegations.js') }}"></script>

@@ -27,8 +27,9 @@ ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
 SNIPPETS_DIR = STORAGE_DIR / "snippets"
 REPORTS_DIR = STORAGE_DIR / "reports"
 ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
+ALLEGATION_ITEMS_DIR = STORAGE_DIR / "allegation_items"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, ALLEGATIONS_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, ALLEGATIONS_DIR, ALLEGATION_ITEMS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -233,21 +234,49 @@ def allegation_case_path(case_id):
     return ALLEGATIONS_DIR / f"{case_id}.json"
 
 
+def allegation_item_path(allegation_id):
+    return ALLEGATION_ITEMS_DIR / f"{allegation_id}.json"
+
+
+# Allegations are stored one-file-per-record (see api_allegations below), so
+# there's no single array whose element order can just be preserved on save
+# the way case-scoped allegations used to be ordered. This tracks the
+# user's chosen display order separately; ids that fall out of it (freshly
+# created, or the order file predating them) are appended in creation order.
+ALLEGATION_ORDER_PATH = STORAGE_DIR / "allegation_order.json"
+
+
+def load_allegation_order():
+    order = load_json(ALLEGATION_ORDER_PATH, default=[])
+    return order if isinstance(order, list) else []
+
+
+def ordered_allegation_ids(item_ids_by_created_at):
+    order = load_allegation_order()
+    known = set(item_ids_by_created_at)
+    ordered = [i for i in order if i in known]
+    ordered += [i for i in item_ids_by_created_at if i not in set(ordered)]
+    return ordered
+
+
 # ---------------------------------------------------------------------------
-# Allegations workspace: an allegation case is a name plus an ordered list of
-# allegations, each carrying its own ordered inculpatory/exculpatory evidence
-# lists (see templates/allegations.html, static/allegations.js). Plain text
-# only (no rich formatting), so sanitizing is just shape/length whitelisting
-# -- unlike sanitize_report_doc there's no HTML/ProseMirror tree to walk.
+# Allegations workspace: allegations are standalone records (see
+# templates/allegations.html, static/allegations.js), each carrying its own
+# ordered inculpatory/exculpatory evidence lists plus an optional set of
+# linked case ids -- an allegation can pertain to zero or more cases rather
+# than belonging to exactly one, so the link lives on the allegation, not
+# nested inside a case file. Plain text only (no rich formatting), so
+# sanitizing is just shape/length whitelisting -- unlike sanitize_report_doc
+# there's no HTML/ProseMirror tree to walk.
 # ---------------------------------------------------------------------------
 ALLEGATION_MAX_TITLE_CHARS = 300
 ALLEGATION_MAX_TEXT_CHARS = 10_000
-ALLEGATION_MAX_ITEMS = 300
 EVIDENCE_MAX_ITEMS = 300
 CASE_MAX_COURT_CHARS = 200
 CASE_MAX_NUMBER_CHARS = 100
 CASE_MAX_DATE_CHARS = 40
 HEARING_MAX_ITEMS = 300
+ALLEGATION_MAX_CASE_LINKS = 50
 
 
 def _sanitize_item_id(raw):
@@ -272,20 +301,16 @@ def sanitize_evidence_list(raw):
     return out
 
 
-def sanitize_allegations(raw):
+def sanitize_case_ids(raw):
+    """Keep only ids that look valid and name a case that actually exists on
+    disk, so a link never points at something the cases workspace can't
+    resolve."""
     if not isinstance(raw, list):
         return []
     out = []
-    for item in raw[:ALLEGATION_MAX_ITEMS]:
-        if not isinstance(item, dict):
-            continue
-        out.append({
-            "id": _sanitize_item_id(item.get("id")),
-            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
-            "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
-            "inculpatory": sanitize_evidence_list(item.get("inculpatory")),
-            "exculpatory": sanitize_evidence_list(item.get("exculpatory")),
-        })
+    for cid in raw[:ALLEGATION_MAX_CASE_LINKS]:
+        if isinstance(cid, str) and DOC_ID_RE.match(cid) and cid not in out and allegation_case_path(cid).exists():
+            out.append(cid)
     return out
 
 
@@ -1259,13 +1284,16 @@ def document_view():
 
 @app.route("/allegations")
 def allegations_view():
-    case_id = request.args.get("case", "")
-    if case_id:
-        check_report_id(case_id)
-        if not allegation_case_path(case_id).exists():
-            raise DocumentError(f"No case with id {case_id!r}", 404)
+    # Allegations are global (see api_allegations below); "case" is only an
+    # optional hint from the cases workspace to pre-filter the list to
+    # allegations linked to that case, not a page the allegation belongs to.
+    filter_case_id = request.args.get("case", "")
+    if filter_case_id:
+        check_report_id(filter_case_id)
+        if not allegation_case_path(filter_case_id).exists():
+            raise DocumentError(f"No case with id {filter_case_id!r}", 404)
 
-    return render_template("allegations.html", case_id=case_id)
+    return render_template("allegations.html", filter_case_id=filter_case_id)
 
 
 @app.route("/cases")
@@ -1652,9 +1680,22 @@ def api_report_export_docx(report_id):
     return resp
 
 
+def count_linked_allegations():
+    """Case id -> number of global allegations that link to it."""
+    counts = {}
+    for f in ALLEGATION_ITEMS_DIR.glob("*.json"):
+        data = load_json(f, default=None)
+        if not isinstance(data, dict):
+            continue
+        for cid in data.get("case_ids") or []:
+            counts[cid] = counts.get(cid, 0) + 1
+    return counts
+
+
 @app.route("/api/allegation-cases", methods=["GET", "POST"])
 def api_allegation_cases():
     if request.method == "GET":
+        allegation_counts = count_linked_allegations()
         items = []
         for f in ALLEGATIONS_DIR.glob("*.json"):
             data = load_json(f, default=None)
@@ -1666,7 +1707,7 @@ def api_allegation_cases():
                 "court": data.get("court", ""),
                 "case_number": data.get("case_number", ""),
                 "summary": data.get("summary", ""),
-                "allegation_count": len(data.get("allegations") or []),
+                "allegation_count": allegation_counts.get(f.stem, 0),
                 "hearing_count": len(data.get("hearings") or []),
                 "created_at": data.get("created_at", ""),
                 "updated_at": data.get("updated_at", ""),
@@ -1686,7 +1727,6 @@ def api_allegation_cases():
         "court": _sanitize_text(body.get("court"), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
-        "allegations": [],
         "hearings": [],
         "created_at": now,
         "updated_at": now,
@@ -1720,13 +1760,88 @@ def api_allegation_case(case_id):
         "court": _sanitize_text(body.get("court", existing.get("court", "")), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
-        "allegations": sanitize_allegations(body.get("allegations", existing.get("allegations", []))),
         "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", []))),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     save_json(path, data)
     return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# API: global allegations (each optionally linked to one or more cases)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/allegations", methods=["GET", "POST"])
+def api_allegations():
+    if request.method == "GET":
+        by_id = {}
+        for f in ALLEGATION_ITEMS_DIR.glob("*.json"):
+            data = load_json(f, default=None)
+            if not isinstance(data, dict):
+                continue
+            by_id[f.stem] = data
+        creation_order = sorted(by_id, key=lambda i: by_id[i].get("created_at", ""))
+        items = [{"id": i, **by_id[i]} for i in ordered_allegation_ids(creation_order)]
+        return jsonify(items)
+
+    body = request.get_json(silent=True) or {}
+    allegation_id = uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "title": _sanitize_text(body.get("title"), ALLEGATION_MAX_TITLE_CHARS),
+        "description": _sanitize_text(body.get("description"), ALLEGATION_MAX_TEXT_CHARS),
+        "inculpatory": sanitize_evidence_list(body.get("inculpatory")),
+        "exculpatory": sanitize_evidence_list(body.get("exculpatory")),
+        "case_ids": sanitize_case_ids(body.get("case_ids")),
+        "created_at": now,
+        "updated_at": now,
+    }
+    save_json(allegation_item_path(allegation_id), data)
+    return jsonify({"id": allegation_id, **data})
+
+
+@app.route("/api/allegation/<allegation_id>", methods=["GET", "POST", "DELETE"])
+def api_allegation_item(allegation_id):
+    check_report_id(allegation_id)
+    path = allegation_item_path(allegation_id)
+    existing = load_json(path, default=None)
+    if existing is None:
+        raise DocumentError(f"No allegation with id {allegation_id!r}", 404)
+
+    if request.method == "GET":
+        return jsonify({"id": allegation_id, **existing})
+
+    if request.method == "DELETE":
+        path.unlink(missing_ok=True)
+        return jsonify({"ok": True})
+
+    body = request.get_json(silent=True) or {}
+    data = {
+        "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
+        "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
+        "inculpatory": sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", []))),
+        "exculpatory": sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", []))),
+        "case_ids": sanitize_case_ids(body.get("case_ids", existing.get("case_ids", []))),
+        "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_json(path, data)
+    return jsonify({"id": allegation_id, **data})
+
+
+@app.route("/api/allegations/order", methods=["POST"])
+def api_allegations_order():
+    body = request.get_json(silent=True) or {}
+    raw_order = body.get("order")
+    if not isinstance(raw_order, list):
+        raise DocumentError("order must be a list of allegation ids", 400)
+    seen = []
+    for aid in raw_order[:2000]:
+        if isinstance(aid, str) and DOC_ID_RE.match(aid) and aid not in seen and allegation_item_path(aid).exists():
+            seen.append(aid)
+    save_json(ALLEGATION_ORDER_PATH, seen)
+    return jsonify({"order": seen})
 
 
 @app.route("/media/snippets/<doc_id>/<path:filename>")
