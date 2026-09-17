@@ -5,15 +5,15 @@ import re
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape
-from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.image.image import Image as DocxImage
 from docx.oxml.ns import qn
-from docx.shared import Emu, Pt
+from docx.shared import Emu, Pt, RGBColor
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, url_for
 
 from converters import ConversionError, convert_to_pdf
@@ -254,131 +254,193 @@ def draw_annotations_on_page(page, annotations, page_rect):
 
 
 # ---------------------------------------------------------------------------
-# Report editor: HTML sanitization, image inlining, PDF rendering
+# Report editor: the document is Tiptap/ProseMirror JSON (see
+# static/src/editor.js), not HTML -- the browser is the one thing that ever
+# turns it into markup (for display) or draws it (this module renders PDF/
+# DOCX straight from the JSON, see "Multilevel numbering" below). Sanitizing
+# means walking that JSON against a fixed whitelist of node/mark types and
+# attribute shapes matching the editor's actual schema, dropping anything
+# else -- structurally safer than the old HTML-tag sanitizer (no HTML-parser
+# edge cases, no way for a stray tag soup to confuse it) and it doubles as
+# schema validation before either exporter ever touches the tree.
 # ---------------------------------------------------------------------------
 
-REPORT_ALLOWED_TAGS = {
-    "p", "br", "div", "span", "h1", "h2", "h3", "h4",
-    "strong", "b", "em", "i", "u", "s",
-    "ul", "ol", "li", "a", "img", "blockquote", "hr",
-    "table", "thead", "tbody", "tr", "td", "th",
-    "figure", "figcaption", "pre", "code",
-}
-REPORT_VOID_TAGS = {"br", "img", "hr"}
-REPORT_STRIP_CONTENT_TAGS = {"script", "style", "iframe", "object", "embed", "form", "input", "button", "svg"}
 REPORT_SAFE_URL_RE = re.compile(
     r"^(https?://|mailto:|/media/|data:image/(png|jpeg|jpg|gif|webp);base64,)", re.IGNORECASE
 )
-REPORT_SAFE_STYLE_RE = re.compile(r"^[a-zA-Z0-9\s:;#%.,\-()]*$")
+REPORT_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+REPORT_FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 ,'\-]{1,60}$")
+REPORT_FONT_SIZE_RE = re.compile(r"^\d{1,3}pt$")
+REPORT_TEXT_ALIGN_VALUES = {"left", "center", "right", "justify"}
+REPORT_LEVEL_TYPE_VALUES = {"decimal", "alpha", "upalpha", "roman", "uproman"}
+REPORT_LEVEL_WRAP_VALUES = {"none", "period", "paren", "trail"}
+REPORT_MAX_DOC_JSON_CHARS = 1_000_000
 
 
-def _clean_report_attrs(tag, attrs):
-    out = {}
-    for name, value in attrs:
-        if value is None:
+def _safe_url(value):
+    return value if isinstance(value, str) and REPORT_SAFE_URL_RE.match(value.strip()) else None
+
+
+def _sanitize_num_levels(raw):
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for entry in raw[:LIST_MAX_LEVELS]:
+        if not isinstance(entry, dict):
+            entry = {}
+        t = entry.get("type") if entry.get("type") in REPORT_LEVEL_TYPE_VALUES else "decimal"
+        w = entry.get("wrap") if entry.get("wrap") in REPORT_LEVEL_WRAP_VALUES else "period"
+        out.append({"type": t, "wrap": w})
+    return out or None
+
+
+def _sanitize_marks(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for m in raw:
+        if not isinstance(m, dict):
             continue
-        name = name.lower()
-        if name == "class":
-            out["class"] = value
-        elif name == "style":
-            low = value.lower()
-            if REPORT_SAFE_STYLE_RE.match(value) and "expression" not in low and "javascript" not in low:
-                out["style"] = value
-        elif tag == "a" and name == "href":
-            if REPORT_SAFE_URL_RE.match(value.strip()):
-                out["href"] = value
-        elif tag == "img" and name == "src":
-            if REPORT_SAFE_URL_RE.match(value.strip()):
-                out["src"] = value
-        elif tag == "img" and name in ("alt", "width", "height"):
-            out[name] = value
-        elif tag in ("td", "th") and name in ("colspan", "rowspan") and value.isdigit():
-            out[name] = value
+        t = m.get("type")
+        attrs = m.get("attrs") if isinstance(m.get("attrs"), dict) else {}
+        if t in ("bold", "italic", "strike", "underline", "code"):
+            out.append({"type": t})
+        elif t == "textStyle":
+            clean = {}
+            color = attrs.get("color")
+            if isinstance(color, str) and REPORT_HEX_COLOR_RE.match(color):
+                clean["color"] = color
+            font = attrs.get("fontFamily")
+            if isinstance(font, str) and REPORT_FONT_FAMILY_RE.match(font):
+                clean["fontFamily"] = font
+            size = attrs.get("fontSize")
+            if isinstance(size, str) and REPORT_FONT_SIZE_RE.match(size):
+                clean["fontSize"] = size
+            if clean:
+                out.append({"type": "textStyle", "attrs": clean})
+        elif t == "highlight":
+            color = attrs.get("color")
+            if isinstance(color, str) and REPORT_HEX_COLOR_RE.match(color):
+                out.append({"type": "highlight", "attrs": {"color": color}})
+        elif t == "link":
+            href = _safe_url(attrs.get("href"))
+            if href:
+                out.append({"type": "link", "attrs": {"href": href}})
     return out
 
 
-class _ReportHTMLSanitizer(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.out = []
-        self.skip_depth = 0
-
-    def _attr_str(self, tag, attrs):
-        clean = _clean_report_attrs(tag, attrs)
-        return "".join(f' {k}="{html_escape(v, quote=True)}"' for k, v in clean.items())
-
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-        if tag in REPORT_STRIP_CONTENT_TAGS:
-            self.skip_depth += 1
-            return
-        if self.skip_depth or tag not in REPORT_ALLOWED_TAGS:
-            return
-        self.out.append(f"<{tag}{self._attr_str(tag, attrs)}>")
-
-    def handle_startendtag(self, tag, attrs):
-        tag = tag.lower()
-        if self.skip_depth or tag in REPORT_STRIP_CONTENT_TAGS or tag not in REPORT_ALLOWED_TAGS:
-            return
-        self.out.append(f"<{tag}{self._attr_str(tag, attrs)}/>")
-
-    def handle_endtag(self, tag):
-        tag = tag.lower()
-        if tag in REPORT_STRIP_CONTENT_TAGS:
-            if self.skip_depth:
-                self.skip_depth -= 1
-            return
-        if self.skip_depth or tag not in REPORT_ALLOWED_TAGS or tag in REPORT_VOID_TAGS:
-            return
-        self.out.append(f"</{tag}>")
-
-    def handle_data(self, data):
-        if not self.skip_depth:
-            self.out.append(html_escape(data))
-
-    def get_html(self):
-        return "".join(self.out)
+REPORT_BLOCK_TYPES = {
+    "paragraph", "heading", "bulletList", "orderedList", "listItem",
+    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak",
+}
 
 
-def sanitize_report_html(raw_html, max_len=500_000):
-    """Whitelist-sanitize client-submitted rich text before it is stored or
-    ever re-rendered (in a browser or fed into the PDF Story renderer)."""
-    if not isinstance(raw_html, str):
-        return ""
-    parser = _ReportHTMLSanitizer()
-    parser.feed(raw_html[:max_len])
-    parser.close()
-    return parser.get_html()
+def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
+    """Whitelist-validate a client-submitted ProseMirror document (see
+    static/src/editor.js) against the editor's actual schema before it's
+    stored or ever fed to an exporter -- unrecognized node/mark types or
+    attribute values are dropped, not merely escaped."""
+    if not isinstance(raw, dict) or raw.get("type") != "doc":
+        return {"type": "doc", "content": []}
+    try:
+        if len(json.dumps(raw)) > max_chars:
+            return {"type": "doc", "content": []}
+    except (TypeError, ValueError):
+        return {"type": "doc", "content": []}
+
+    def sanitize_node(node):
+        if not isinstance(node, dict):
+            return None
+        t = node.get("type")
+        if t == "text":
+            text = node.get("text")
+            if not isinstance(text, str) or not text:
+                return None
+            return {"type": "text", "text": text, "marks": _sanitize_marks(node.get("marks"))}
+        if t not in REPORT_BLOCK_TYPES:
+            return None
+
+        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        out = {"type": t}
+        clean_attrs = {}
+        if t == "heading":
+            level = attrs.get("level")
+            clean_attrs["level"] = level if level in (1, 2, 3, 4) else 1
+        if t in ("heading", "paragraph"):
+            align = attrs.get("textAlign")
+            if align in REPORT_TEXT_ALIGN_VALUES:
+                clean_attrs["textAlign"] = align
+            indent = attrs.get("indent")
+            if isinstance(indent, int) and 0 <= indent <= 10:
+                clean_attrs["indent"] = indent
+        if t == "orderedList":
+            start = attrs.get("start")
+            if isinstance(start, int) and start > 0:
+                clean_attrs["start"] = start
+            levels = _sanitize_num_levels(attrs.get("numLevels"))
+            if levels:
+                clean_attrs["numLevels"] = levels
+                clean_attrs["numCascade"] = bool(attrs.get("numCascade"))
+        if t == "image":
+            src = _safe_url(attrs.get("src"))
+            if not src:
+                return None
+            clean_attrs["src"] = src
+            if isinstance(attrs.get("alt"), str):
+                clean_attrs["alt"] = attrs["alt"][:500]
+            if isinstance(attrs.get("width"), (int, float)):
+                clean_attrs["width"] = attrs["width"]
+            if isinstance(attrs.get("height"), (int, float)):
+                clean_attrs["height"] = attrs["height"]
+            if attrs.get("align") in ("left", "center", "right"):
+                clean_attrs["align"] = attrs["align"]
+        if clean_attrs:
+            out["attrs"] = clean_attrs
+
+        if t not in ("image", "hardBreak"):
+            content = []
+            for child in node.get("content") or []:
+                cleaned = sanitize_node(child)
+                if cleaned is not None:
+                    content.append(cleaned)
+            out["content"] = content
+        return out
+
+    content = []
+    for child in raw.get("content") or []:
+        cleaned = sanitize_node(child)
+        if cleaned is not None:
+            content.append(cleaned)
+    return {"type": "doc", "content": content}
 
 
-REPORT_IMG_SRC_RE = re.compile(r'src="(/media/snippets/[^"]*)"')
-
-
-def inline_report_images(html_str):
-    """Replace <img src="/media/snippets/..."> references with base64 data URIs
-    read directly from the snippet files on disk, so the exported PDF is
-    self-contained and Story (which has no network access) can render it."""
-
-    def repl(match):
-        url = match.group(1)
-        parsed = urlsplit(url)
+def inline_doc_images(node):
+    """Replaces image nodes' `/media/snippets/...` src with a base64 data URI
+    read directly from disk, so the exported PDF/DOCX is self-contained --
+    Story (PDF) has no network access, and python-docx needs raw bytes
+    either way. Returns a new tree; `node` itself is left untouched."""
+    if not isinstance(node, dict):
+        return node
+    if node.get("type") == "image":
+        attrs = dict(node.get("attrs") or {})
+        src = attrs.get("src", "")
+        parsed = urlsplit(src)
         parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) < 2:
-            return match.group(0)
-        filename, url_doc_id = parts[-1], parts[-2]
-        if not DOC_ID_RE.match(url_doc_id) or "/" in filename or "\\" in filename:
-            return match.group(0)
-        try:
-            url_type = normalize_type(parse_qs(parsed.query).get("type", ["pdf"])[0])
-        except DocumentError:
-            return match.group(0)
-        f = snippets_dir(url_doc_id, url_type) / filename
-        if not f.exists():
-            return match.group(0)
-        b64 = base64.b64encode(f.read_bytes()).decode("ascii")
-        return f'src="data:image/png;base64,{b64}"'
-
-    return REPORT_IMG_SRC_RE.sub(repl, html_str)
+        if parsed.path.startswith("/media/snippets/") and len(parts) >= 2:
+            filename, url_doc_id = parts[-1], parts[-2]
+            if DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename:
+                try:
+                    url_type = normalize_type(parse_qs(parsed.query).get("type", ["pdf"])[0])
+                    f = snippets_dir(url_doc_id, url_type) / filename
+                    if f.exists():
+                        b64 = base64.b64encode(f.read_bytes()).decode("ascii")
+                        attrs["src"] = f"data:image/png;base64,{b64}"
+                except DocumentError:
+                    pass
+        return {**node, "attrs": attrs}
+    if "content" in node:
+        return {**node, "content": [inline_doc_images(c) for c in node["content"]]}
+    return node
 
 
 REPORT_PDF_CSS = """
@@ -386,10 +448,8 @@ REPORT_PDF_CSS = """
   h1 { font-size: 20pt; margin-bottom: 4pt; }
   h2 { font-size: 15pt; }
   h3 { font-size: 13pt; }
-  img { max-width: 100%; display: block; margin: 12pt 0; }
-  figure { margin: 12pt 0; }
-  figure img { margin: 0; }
-  figcaption { font-size: 9pt; color: #555; }
+  img { max-width: 100%; }
+  p.img-p { margin: 12pt 0; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }
   ol, ul { list-style: none; margin: 0; padding-left: 0; }
@@ -398,60 +458,133 @@ REPORT_PDF_CSS = """
 """
 
 
-def _serialize_html_tree(node):
-    """Renders an _HTMLTreeBuilder node (or its "root" wrapper) back to an
-    HTML string -- the inverse of that parser, used so the PDF exporter can
-    inject computed section-number marker text (see _inject_list_markers)
-    into the sanitized HTML before handing it to fitz.Story, rather than
-    depending on that renderer's own CSS counter/::before support, which is
-    unverified."""
-    if isinstance(node, str):
-        return html_escape(node)
-    if node.tag == "root":
-        return "".join(_serialize_html_tree(c) for c in node.children)
-    attrs = "".join(f' {k}="{html_escape(str(v), quote=True)}"' for k, v in node.attrs.items())
-    if node.tag in REPORT_VOID_TAGS:
-        return f"<{node.tag}{attrs}>"
-    inner = "".join(_serialize_html_tree(c) for c in node.children)
-    return f"<{node.tag}{attrs}>{inner}</{node.tag}>"
+INLINE_MARK_TAGS = {"bold": "strong", "italic": "em", "underline": "u", "strike": "s", "code": "code"}
 
 
-def _inject_list_markers(nodes, list_ctx=None, num_state=None, depth=0):
-    """Walks a parsed HTML tree computing the same section numbers the live
-    editor's CSS counters render (see _ListNumberingState above), and
-    prepends each <ol> item's marker as literal text -- mirrors
-    _docx_render_blocks' ol/li recursion, just building marker strings
-    instead of docx paragraphs."""
+def _mark_style_attrs(mark_type, attrs):
+    if mark_type == "textStyle":
+        decls = []
+        if attrs.get("color"):
+            decls.append(f"color: {attrs['color']}")
+        if attrs.get("fontFamily"):
+            decls.append(f"font-family: {attrs['fontFamily']}")
+        if attrs.get("fontSize"):
+            decls.append(f"font-size: {attrs['fontSize']}")
+        return "; ".join(decls)
+    if mark_type == "highlight":
+        return f"background-color: {attrs.get('color', '#fff59d')}"
+    return ""
+
+
+def _json_inline_to_html(nodes):
+    """Renders a run of inline JSON nodes (text/hardBreak) to an HTML
+    string, applying each text node's marks -- the JSON equivalent of the
+    nested <strong>/<em>/... tags the old contenteditable editor produced,
+    just read from a flat `marks` list instead of tag nesting."""
+    out = []
     for node in nodes:
-        if isinstance(node, str):
-            continue
-        tag = node.tag
-        if tag == "ol":
+        t = node.get("type")
+        if t == "text":
+            html = html_escape(node.get("text", ""))
+            href = None
+            for mark in node.get("marks") or []:
+                mt = mark.get("type")
+                mattrs = mark.get("attrs") or {}
+                if mt == "link":
+                    href = mattrs.get("href")
+                elif mt in INLINE_MARK_TAGS:
+                    tag = INLINE_MARK_TAGS[mt]
+                    html = f"<{tag}>{html}</{tag}>"
+                elif mt in ("textStyle", "highlight"):
+                    style = _mark_style_attrs(mt, mattrs)
+                    if style:
+                        html = f'<span style="{html_escape(style, quote=True)}">{html}</span>'
+            if href:
+                html = f'<a href="{html_escape(href, quote=True)}">{html}</a>'
+            out.append(html)
+        elif t == "hardBreak":
+            out.append("<br>")
+    return "".join(out)
+
+
+def _json_block_style(attrs):
+    decls = []
+    if attrs.get("textAlign"):
+        decls.append(f"text-align: {attrs['textAlign']}")
+    if attrs.get("indent"):
+        decls.append(f"margin-left: {18 * attrs['indent']}pt")
+    return f' style="{html_escape("; ".join(decls), quote=True)}"' if decls else ""
+
+
+def _json_blocks_to_html(nodes, num_state=None, depth=0):
+    """Walks the sanitized ProseMirror JSON tree, computing the same section
+    numbers the live editor's ListMarkers decoration plugin renders (see
+    _ListNumberingState above and static/src/listNumbering.js), and emits an
+    HTML string with each numbered <li>'s marker as literal text -- mirrors
+    _docx_render_blocks' recursion below, just building HTML instead of docx
+    paragraphs. Neither exporter can rely on a live browser: DOCX is
+    assembled directly via python-docx, and PDF's fitz.Story is a
+    lightweight HTML/CSS engine of unverified ::before/counter support."""
+    out = []
+    for node in nodes:
+        t = node.get("type")
+        attrs = node.get("attrs") or {}
+        content = node.get("content") or []
+        if t == "heading":
+            level = attrs.get("level", 1)
+            out.append(f"<h{level}{_json_block_style(attrs)}>{_json_inline_to_html(content)}</h{level}>")
+        elif t == "paragraph":
+            out.append(f"<p{_json_block_style(attrs)}>{_json_inline_to_html(content)}</p>")
+        elif t == "blockquote":
+            out.append(f"<blockquote>{_json_blocks_to_html(content, depth=depth)}</blockquote>")
+        elif t == "horizontalRule":
+            out.append("<hr>")
+        elif t == "codeBlock":
+            out.append(f"<pre><code>{html_escape(_flatten_json_text(node))}</code></pre>")
+        elif t == "image":
+            # fitz.Story's CSS support doesn't include auto-margin block
+            # centering (verified empirically -- margin-left/right:auto on
+            # the <img> itself left it flush left), so alignment is done
+            # the way any renderer is virtually guaranteed to support:
+            # text-align on a wrapping paragraph around a plain (non-block)
+            # <img>.
+            decls = []
+            if attrs.get("width"):
+                decls.append(f"width:{attrs['width']}px")
+                decls.append(f"height:{attrs.get('height', 'auto')}px")
+            style = f' style="{html_escape("; ".join(decls), quote=True)}"' if decls else ""
+            align = attrs.get("align", "left")
+            out.append(
+                f'<p class="img-p" style="text-align:{align}">'
+                f'<img src="{html_escape(attrs.get("src", ""), quote=True)}"{style}></p>'
+            )
+        elif t == "bulletList":
+            out.append(f"<ul>{_json_blocks_to_html(content, depth=depth + 1)}</ul>")
+        elif t == "orderedList":
             child_depth = depth + 1
-            if num_state is None:
-                cascade, levels = _parse_list_template(node.attrs.get("class"))
-                child_state = _ListNumberingState(cascade, levels)
-            else:
-                child_state = num_state
-            child_state.enter_list(child_depth, node.attrs.get("style"))
-            _inject_list_markers(node.children, list_ctx="ol", num_state=child_state, depth=child_depth)
-        elif tag == "ul":
-            _inject_list_markers(node.children, list_ctx="ul", depth=depth + 1)
-        elif tag == "li":
-            if list_ctx == "ol" and num_state is not None:
-                num_state.next_value(depth, node.attrs.get("style"))
-                node.children.insert(0, num_state.marker_text(depth))
-            _inject_list_markers(node.children, list_ctx=list_ctx, num_state=num_state, depth=depth)
-        else:
-            _inject_list_markers(node.children, list_ctx=list_ctx, num_state=num_state, depth=depth)
+            child_state = num_state or _ListNumberingState(attrs.get("numCascade"), attrs.get("numLevels"))
+            child_state.enter_list(child_depth, attrs.get("start"))
+            out.append(f"<ol>{_json_blocks_to_html(content, num_state=child_state, depth=child_depth)}</ol>")
+        elif t == "listItem":
+            marker = ""
+            if num_state is not None:
+                num_state.next_value(depth)
+                marker = html_escape(num_state.marker_text(depth))
+            first = content[0] if content else None
+            rest = content[1:]
+            first_html = _json_inline_to_html(first.get("content") or []) if first and first.get("type") in ("paragraph", "heading") else ""
+            out.append(f"<li>{marker}{first_html}{_json_blocks_to_html(rest, num_state=num_state, depth=depth)}</li>")
+    return "".join(out)
 
 
-def render_report_pdf(title, body_html, margins=None):
-    builder = _HTMLTreeBuilder()
-    builder.feed(body_html)
-    builder.close()
-    _inject_list_markers(builder.root.children)
-    numbered_body_html = _serialize_html_tree(builder.root)
+def _flatten_json_text(node):
+    if node.get("type") == "text":
+        return node.get("text", "")
+    return "".join(_flatten_json_text(c) for c in node.get("content") or [])
+
+
+def render_report_pdf(title, doc_json, margins=None):
+    numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     heading = f"<h1>{html_escape(title)}</h1>" if title else ""
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{numbered_body_html}</body></html>"
@@ -475,55 +608,12 @@ def render_report_pdf(title, body_html, margins=None):
 # ---------------------------------------------------------------------------
 # Word (.docx) export
 #
-# python-docx has no HTML importer, so we walk the same whitelisted tag set
-# (REPORT_ALLOWED_TAGS) that sanitize_report_html/render_report_pdf already
-# rely on and build the document directly, tag by tag.
+# python-docx has no HTML/JSON importer, so this walks the sanitized
+# ProseMirror JSON tree (see sanitize_report_doc above) directly and builds
+# the document node by node.
 # ---------------------------------------------------------------------------
 
-class _HTMLNode:
-    __slots__ = ("tag", "attrs", "children")
-
-    def __init__(self, tag, attrs=None):
-        self.tag = tag
-        self.attrs = attrs or {}
-        self.children = []
-
-
-class _HTMLTreeBuilder(HTMLParser):
-    """Lenient HTML -> tree parser. Auto-closes mismatched tags by popping
-    the stack up to the nearest matching ancestor, so it tolerates the same
-    imperfect nesting a browser's contenteditable might occasionally emit."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.root = _HTMLNode("root")
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        node = _HTMLNode(tag, dict(attrs))
-        self.stack[-1].children.append(node)
-        if tag not in REPORT_VOID_TAGS:
-            self.stack.append(node)
-
-    def handle_startendtag(self, tag, attrs):
-        self.stack[-1].children.append(_HTMLNode(tag, dict(attrs)))
-
-    def handle_endtag(self, tag):
-        for i in range(len(self.stack) - 1, 0, -1):
-            if self.stack[i].tag == tag:
-                del self.stack[i:]
-                return
-
-    def handle_data(self, data):
-        if data:
-            self.stack[-1].children.append(data)
-
-
-DOCX_BLOCK_TAGS = {
-    "p", "div", "h1", "h2", "h3", "h4", "ul", "ol", "li",
-    "blockquote", "table", "figure", "figcaption", "pre", "hr",
-}
-DOCX_HEADING_STYLE = {"h1": "Heading 1", "h2": "Heading 2", "h3": "Heading 3", "h4": "Heading 4"}
+DOCX_HEADING_STYLE = {1: "Heading 1", 2: "Heading 2", 3: "Heading 3", 4: "Heading 4"}
 
 
 def _docx_image_stream(src):
@@ -566,73 +656,79 @@ def _docx_apply_run_format(run, fmt):
     run.font.strike = bool(fmt.get("strike"))
     if fmt.get("code"):
         run.font.name = "Courier New"
+    if fmt.get("color"):
+        try:
+            run.font.color.rgb = RGBColor.from_string(fmt["color"].lstrip("#")[:6].ljust(6, "0"))
+        except ValueError:
+            pass
 
 
-def _docx_add_image(node, paragraph, max_width_emu):
-    stream = _docx_image_stream(node.attrs.get("src"))
+EMU_PER_CSS_PX = 9525  # 914400 EMU/inch / 96 CSS px/inch
+
+
+def _docx_add_image(attrs, paragraph, max_width_emu):
+    stream = _docx_image_stream(attrs.get("src"))
     if stream is None:
         return
-    try:
-        info = DocxImage.from_blob(stream.getvalue())
-    except Exception:
-        return
-    native_w = info.width
-    width = Emu(min(int(native_w), max_width_emu)) if max_width_emu else None
+    if isinstance(attrs.get("width"), (int, float)) and attrs["width"] > 0:
+        # Editor-resized (or snippet-computed) width, in the same CSS px
+        # convention used everywhere else in this app -- reflects what the
+        # user actually saw/set, unlike the image file's own native size.
+        width = Emu(int(attrs["width"] * EMU_PER_CSS_PX))
+    else:
+        try:
+            width = Emu(int(DocxImage.from_blob(stream.getvalue()).width))
+        except Exception:
+            return
+    if max_width_emu:
+        width = Emu(min(int(width), max_width_emu))
     stream.seek(0)
     run = paragraph.add_run()
-    if width:
-        run.add_picture(stream, width=width)
-    else:
-        run.add_picture(stream)
+    run.add_picture(stream, width=width)
 
 
-def _docx_render_inline(node, paragraph, fmt, max_width_emu):
-    if isinstance(node, str):
-        if node:
-            run = paragraph.add_run(node)
-            _docx_apply_run_format(run, fmt)
-        return
+def _docx_run_format_from_marks(marks):
+    fmt = {}
+    for mark in marks:
+        t = mark.get("type")
+        attrs = mark.get("attrs") or {}
+        if t in ("bold", "italic", "underline", "strike", "code"):
+            fmt[t] = True
+        elif t == "textStyle" and attrs.get("color"):
+            fmt["color"] = attrs["color"]
+    return fmt
 
-    if node.tag == "br":
-        paragraph.add_run().add_break()
-        return
-    if node.tag == "img":
-        _docx_add_image(node, paragraph, max_width_emu)
-        return
 
-    child_fmt = dict(fmt)
-    if node.tag in ("strong", "b"):
-        child_fmt["bold"] = True
-    elif node.tag in ("em", "i"):
-        child_fmt["italic"] = True
-    elif node.tag == "u":
-        child_fmt["underline"] = True
-    elif node.tag == "s":
-        child_fmt["strike"] = True
-    elif node.tag == "code":
-        child_fmt["code"] = True
-
-    if node.tag == "a":
-        href = node.attrs.get("href")
-        text = "".join(c for c in node.children if isinstance(c, str))
-        if href and text:
-            _docx_add_hyperlink(paragraph, href, text, child_fmt)
-            return
-
-    for child in node.children:
-        _docx_render_inline(child, paragraph, child_fmt, max_width_emu)
+def _docx_render_inline(nodes, paragraph, max_width_emu):
+    for node in nodes:
+        t = node.get("type")
+        if t == "text":
+            fmt = _docx_run_format_from_marks(node.get("marks") or [])
+            href = next((m["attrs"]["href"] for m in node.get("marks") or [] if m.get("type") == "link"), None)
+            text = node.get("text", "")
+            if href and text:
+                _docx_add_hyperlink(paragraph, href, text, fmt)
+            elif text:
+                run = paragraph.add_run(text)
+                _docx_apply_run_format(run, fmt)
+        elif t == "hardBreak":
+            paragraph.add_run().add_break()
+        elif t == "image":
+            _docx_add_image(node.get("attrs") or {}, paragraph, max_width_emu)
 
 
 # ---------------------------------------------------------------------------
 # Multilevel numbering ("section numbers") -- shared by the PDF and DOCX
-# exporters below. Mirrors the template/restart encoding document.js's
-# numbering engine writes directly onto the <ol>/<li> markup (see the
-# "Multilevel numbering" comment in static/document.js): a template lives in
-# classes on the top-level <ol> (`cascade`, `lvl<N>-<type>-<wrap>`), and a
-# restart/continue override lives in `style="counter-reset: c<level> <n>"`
-# on any <li> (or the <ol> itself). Neither exporter can rely on the live
-# browser's own CSS counter engine, so both compute the same numbers here in
-# Python instead and render them as literal marker text.
+# exporters below. Mirrors the template/restart-or-continue attributes the
+# live editor's OrderedList node carries (numCascade/numLevels/start -- see
+# static/src/listNumbering.js): a template is `numCascade`/`numLevels` on
+# the outermost <orderedList> of a nesting chain, and a restart/continue
+# override is the native `start` attribute on any <orderedList> (mid-list
+# restarts split the list into two sibling nodes -- see
+# splitListForRestart-equivalent logic in listNumbering.js). Neither
+# exporter can rely on the live browser's own rendering, so both compute the
+# same numbers here in Python instead and render them as literal marker
+# text.
 # ---------------------------------------------------------------------------
 LIST_MAX_LEVELS = 6
 LIST_WRAPS = {
@@ -641,8 +737,6 @@ LIST_WRAPS = {
     "paren": ("(", ")"),
     "trail": ("", ")"),
 }
-_LIST_TEMPLATE_CLASS_RE = re.compile(r"^lvl(\d+)-([a-z]+)-([a-z]+)$")
-_COUNTER_RESET_RE_CACHE = {}
 
 
 def _to_alpha(n, upper=False):
@@ -681,56 +775,35 @@ def _format_counter_value(n, type_):
     return str(n)
 
 
-def _parse_list_template(class_attr):
-    """(cascade, levels) for a top-level <ol>'s `class`, levels[i] = (type,
-    wrap) for level i+1 -- falls back to plain decimal/period (the default,
-    untemplated look) for any level without an explicit class, exactly like
-    document.js's parseListTemplateFromClassList."""
-    classes = (class_attr or "").split()
-    cascade = "cascade" in classes
-    levels = []
-    for i in range(1, LIST_MAX_LEVELS + 1):
-        found = None
-        for c in classes:
-            m = _LIST_TEMPLATE_CLASS_RE.match(c)
-            if m and int(m.group(1)) == i:
-                found = (m.group(2), m.group(3))
-                break
-        levels.append(found or ("decimal", "period"))
-    return cascade, levels
-
-
-def _counter_reset_value(style_attr, counter_name):
-    if not style_attr:
-        return None
-    pattern = _COUNTER_RESET_RE_CACHE.get(counter_name)
-    if pattern is None:
-        pattern = re.compile(r"counter-reset:\s*" + re.escape(counter_name) + r"\s+(-?\d+)")
-        _COUNTER_RESET_RE_CACHE[counter_name] = pattern
-    m = pattern.search(style_attr)
-    return int(m.group(1)) if m else None
+def _normalize_levels(levels):
+    """levels[i] = {"type", "wrap"} for level i+1 -- falls back to plain
+    decimal/period (the default, untemplated look) for any level without an
+    explicit entry, matching the editor's own default when numLevels is
+    absent."""
+    out = []
+    for i in range(LIST_MAX_LEVELS):
+        lvl = levels[i] if isinstance(levels, list) and i < len(levels) and isinstance(levels[i], dict) else None
+        out.append(lvl if lvl else {"type": "decimal", "wrap": "period"})
+    return out
 
 
 class _ListNumberingState:
-    """One of these per top-level <ol>, threaded through the ol/li recursion
-    of both exporters below. Tracks a running per-level counter exactly like
-    the live editor's CSS counters do, including any restart/continue
-    override found in an element's own `style`."""
+    """One of these per top-level <orderedList>, threaded through the
+    orderedList/listItem recursion of both exporters below. Tracks a
+    running per-level counter, including any restart/continue override
+    found in an element's own `start` attribute -- mirrors the ListMarkers
+    decoration plugin's ListNumberingState in static/src/listNumbering.js."""
 
     def __init__(self, cascade, levels):
-        self.cascade = cascade
-        self.levels = levels
+        self.cascade = bool(cascade)
+        self.levels = _normalize_levels(levels)
         self.counters = [0] * LIST_MAX_LEVELS
 
-    def enter_list(self, depth, list_style_attr):
-        reset = _counter_reset_value(list_style_attr, f"c{depth}")
-        if reset is not None:
-            self.counters[depth - 1] = reset
+    def enter_list(self, depth, start):
+        if isinstance(start, int):
+            self.counters[depth - 1] = start - 1
 
-    def next_value(self, depth, li_style_attr):
-        reset = _counter_reset_value(li_style_attr, f"c{depth}")
-        if reset is not None:
-            self.counters[depth - 1] = reset
+    def next_value(self, depth):
         self.counters[depth - 1] += 1
         return self.counters[depth - 1]
 
@@ -738,125 +811,71 @@ class _ListNumberingState:
         start = 1 if self.cascade else depth
         parts = []
         for i in range(start, depth + 1):
-            type_, wrap = self.levels[i - 1]
-            pre, suf = LIST_WRAPS.get(wrap, LIST_WRAPS["period"])
-            parts.append(pre + _format_counter_value(self.counters[i - 1], type_) + suf)
+            lvl = self.levels[i - 1]
+            pre, suf = LIST_WRAPS.get(lvl.get("wrap"), LIST_WRAPS["period"])
+            parts.append(pre + _format_counter_value(self.counters[i - 1], lvl.get("type")) + suf)
         return "".join(parts) + " "
 
 
-def _docx_render_blocks(nodes, doc, max_width_emu, list_ctx=None, num_state=None, depth=0):
+def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
     for node in nodes:
-        if isinstance(node, str):
-            if node.strip():
-                p = doc.add_paragraph()
-                p.add_run(node)
-            continue
+        t = node.get("type")
+        attrs = node.get("attrs") or {}
+        content = node.get("content") or []
 
-        tag = node.tag
-        if tag in DOCX_HEADING_STYLE:
-            p = doc.add_paragraph(style=DOCX_HEADING_STYLE[tag])
-            for child in node.children:
-                _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag == "hr":
+        if t == "heading":
+            p = doc.add_paragraph(style=DOCX_HEADING_STYLE.get(attrs.get("level", 1), "Heading 1"))
+            _docx_render_inline(content, p, max_width_emu)
+        elif t == "horizontalRule":
+            doc.add_paragraph().add_run("—" * 20)
+        elif t == "paragraph":
             p = doc.add_paragraph()
-            p.add_run("—" * 20)
-        elif tag in ("p", "div"):
-            p = doc.add_paragraph()
-            for child in node.children:
-                _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag == "blockquote":
-            p = doc.add_paragraph(style="Intense Quote")
-            for child in node.children:
-                _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag == "ul":
-            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx="ul", depth=depth + 1)
-        elif tag == "ol":
+            if attrs.get("indent"):
+                p.paragraph_format.left_indent = Pt(18 * attrs["indent"])
+            _docx_render_inline(content, p, max_width_emu)
+        elif t == "blockquote":
+            for child in content:
+                if child.get("type") == "paragraph":
+                    p = doc.add_paragraph(style="Intense Quote")
+                    _docx_render_inline(child.get("content") or [], p, max_width_emu)
+                else:
+                    _docx_render_blocks([child], doc, max_width_emu)
+        elif t == "bulletList":
+            _docx_render_blocks(content, doc, max_width_emu, depth=depth + 1)
+        elif t == "orderedList":
             child_depth = depth + 1
-            if num_state is None:
-                cascade, levels = _parse_list_template(node.attrs.get("class"))
-                child_state = _ListNumberingState(cascade, levels)
-            else:
-                child_state = num_state
-            child_state.enter_list(child_depth, node.attrs.get("style"))
-            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx="ol", num_state=child_state, depth=child_depth)
-        elif tag == "li":
-            if list_ctx == "ol" and num_state is not None:
-                num_state.next_value(depth, node.attrs.get("style"))
+            child_state = num_state or _ListNumberingState(attrs.get("numCascade"), attrs.get("numLevels"))
+            child_state.enter_list(child_depth, attrs.get("start"))
+            _docx_render_blocks(content, doc, max_width_emu, num_state=child_state, depth=child_depth)
+        elif t == "listItem":
+            first = content[0] if content else None
+            rest = content[1:]
+            if num_state is not None:
+                num_state.next_value(depth)
                 p = doc.add_paragraph(style="List Paragraph")
                 p.paragraph_format.left_indent = Pt(18 * depth)
                 p.paragraph_format.first_line_indent = Pt(-18)
                 p.add_run(num_state.marker_text(depth))
             else:
                 p = doc.add_paragraph(style="List Bullet")
-            for child in node.children:
-                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
-                    _docx_render_blocks([child], doc, max_width_emu, num_state=num_state, depth=depth)
-                else:
-                    _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag == "pre":
-            text = _flatten_text(node)
-            p = doc.add_paragraph()
-            run = p.add_run(text)
+            if first and first.get("type") in ("paragraph", "heading"):
+                _docx_render_inline(first.get("content") or [], p, max_width_emu)
+            elif first:
+                rest = [first] + rest
+            _docx_render_blocks(rest, doc, max_width_emu, num_state=num_state, depth=depth)
+        elif t == "codeBlock":
+            run = doc.add_paragraph().add_run(_flatten_json_text(node))
             run.font.name = "Courier New"
-        elif tag == "img":
+        elif t == "image":
             p = doc.add_paragraph()
-            _docx_render_inline(node, p, {}, max_width_emu)
-        elif tag == "figure":
-            for child in node.children:
-                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
-                    _docx_render_blocks([child], doc, max_width_emu)
-                else:
-                    p = doc.add_paragraph()
-                    _docx_render_inline(child, p, {}, max_width_emu)
-        elif tag == "figcaption":
-            p = doc.add_paragraph()
-            run = p.add_run("".join(_flatten_text(c) if isinstance(c, _HTMLNode) else c for c in node.children))
-            run.italic = True
-            run.font.size = Pt(9)
-        elif tag == "table":
-            _docx_render_table(node, doc, max_width_emu)
-        else:
-            # Unknown/structural wrapper: descend into its children.
-            _docx_render_blocks(node.children, doc, max_width_emu, list_ctx=list_ctx, num_state=num_state, depth=depth)
+            p.alignment = {
+                "center": WD_ALIGN_PARAGRAPH.CENTER,
+                "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            }.get(attrs.get("align"), WD_ALIGN_PARAGRAPH.LEFT)
+            _docx_add_image(attrs, p, max_width_emu)
 
 
-def _flatten_text(node):
-    if isinstance(node, str):
-        return node
-    return "".join(_flatten_text(c) for c in node.children)
-
-
-def _docx_render_table(table_node, doc, max_width_emu):
-    rows = []
-    for section in table_node.children:
-        if isinstance(section, _HTMLNode) and section.tag in ("thead", "tbody"):
-            rows.extend(c for c in section.children if isinstance(c, _HTMLNode) and c.tag == "tr")
-        elif isinstance(section, _HTMLNode) and section.tag == "tr":
-            rows.append(section)
-    if not rows:
-        return
-    n_cols = max((sum(1 for c in r.children if isinstance(c, _HTMLNode) and c.tag in ("td", "th")) for r in rows), default=0)
-    if n_cols == 0:
-        return
-    table = doc.add_table(rows=0, cols=n_cols)
-    table.style = "Table Grid"
-    for r in rows:
-        cells = [c for c in r.children if isinstance(c, _HTMLNode) and c.tag in ("td", "th")]
-        row_cells = table.add_row().cells
-        for i, cell_node in enumerate(cells[:n_cols]):
-            cell = row_cells[i]
-            cell.text = ""
-            p = cell.paragraphs[0]
-            is_header = cell_node.tag == "th"
-            for child in cell_node.children:
-                if isinstance(child, _HTMLNode) and child.tag in DOCX_BLOCK_TAGS:
-                    for gc in child.children:
-                        _docx_render_inline(gc, p, {"bold": is_header}, max_width_emu)
-                else:
-                    _docx_render_inline(child, p, {"bold": is_header}, max_width_emu)
-
-
-def render_report_docx(title, body_html, margins=None):
+def render_report_docx(title, doc_json, margins=None):
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
@@ -872,10 +891,7 @@ def render_report_docx(title, body_html, margins=None):
     if title:
         doc.add_paragraph(title, style="Heading 1")
 
-    builder = _HTMLTreeBuilder()
-    builder.feed(body_html)
-    builder.close()
-    _docx_render_blocks(builder.root.children, doc, max_width_emu)
+    _docx_render_blocks(doc_json.get("content") or [], doc, max_width_emu)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -1240,7 +1256,7 @@ def api_reports():
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "name": name,
-        "html": "",
+        "doc": {"type": "doc", "content": []},
         "source_doc": source_doc,
         "source_type": source_type,
         "margins": dict(REPORT_DEFAULT_MARGINS),
@@ -1275,11 +1291,11 @@ def api_report(report_id):
         check_doc_id(source_doc)
         source_type = normalize_type(body.get("source_type", existing.get("source_type", "pdf")))
 
-    html_content = sanitize_report_html(body.get("html", existing.get("html", "")))
+    doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
     margins = sanitize_margins(body.get("margins"), existing.get("margins"))
     data = {
         "name": name,
-        "html": html_content,
+        "doc": doc_json,
         "source_doc": source_doc,
         "source_type": source_type,
         "margins": margins,
@@ -1298,11 +1314,13 @@ def api_report_export(report_id):
         raise DocumentError(f"No document with id {report_id!r}", 404)
 
     title = data.get("name") or report_id
-    body_html = inline_report_images(data.get("html") or "")
-    if not body_html.strip():
+    doc_json = data.get("doc")
+    if doc_json is None:
+        raise DocumentError("This document was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
+    if not doc_json.get("content"):
         raise DocumentError("Document is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, body_html, data.get("margins"))
+    pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"))
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
@@ -1319,11 +1337,13 @@ def api_report_export_docx(report_id):
         raise DocumentError(f"No document with id {report_id!r}", 404)
 
     title = data.get("name") or report_id
-    body_html = inline_report_images(data.get("html") or "")
-    if not body_html.strip():
+    doc_json = data.get("doc")
+    if doc_json is None:
+        raise DocumentError("This document was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
+    if not doc_json.get("content"):
         raise DocumentError("Document is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, body_html, data.get("margins"))
+    docx_bytes = render_report_docx(title, inline_doc_images(doc_json), data.get("margins"))
 
     resp = Response(
         docx_bytes,

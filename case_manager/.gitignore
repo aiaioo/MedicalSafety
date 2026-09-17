@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 
+node_modules/
+static/dist/
+
 # Working storage — generated/cached at runtime, not source (and may hold real
 # case content, which shouldn't land in git history)
 storage/cache/

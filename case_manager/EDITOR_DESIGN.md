@@ -1,5 +1,12 @@
 # Document editor — design notes
 
+> **Superseded.** The editor described here (hand-rolled `contenteditable` +
+> `document.execCommand()`, no document schema, `document.js`) has been replaced by a
+> Tiptap/ProseMirror-based editor — see `TIPTAP_EDITOR_DESIGN.md` for the current
+> architecture. This doc is kept for the product-decision rationale behind requirements
+> that are still true today (e.g. the exact Enter/Tab list-editing behavior), which the new
+> doc references rather than repeats.
+
 The document editor lets a user compose a free-text report (a "document"/"report") by
 typing and by pulling in image snippets captured from source PDFs/Word docs via the
 annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives at

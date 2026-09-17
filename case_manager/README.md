@@ -17,6 +17,18 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+The document editor (`/document`) is a Tiptap-based rich text editor and needs
+a one-time JS build (and again after editing anything under `static/src/`):
+
+```
+npm install
+npm run build     # or `npm run watch` while developing
+```
+
+This bundles `static/src/editor.js` into `static/dist/editor.bundle.js`, which
+`templates/document.html` loads — Flask itself serves it as a plain static
+file, no Node process needed at runtime.
+
 ## Run
 
 ```

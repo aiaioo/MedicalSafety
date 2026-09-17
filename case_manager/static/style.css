@@ -197,10 +197,16 @@ a { color: #2266dd; }
 .editor {
   background: white; width: 100%; min-height: 1123px; box-sizing: border-box;
   padding: var(--m-header, 61.33px) var(--m-right, 48px) var(--m-footer, 61.33px) var(--m-left, 48px);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.18); font-size: 15px; line-height: 1.5; outline: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18); font-size: 15px; line-height: 1.5;
   font-family: Arial, sans-serif;
 }
-.editor:empty::before { content: attr(data-placeholder); color: #9aa0ad; }
+/* Tiptap mounts its own contenteditable node as a child of #editor (see
+   static/src/editor.js) rather than making #editor itself editable, so
+   content-level rules target that child (given the "tiptap-content" class
+   via editorProps.attributes), while #editor above stays the page-shaped
+   background/padding wrapper around it. */
+.editor .tiptap-content { outline: none; }
+.editor .tiptap-content:empty::before { content: attr(data-placeholder); color: #9aa0ad; }
 
 /* ---- margin guides: dashed outline showing the printable area on each
    simulated page, purely visual, rendered in an overlay layer (not inside
@@ -217,87 +223,65 @@ a { color: #2266dd; }
   bottom: var(--mg-bottom, 61.33px); left: var(--mg-left, 48px);
   border: 1px dashed rgba(60, 64, 82, 0.28);
 }
-.editor h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
-.editor h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
-.editor h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
+.editor .tiptap-content h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
+.editor .tiptap-content h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
+.editor .tiptap-content h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
 
 /* ---- multilevel numbering ("section numbers") ----
-   Default (untemplated) look for a plain numbered list: each nesting level
-   counts independently, "N." -- matches the browser's native <ol> numbering
-   that this replaces, so lists created before this feature shipped (or any
-   <ol> a preset hasn't been applied to) render unchanged. Markers are drawn
-   via CSS counters/::before rather than native list-style so restart/
-   continue (see document.js setListStartValue) work uniformly for every
-   numbered list, not just ones with a custom template applied. Templated
-   lists (an <ol> carrying lvl1- and cascade classes -- see document.js's
-   numbering engine) get their own rules generated at runtime into
-   #dynamicListStyles; those class selectors outrank these plain-ol ones
-   by specificity, so they cleanly override this default. */
-.editor ol { list-style: none; counter-reset: c1; }
-.editor ol ol { counter-reset: c2; }
-.editor ol ol ol { counter-reset: c3; }
-.editor ol ol ol ol { counter-reset: c4; }
-.editor ol ol ol ol ol { counter-reset: c5; }
-.editor ol ol ol ol ol ol { counter-reset: c6; }
-.editor ol > li { counter-increment: c1; }
-.editor ol ol > li { counter-increment: c2; }
-.editor ol ol ol > li { counter-increment: c3; }
-.editor ol ol ol ol > li { counter-increment: c4; }
-.editor ol ol ol ol ol > li { counter-increment: c5; }
-.editor ol ol ol ol ol ol > li { counter-increment: c6; }
-.editor ol > li::before { content: counter(c1) ". "; display: inline-block; min-width: 1.6em; }
-.editor ol ol > li::before { content: counter(c2) ". "; display: inline-block; min-width: 1.6em; }
-.editor ol ol ol > li::before { content: counter(c3) ". "; display: inline-block; min-width: 1.6em; }
-.editor ol ol ol ol > li::before { content: counter(c4) ". "; display: inline-block; min-width: 1.6em; }
-.editor ol ol ol ol ol > li::before { content: counter(c5) ". "; display: inline-block; min-width: 1.6em; }
-.editor ol ol ol ol ol ol > li::before { content: counter(c6) ". "; display: inline-block; min-width: 1.6em; }
-/* Plain, fully-editable content -- no forced size/position machinery, and
-   no wrapper element. A snippet used to be <figure class="doc-figure">
-   wrapping the <img>, with the figure carrying alignment/cursor/border --
-   but native contenteditable image drag detaches only the bare <img> node,
-   so the figure (and anything hung off it) got left behind at the old
-   location whenever a snippet was actually dragged. Every property here is
-   keyed off img.doc-snippet -- the class document.js's markAsSnippet()
-   puts directly on the dragged node itself -- so it survives the move.
+   Marker text ("1.", "1(2)(3)", ...) is computed straight from the
+   ProseMirror document and rendered as a widget decoration -- a
+   .list-marker span inserted at the start of each numbered item's first
+   paragraph (see the ListMarkers plugin in static/src/listNumbering.js) --
+   rather than via CSS counters/::before as the old contenteditable-era
+   editor did. list-style stays suppressed here purely to hide the browser's
+   own native marker so it doesn't double up with the injected one. */
+.editor .tiptap-content ol { list-style: none; }
+.editor .tiptap-content .list-marker { display: inline-block; min-width: 1.6em; }
+/* A snippet image is rendered by a ProseMirror NodeView (see
+   static/src/resizableImage.js) as <span class="img-wrap"><img
+   class="doc-snippet">, plus four resize-handle spans>. Unlike the old
+   contenteditable editor -- where a wrapper element got left behind
+   because native image drag detaches only the bare <img> node (see the old
+   static/document.js's cleanLegacyDocFigures comment for the full history)
+   -- ProseMirror moves the whole node, wrapper and all, via a real
+   document transform when it's dragged, so there's no stranding risk here.
    display:block plus explicit margin-left/margin-right (written by
-   document.js's setSnippetAlign(), not by this stylesheet) is what
-   positions a snippet left/center/right; see the comment above
-   cleanLegacyDocFigures() in document.js for the full history. No
-   max-width here -- a snippet keeps the pixel size it had in the source
-   document rather than being shrunk to fit the page. */
-.editor img.doc-snippet {
-  display: block; margin: 16px 0; border: 1px solid #e0e2e8; cursor: grab;
+   resizableImage.js's applyWrapperAttrs, not by this stylesheet) is what
+   positions a snippet left/center/right. No max-width -- a snippet keeps
+   whichever pixel size its `width`/`height` attrs say (defaulting to its
+   native size), not shrunk to fit the page. */
+.editor .tiptap-content .img-wrap {
+  display: block; position: relative; margin: 16px 0; width: fit-content;
 }
-.editor img.doc-snippet.dragging { cursor: grabbing; }
+.editor .tiptap-content .img-wrap img.doc-snippet {
+  display: block; border: 1px solid #e0e2e8;
+}
+.editor .tiptap-content .img-wrap.img-wrap-selected img.doc-snippet {
+  outline: 2px solid #2266dd; outline-offset: 1px;
+}
 
-/* Resize handles for inserted snippets, rendered in the same kind of
-   overlay layer as .margin-guides above (a sibling of #editor, positioned
-   in JS from the hovered <img>'s live getBoundingClientRect()) rather than
-   as DOM children of the image. Handles that lived inside a wrapper
-   element were tried before and reverted: native contenteditable image
-   drag detaches only the bare <img> node, so any sibling markup around it
-   (a caption, a wrapping figure, or a handle wrapper) got left behind
-   whenever a snippet was dragged. Keeping handles entirely outside #editor
-   means dragging still only ever touches the plain, native-editable
-   <img> -- nothing to strand. */
-.figure-resize-overlay {
-  position: absolute; inset: 0; pointer-events: none; user-select: none;
-}
-.figure-resize-overlay .resize-handle {
+/* Resize handles: absolutely positioned within their own .img-wrap (a
+   `position: relative` NodeView wrapper -- see resizableImage.js), shown on
+   hover/selection rather than always visible. */
+.editor .tiptap-content .img-wrap .resize-handle {
   position: absolute; width: 10px; height: 10px; margin: -5px;
   background: #2266dd; border: 1px solid white; border-radius: 2px;
-  pointer-events: auto; display: none;
+  display: none;
 }
-.figure-resize-overlay .resize-handle-nw { cursor: nwse-resize; }
-.figure-resize-overlay .resize-handle-ne { cursor: nesw-resize; }
-.figure-resize-overlay .resize-handle-sw { cursor: nesw-resize; }
-.figure-resize-overlay .resize-handle-se { cursor: nwse-resize; }
+.editor .tiptap-content .img-wrap .resize-handle-nw { top: 0; left: 0; cursor: nwse-resize; }
+.editor .tiptap-content .img-wrap .resize-handle-ne { top: 0; right: 0; cursor: nesw-resize; }
+.editor .tiptap-content .img-wrap .resize-handle-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.editor .tiptap-content .img-wrap .resize-handle-se { bottom: 0; right: 0; cursor: nwse-resize; }
 
-/* ---- pagination: visual gap between simulated A4 pages ---- */
+/* ---- pagination: visual gap between simulated A4 pages ----
+   Rendered as widget decorations inside .tiptap-content by the Pagination
+   plugin (static/src/pagination.js), not as real editor content -- so
+   unlike the old contenteditable-era version, there's no bleed-past-the-
+   padding trick here: .tiptap-content itself carries no side padding of
+   its own (that lives one level up, on #editor), so a full-width break
+   already spans exactly the printable column. */
 .editor .page-break {
-  /* height is set inline by document.js per pagination pass (header + footer
-     margin, in px) since it depends on the document's configurable margins */
-  margin-left: calc(-1 * var(--m-left, 48px)); margin-right: calc(-1 * var(--m-right, 48px));
+  /* height is set inline by pagination.js per pass (a fixed ~1cm gap) */
   box-sizing: border-box;
   background: #e8eaed;
   box-shadow: inset 0 8px 8px -8px rgba(0,0,0,0.25), inset 0 -8px 8px -8px rgba(0,0,0,0.25);
@@ -306,7 +290,7 @@ a { color: #2266dd; }
      this element itself captures hover/clicks instead of letting them fall
      through to the editable text behind it, which is what made the gap look
      like typable space (text-cursor on hover, caret landing nearby on
-     click). document.js also preventDefaults its mousedown so a click here
+     click). editor.js also preventDefaults its mousedown so a click here
      is fully inert. */
   cursor: default; user-select: none;
 }
@@ -315,10 +299,10 @@ a { color: #2266dd; }
   font-family: Arial, sans-serif; font-size: 11px; color: #9aa0ad;
 }
 /* Blank filler padding a page out to full A4 height when its content falls
-   short (see insertPageFiller in document.js) — unlike .page-break, this is
-   blank space *within* a page, so clicks fall through (pointer-events: none)
-   to land the caret at the nearest real text, same as clicking below the
-   last line of a normal document. */
+   short -- unlike .page-break, this is blank space *within* a page, so
+   clicks fall through (pointer-events: none) to land the caret at the
+   nearest real text, same as clicking below the last line of a normal
+   document. */
 .editor .page-filler { pointer-events: none; user-select: none; }
 
 .snippet-card img { cursor: default; }

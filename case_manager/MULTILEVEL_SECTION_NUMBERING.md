@@ -1,5 +1,12 @@
 # Multilevel section numbering — design notes
 
+> **Superseded.** The CSS-counter/class-based numbering engine described here has been
+> replaced by real ProseMirror node attributes plus a decoration plugin — see
+> `TIPTAP_EDITOR_DESIGN.md`'s "Multilevel numbering" section for the current
+> implementation. This doc is kept because the *feature requirements* it documents (the
+> preset/cascade/restart-continue semantics, the Enter/Tab behaviors) are unchanged; only
+> the mechanism is.
+
 Added so numbered lists in the document editor (see `EDITOR_DESIGN.md`) can be used for
 legal/medical section numbers — formats like `1(2)(3)` or the alternating `1(b)3(c)` — with
 per-item restart/continue control, on top of fixing two pre-existing bugs in how Enter and
