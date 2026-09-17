@@ -28,7 +28,7 @@
 // algorithm over the saved JSON (see _ListNumberingState there) -- the two
 // must stay in sync, same as the old JS/Python pair did.
 import { Node, Extension } from "@tiptap/core";
-import { OrderedList as BaseOrderedList } from "@tiptap/extension-list";
+import { OrderedList as BaseOrderedList, ListItem as BaseListItem } from "@tiptap/extension-list";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { Fragment } from "@tiptap/pm/model";
@@ -282,6 +282,19 @@ export const OrderedList = BaseOrderedList.extend({
       },
     };
   },
+});
+
+// Stock ListItem requires its first child to be literally a <paragraph>
+// ("paragraph block*"), so applying a block-format change (e.g. the
+// toolbar's Heading 1/2/3) to a list item's text fails Tiptap's setNode
+// schema check and falls back to clearNodes(), which lifts the item clean
+// out of the list. Widening the leading slot to accept a heading too keeps
+// the item inside the list -- everything else in this file (marker
+// placement, empty-item detection, restart/continue) already works off
+// `firstChild.isTextblock`, not a hardcoded "paragraph", so this doesn't
+// disturb any of it.
+export const ListItem = BaseListItem.extend({
+  content: "(paragraph | heading) block*",
 });
 
 // Applies a preset (by key) or a custom {cascade, levels} spec to the

@@ -15,6 +15,7 @@ import { TextAlign } from "@tiptap/extension-text-align";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
 import {
   OrderedList,
+  ListItem,
   ListMarkers,
   BlockIndent,
   LIST_MAX_LEVELS,
@@ -388,8 +389,9 @@ import { Pagination, repaginate } from "./pagination.js";
   const editor = new Editor({
     element: editorEl,
     extensions: [
-      StarterKit.configure({ orderedList: false }),
+      StarterKit.configure({ orderedList: false, listItem: false }),
       OrderedList,
+      ListItem,
       ListMarkers,
       BlockIndent,
       TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
@@ -673,6 +675,42 @@ import { Pagination, repaginate } from "./pagination.js";
   document.getElementById("clearHighlightBtn").addEventListener("click", () => {
     editor.chain().focus().unsetHighlight().run();
   });
+
+  // Toolbar dropdowns/buttons otherwise only ever *write* to the editor (on
+  // "change"/"click") and never read back, so they'd keep showing whatever
+  // was last picked instead of the formatting under the cursor. Re-derive
+  // every control from the current selection on every transaction (typing,
+  // clicking, arrow-key movement -- ProseMirror fires "transaction" for a
+  // selection-only change too, not just a doc change).
+  const DEFAULT_FONT_FAMILY = fontFamilySelect.options[0].value;
+  const DEFAULT_FONT_SIZE = "11";
+
+  function syncToolbarToSelection() {
+    const styleAttrs = editor.getAttributes("textStyle");
+    fontFamilySelect.value = styleAttrs.fontFamily || DEFAULT_FONT_FAMILY;
+
+    const size = styleAttrs.fontSize ? styleAttrs.fontSize.replace(/pt$/, "") : DEFAULT_FONT_SIZE;
+    if ([...fontSizeSelect.options].some((opt) => opt.value === size)) fontSizeSelect.value = size;
+
+    let headingLevel = null;
+    for (let level = 1; level <= 3; level++) {
+      if (editor.isActive("heading", { level })) headingLevel = level;
+    }
+    blockFormatSelect.value = headingLevel ? `H${headingLevel}` : "P";
+
+    document.querySelectorAll(".fmt-btn[data-cmd]").forEach((btn) => {
+      const cmd = btn.dataset.cmd;
+      let active;
+      if (MARK_TOGGLES[cmd]) active = editor.isActive(MARK_TOGGLES[cmd]);
+      else if (TEXT_ALIGNS[cmd]) active = editor.isActive({ textAlign: TEXT_ALIGNS[cmd] });
+      else if (cmd === "insertUnorderedList") active = editor.isActive("bulletList");
+      else if (cmd === "insertOrderedList") active = editor.isActive("orderedList");
+      else return;
+      btn.classList.toggle("active", active);
+    });
+  }
+  editor.on("transaction", syncToolbarToSelection);
+  syncToolbarToSelection();
 
   // ---------------------------------------------------------------------
   // Autosave / save / export
