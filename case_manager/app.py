@@ -12,6 +12,7 @@ import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.image.image import Image as DocxImage
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, url_for
@@ -55,6 +56,39 @@ def sanitize_margins(raw, fallback=None):
             val = fallback.get(key, default)
         result[key] = val
     return result
+
+
+# Report page-number settings: where to print them (or "none"), and how many
+# leading pages to leave unnumbered (e.g. a cover page).
+REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0}
+REPORT_PAGE_NUMBER_POSITIONS = {
+    "top-left", "top-center", "top-right",
+    "bottom-left", "bottom-center", "bottom-right",
+    "none",
+}
+REPORT_PAGE_NUMBER_SKIP_MAX = 50
+
+
+def sanitize_page_numbers(raw, fallback=None):
+    fallback = fallback if isinstance(fallback, dict) else REPORT_DEFAULT_PAGE_NUMBERS
+
+    position = raw.get("position") if isinstance(raw, dict) else None
+    if position not in REPORT_PAGE_NUMBER_POSITIONS:
+        position = fallback.get("position")
+        if position not in REPORT_PAGE_NUMBER_POSITIONS:
+            position = REPORT_DEFAULT_PAGE_NUMBERS["position"]
+
+    skip = raw.get("skip") if isinstance(raw, dict) else None
+    try:
+        skip = int(skip)
+    except (TypeError, ValueError):
+        skip = None
+    if skip is None or not (0 <= skip <= REPORT_PAGE_NUMBER_SKIP_MAX):
+        skip = fallback.get("skip")
+        if not isinstance(skip, int) or not (0 <= skip <= REPORT_PAGE_NUMBER_SKIP_MAX):
+            skip = REPORT_DEFAULT_PAGE_NUMBERS["skip"]
+
+    return {"position": position, "skip": skip}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
@@ -583,24 +617,51 @@ def _flatten_json_text(node):
     return "".join(_flatten_json_text(c) for c in node.get("content") or [])
 
 
-def render_report_pdf(title, doc_json, margins=None):
+PAGE_NUMBER_CSS = "font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #555; margin: 0;"
+
+
+def _pdf_draw_page_number(device, mediabox, m, position, page_num):
+    """Draws a page-number string into the header or footer margin band of
+    the page already written to `device`, reusing a second (tiny) fitz.Story
+    for layout/alignment rather than hand-computing text placement."""
+    vert, _, horiz = position.partition("-")
+    band_height = m["header"] if vert == "top" else m["footer"]
+    if band_height <= 0:
+        return  # no room in the margin to draw into
+    if vert == "top":
+        rect = fitz.Rect(mediabox.x0, mediabox.y0, mediabox.x1, mediabox.y0 + band_height)
+    else:
+        rect = fitz.Rect(mediabox.x0, mediabox.y1 - band_height, mediabox.x1, mediabox.y1)
+    rect = fitz.Rect(rect.x0 + m["left"], rect.y0, rect.x1 - m["right"], rect.y1)
+    html = f'<p style="text-align:{horiz}; {PAGE_NUMBER_CSS}">{page_num}</p>'
+    story = fitz.Story(html=html)
+    story.place(rect)
+    story.draw(device)
+
+
+def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     heading = f"<h1>{html_escape(title)}</h1>" if title else ""
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{numbered_body_html}</body></html>"
 
     m = sanitize_margins(margins)
+    pn = sanitize_page_numbers(page_numbers)
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     story = fitz.Story(html=full_html)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
     more = 1
+    page_index = 0
     while more:
         device = writer.begin_page(mediabox)
         more, _ = story.place(where)
         story.draw(device)
+        if pn["position"] != "none" and page_index >= pn["skip"]:
+            _pdf_draw_page_number(device, mediabox, m, pn["position"], page_index - pn["skip"] + 1)
         writer.end_page()
+        page_index += 1
     writer.close()
     return buf.getvalue()
 
@@ -875,7 +936,86 @@ def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
             _docx_add_image(attrs, p, max_width_emu)
 
 
-def render_report_docx(title, doc_json, margins=None):
+def _docx_field_run(paragraph, tag, text=None, **attrs):
+    run = paragraph.add_run()
+    el = OxmlElement(tag)
+    for key, val in attrs.items():
+        el.set(qn(key), val)
+    if text is not None:
+        el.text = text
+        el.set(qn("xml:space"), "preserve")
+    run._r.append(el)
+    return run
+
+
+def _docx_add_page_field(paragraph):
+    """Inserts a plain Word PAGE field: { PAGE }. The literal "1" is only the
+    cached display value Word shows before it first recalculates fields."""
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
+    _docx_field_run(paragraph, "w:instrText", " PAGE ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "separate"})
+    paragraph.add_run("1")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
+
+
+def _docx_add_conditional_page_field(paragraph, skip):
+    """Inserts { IF { PAGE } > skip "{ = { PAGE } - skip }" "" } -- Word
+    evaluates this per rendered page, so it correctly hides the number on
+    the first `skip` pages (and restarts the visible count at 1 right after)
+    regardless of where python-docx's own generation loop happened to put
+    paragraph/section boundaries (which don't correspond to physical pages
+    -- only Word's own layout does)."""
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
+    _docx_field_run(paragraph, "w:instrText", " IF ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
+    _docx_field_run(paragraph, "w:instrText", " PAGE ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
+    _docx_field_run(paragraph, "w:instrText", f' > {skip} "')
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
+    _docx_field_run(paragraph, "w:instrText", " = ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
+    _docx_field_run(paragraph, "w:instrText", " PAGE ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
+    _docx_field_run(paragraph, "w:instrText", f" - {skip} ")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
+    _docx_field_run(paragraph, "w:instrText", '" "" ')
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "separate"})
+    paragraph.add_run("")
+    _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
+
+
+def _docx_apply_page_numbers(doc, page_numbers):
+    position = page_numbers.get("position", "none")
+    if position == "none":
+        return
+    vert, _, horiz = position.partition("-")
+    align = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }[horiz]
+
+    section = doc.sections[0]
+    container = section.header if vert == "top" else section.footer
+    container.is_linked_to_previous = False
+    paragraph = container.paragraphs[0] if container.paragraphs else container.add_paragraph()
+    paragraph.alignment = align
+
+    skip = page_numbers.get("skip", 0)
+    if skip > 0:
+        _docx_add_conditional_page_field(paragraph, skip)
+    else:
+        _docx_add_page_field(paragraph)
+
+    # Word normally shows a field's *cached* value until it's recalculated
+    # (on manual refresh, or a print); force recalculation on open so the
+    # page numbers are correct the first time the file is viewed.
+    update_fields = OxmlElement("w:updateFields")
+    update_fields.set(qn("w:val"), "true")
+    doc.settings.element.append(update_fields)
+
+
+def render_report_docx(title, doc_json, margins=None, page_numbers=None):
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
@@ -887,6 +1027,8 @@ def render_report_docx(title, doc_json, margins=None):
     section.top_margin = Pt(m["header"])
     section.bottom_margin = Pt(m["footer"])
     max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+
+    _docx_apply_page_numbers(doc, sanitize_page_numbers(page_numbers))
 
     if title:
         doc.add_paragraph(title, style="Heading 1")
@@ -1260,6 +1402,7 @@ def api_reports():
         "source_doc": source_doc,
         "source_type": source_type,
         "margins": dict(REPORT_DEFAULT_MARGINS),
+        "pageNumbers": dict(REPORT_DEFAULT_PAGE_NUMBERS),
         "created_at": now,
         "updated_at": now,
     }
@@ -1278,6 +1421,7 @@ def api_report(report_id):
     if request.method == "GET":
         resp = dict(existing)
         resp["margins"] = sanitize_margins(existing.get("margins"))
+        resp["pageNumbers"] = sanitize_page_numbers(existing.get("pageNumbers"))
         return jsonify(resp)
 
     body = request.get_json(silent=True) or {}
@@ -1293,12 +1437,14 @@ def api_report(report_id):
 
     doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
     margins = sanitize_margins(body.get("margins"), existing.get("margins"))
+    page_numbers = sanitize_page_numbers(body.get("pageNumbers"), existing.get("pageNumbers"))
     data = {
         "name": name,
         "doc": doc_json,
         "source_doc": source_doc,
         "source_type": source_type,
         "margins": margins,
+        "pageNumbers": page_numbers,
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1320,7 +1466,7 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Document is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"))
+    pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
@@ -1343,7 +1489,7 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Document is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, inline_doc_images(doc_json), data.get("margins"))
+    docx_bytes = render_report_docx(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
 
     resp = Response(
         docx_bytes,

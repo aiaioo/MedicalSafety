@@ -67,12 +67,22 @@ import { Pagination, repaginate } from "./pagination.js";
   const marginRightInput = document.getElementById("marginRightInput");
   const marginHeaderInput = document.getElementById("marginHeaderInput");
   const marginFooterInput = document.getElementById("marginFooterInput");
+  const pageNumberPositionInput = document.getElementById("pageNumberPositionInput");
+  const pageNumberSkipInput = document.getElementById("pageNumberSkipInput");
   const pageSetupError = document.getElementById("pageSetupError");
   const pageSetupCancel = document.getElementById("pageSetupCancel");
   const pageSetupApply = document.getElementById("pageSetupApply");
 
   const DEFAULT_MARGINS = { left: 36, right: 36, header: 46, footer: 46 };
   let margins = { ...DEFAULT_MARGINS };
+
+  const PAGE_NUMBER_POSITIONS = new Set([
+    "top-left", "top-center", "top-right",
+    "bottom-left", "bottom-center", "bottom-right",
+    "none",
+  ]);
+  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0 };
+  let pageNumbers = { ...DEFAULT_PAGE_NUMBERS };
 
   const newDocModal = document.getElementById("newDocModal");
   const newDocName = document.getElementById("newDocName");
@@ -298,6 +308,13 @@ import { Pagination, repaginate } from "./pagination.js";
     return out;
   }
 
+  function normalizePageNumbers(raw) {
+    const position = raw && PAGE_NUMBER_POSITIONS.has(raw.position) ? raw.position : DEFAULT_PAGE_NUMBERS.position;
+    const skipRaw = raw && typeof raw === "object" ? Number(raw.skip) : NaN;
+    const skip = Number.isInteger(skipRaw) && skipRaw >= 0 && skipRaw <= 50 ? skipRaw : DEFAULT_PAGE_NUMBERS.skip;
+    return { position, skip };
+  }
+
   function marginsPx() {
     return {
       left: margins.left * PT_TO_PX,
@@ -342,6 +359,12 @@ import { Pagination, repaginate } from "./pagination.js";
       rect.className = "page-rect";
       rect.style.top = top + "px";
       rect.style.height = Math.max(0, bottom - top) + "px";
+      if (pageNumbers.position !== "none" && i >= pageNumbers.skip) {
+        const label = document.createElement("div");
+        label.className = `page-number-label page-number-${pageNumbers.position}`;
+        label.textContent = String(i - pageNumbers.skip + 1);
+        rect.appendChild(label);
+      }
       frag.appendChild(rect);
       if (i < breaks.length) top = breaks[i].getBoundingClientRect().bottom - editorRect.top;
     }
@@ -354,11 +377,19 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(200, Math.max(0, n));
   }
 
+  function clampPageNumberSkip(v) {
+    const n = Number(v);
+    if (!Number.isInteger(n)) return null;
+    return Math.min(50, Math.max(0, n));
+  }
+
   pageSetupBtn.addEventListener("click", () => {
     marginLeftInput.value = margins.left;
     marginRightInput.value = margins.right;
     marginHeaderInput.value = margins.header;
     marginFooterInput.value = margins.footer;
+    pageNumberPositionInput.value = pageNumbers.position;
+    pageNumberSkipInput.value = pageNumbers.skip;
     pageSetupError.style.display = "none";
     openModal(pageSetupModal);
   });
@@ -376,7 +407,14 @@ import { Pagination, repaginate } from "./pagination.js";
       pageSetupError.style.display = "block";
       return;
     }
+    const skip = clampPageNumberSkip(pageNumberSkipInput.value);
+    if (skip === null || !PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value)) {
+      pageSetupError.textContent = "Enter a page count between 0 and 50 to skip.";
+      pageSetupError.style.display = "block";
+      return;
+    }
     margins = { left, right, header, footer };
+    pageNumbers = { position: pageNumberPositionInput.value, skip };
     applyMarginsToCss();
     markDirty();
     closeModal(pageSetupModal);
@@ -797,6 +835,7 @@ import { Pagination, repaginate } from "./pagination.js";
       source_doc,
       source_type,
       margins,
+      pageNumbers,
     };
     try {
       const res = await fetch(reportUrl, {
@@ -823,7 +862,7 @@ import { Pagination, repaginate } from "./pagination.js";
     try {
       const { source_doc, source_type } = currentSource();
       const blob = new Blob(
-        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", doc: editor.getJSON(), source_doc, source_type, margins })],
+        [JSON.stringify({ name: titleInput.value.trim() || "Untitled document", doc: editor.getJSON(), source_doc, source_type, margins, pageNumbers })],
         { type: "application/json" }
       );
       navigator.sendBeacon(reportUrl, blob);
@@ -947,6 +986,7 @@ import { Pagination, repaginate } from "./pagination.js";
       const data = await res.json();
       titleInput.value = data.name || "";
       margins = normalizeMargins(data.margins);
+      pageNumbers = normalizePageNumbers(data.pageNumbers);
       applyMarginsToCss();
       if (data.doc && data.doc.type === "doc") editor.commands.setContent(data.doc);
       else editor.commands.setContent(data.html || "");

@@ -224,6 +224,19 @@ a { color: #2266dd; }
   bottom: var(--mg-bottom, 61.33px); left: var(--mg-left, 48px);
   border: 1px dashed rgba(60, 64, 82, 0.28);
 }
+/* Preview of where the Page setup "page number" will land, positioned
+   within the same header/footer margin band the dashed guide above insets
+   to -- purely visual, like .page-rect itself; the real text is drawn by
+   render_report_pdf/render_report_docx at export time (see app.py). */
+.page-number-label {
+  position: absolute; left: var(--mg-left, 48px); right: var(--mg-right, 48px);
+  font-family: Arial, sans-serif; font-size: 10px; color: #9aa0ad; line-height: 1;
+}
+.page-number-top-left, .page-number-top-center, .page-number-top-right { top: 6px; }
+.page-number-bottom-left, .page-number-bottom-center, .page-number-bottom-right { bottom: 6px; }
+.page-number-top-left, .page-number-bottom-left { text-align: left; }
+.page-number-top-center, .page-number-bottom-center { text-align: center; }
+.page-number-top-right, .page-number-bottom-right { text-align: right; }
 .editor .tiptap-content h1 { font-size: 28px; margin: 0.6em 0 0.3em; }
 .editor .tiptap-content h2 { font-size: 22px; margin: 0.6em 0 0.3em; }
 .editor .tiptap-content h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
