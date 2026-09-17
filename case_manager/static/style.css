@@ -83,6 +83,21 @@ a { color: #2266dd; }
 
 .sidebar { width: 260px; flex-shrink: 0; background: white; border-left: 1px solid #e0e2e8;
   padding: 12px; overflow-y: auto; }
+
+/* Below this width the sidebar can't coexist with the document/source view,
+   so it docks off-screen and slides in over the content on a swipe instead
+   of sharing the row (see sidebar-swipe.js for the gesture). */
+@media (max-width: 780px) {
+  .viewer-layout { position: relative; overflow: hidden; }
+  .sidebar {
+    position: absolute; top: 0; right: 0; z-index: 30;
+    width: min(85vw, 320px); height: 100%;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    box-shadow: -4px 0 14px rgba(0,0,0,0.2);
+  }
+  .sidebar.is-open { transform: translateX(0); }
+}
 .sidebar h3 { margin-top: 0; font-size: 14px; }
 .snippet-list { display: flex; flex-direction: column; gap: 10px; }
 .snippet-card { border: 1px solid #e0e2e8; border-radius: 6px; overflow: hidden; }
