@@ -367,10 +367,17 @@ export function continueFromPreviousListAt(editor, pos) {
   const $ol = doc.resolve(ctx.olPos);
   const parent = $ol.parent;
   const indexInParent = $ol.index();
+
+  // Walk backward from ctx.olPos (a known-good position) subtracting each
+  // preceding sibling's own size, rather than summing forward from some
+  // computed "start of parent" position -- simpler to get right, since
+  // ctx.olPos is already exactly "the position right before this list".
   let prevIndex = indexInParent - 1;
   let prevNode = null;
+  let prevOlPos = ctx.olPos;
   while (prevIndex >= 0) {
     const n = parent.child(prevIndex);
+    prevOlPos -= n.nodeSize;
     if (n.type.name === ctx.olNode.type.name) {
       prevNode = n;
       break;
@@ -378,12 +385,10 @@ export function continueFromPreviousListAt(editor, pos) {
     prevIndex -= 1;
   }
   if (!prevNode) return;
-  let prevLiStart = $ol.before();
-  for (let i = 0; i < prevIndex; i++) prevLiStart += parent.child(i).nodeSize;
-  prevLiStart += 1; // inside prevNode
+
   let lastLiPos = null;
   prevNode.forEach((child, offset) => {
-    lastLiPos = prevLiStart + offset;
+    lastLiPos = prevOlPos + 1 + offset;
   });
   const prevValue = lastLiPos !== null ? computedValueAt(doc, lastLiPos) : 0;
   editor.commands.command((props) => setListStartValue(props, ctx, (prevValue || 0) + 1));
