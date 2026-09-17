@@ -68,7 +68,20 @@ function collectBreakUnits(doc) {
 // the view's `update()` hook (below) re-invokes this after every render
 // until the computed breaks stop changing, so it settles within a couple of
 // frames rather than needing to get it exactly right in one measurement.
-function computeBreaks(view, margins) {
+//
+// `oldBreaks` is the previously-rendered break set (positions kept in sync
+// with doc edits by the plugin's `apply`, see below). Every getBoundingClientRect
+// read below is against DOM that may already contain filler/break widgets
+// from that previous pass, so raw rect.bottom values are inflated by
+// whatever breaks were previously inserted above them. subtractInsertedFiller
+// strips that out, remeasuring against the undecorated content flow, before
+// this pass decides breaks fresh. Skipping that normalization makes a wrong
+// break self-confirming: once its filler widget is real DOM space, later
+// passes measure everything below it as already pushed down by a full page
+// and never notice the break wasn't warranted -- and because that phantom
+// page is now "full", the next unit can appear to overflow it too, cascading
+// into extra spurious breaks (and, in the worst case, blank trailing pages).
+function computeBreaks(view, margins, oldBreaks) {
   const m = marginsPx(margins);
   const pageContentHeight = PAGE_HEIGHT_PX - m.header - m.footer;
   // view.dom is the .tiptap-content child of #editor (see editor.js's
@@ -84,17 +97,31 @@ function computeBreaks(view, margins) {
   const breaks = [];
   let pageNum = 1;
 
+  // oldBreaks is sorted by pos (it's built by the same increasing-pos walk
+  // below), so the cumulative filler height already rendered before a given
+  // pos can be accumulated in one forward pass alongside it.
+  let oldIdx = 0;
+  let insertedBefore = 0;
+  function subtractInsertedFiller(pos, bottom) {
+    while (oldIdx < oldBreaks.length && oldBreaks[oldIdx].pos <= pos) {
+      const b = oldBreaks[oldIdx];
+      if (!b.trailing) insertedBefore += b.fillerBefore + GAP_PX + b.headerAfter;
+      oldIdx++;
+    }
+    return bottom - insertedBefore;
+  }
+
   for (const pos of collectBreakUnits(view.state.doc)) {
     const dom = view.nodeDOM(pos);
     if (!(dom instanceof HTMLElement)) continue;
-    const rect = dom.getBoundingClientRect();
-    if (prevBottom !== null && rect.bottom - pageContentTop > pageContentHeight) {
+    const bottom = subtractInsertedFiller(pos, dom.getBoundingClientRect().bottom);
+    if (prevBottom !== null && bottom - pageContentTop > pageContentHeight) {
       const fillerBefore = Math.max(0, pageContentHeight - (prevBottom - pageContentTop) + m.footer);
       pageNum += 1;
       breaks.push({ pos, fillerBefore, headerAfter: m.header, pageNum });
-      pageContentTop += pageContentHeight + m.footer + GAP_PX + m.header;
+      pageContentTop = prevBottom;
     }
-    prevBottom = rect.bottom;
+    prevBottom = bottom;
   }
 
   // Pad the last page out to full page height too. Unlike the mid-document
@@ -172,7 +199,15 @@ export const Pagination = Extension.create({
           init: () => ({ breaks: [] }),
           apply(tr, value) {
             const meta = tr.getMeta(paginationKey);
-            return meta || value;
+            if (meta) return meta;
+            // Keep break positions valid across doc-changing transactions
+            // that happen between recomputes (e.g. remote/collab updates,
+            // or another plugin's own dispatch) -- computeBreaks relies on
+            // these positions to line up with the *current* doc when it
+            // subtracts already-rendered filler height, and a stale pos
+            // would attribute a break's filler to the wrong node.
+            if (!tr.docChanged) return value;
+            return { breaks: value.breaks.map((b) => ({ ...b, pos: tr.mapping.map(b.pos) })) };
           },
         },
         props: {
@@ -189,8 +224,8 @@ export const Pagination = Extension.create({
           let raf = null;
           const recompute = () => {
             raf = null;
-            const newBreaks = computeBreaks(editorView, options.getMargins());
             const current = paginationKey.getState(editorView.state).breaks;
+            const newBreaks = computeBreaks(editorView, options.getMargins(), current);
             if (!breaksEqual(newBreaks, current)) {
               editorView.dispatch(editorView.state.tr.setMeta(paginationKey, { breaks: newBreaks }));
             }
