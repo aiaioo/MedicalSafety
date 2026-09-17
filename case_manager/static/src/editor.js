@@ -68,7 +68,7 @@ import { Pagination, repaginate } from "./pagination.js";
   const marginHeaderInput = document.getElementById("marginHeaderInput");
   const marginFooterInput = document.getElementById("marginFooterInput");
   const pageNumberPositionInput = document.getElementById("pageNumberPositionInput");
-  const pageNumberSkipInput = document.getElementById("pageNumberSkipInput");
+  const pageNumberStartInput = document.getElementById("pageNumberStartInput");
   const pageNumberFontInput = document.getElementById("pageNumberFontInput");
   const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
   const pageSetupError = document.getElementById("pageSetupError");
@@ -393,10 +393,12 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(200, Math.max(0, n));
   }
 
-  function clampPageNumberSkip(v) {
+  // UI-facing: the page number (1-based) at which numbering should start.
+  // Maps to the internally-stored, 0-based `skip` count (skip = start - 1).
+  function clampPageNumberStart(v) {
     const n = Number(v);
     if (!Number.isInteger(n)) return null;
-    return Math.min(50, Math.max(0, n));
+    return Math.min(51, Math.max(1, n));
   }
 
   function clampPageNumberFontSize(v) {
@@ -411,7 +413,7 @@ import { Pagination, repaginate } from "./pagination.js";
     marginHeaderInput.value = margins.header;
     marginFooterInput.value = margins.footer;
     pageNumberPositionInput.value = pageNumbers.position;
-    pageNumberSkipInput.value = pageNumbers.skip;
+    pageNumberStartInput.value = pageNumbers.skip + 1;
     pageNumberFontInput.value = pageNumbers.font;
     pageNumberFontSizeInput.value = pageNumbers.fontSize;
     pageSetupError.style.display = "none";
@@ -431,12 +433,13 @@ import { Pagination, repaginate } from "./pagination.js";
       pageSetupError.style.display = "block";
       return;
     }
-    const skip = clampPageNumberSkip(pageNumberSkipInput.value);
-    if (skip === null || !PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value)) {
-      pageSetupError.textContent = "Enter a page count between 0 and 50 to skip.";
+    const start = clampPageNumberStart(pageNumberStartInput.value);
+    if (start === null || !PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value)) {
+      pageSetupError.textContent = "Enter a start page between 1 and 51.";
       pageSetupError.style.display = "block";
       return;
     }
+    const skip = start - 1;
     const fontSize = clampPageNumberFontSize(pageNumberFontSizeInput.value);
     if (fontSize === null || !PAGE_NUMBER_FONTS.has(pageNumberFontInput.value)) {
       pageSetupError.textContent = "Enter a page number font size between 6 and 72.";

@@ -212,11 +212,11 @@
             <option value="none">None</option>
           </select>
         </label>
-        <label class="modal-field">Start numbering after this many pages
-          <input id="pageNumberSkipInput" type="number" min="0" max="50" step="1">
+        <label class="modal-field">Start numbering at page
+          <input id="pageNumberStartInput" type="number" min="1" max="51" step="1">
         </label>
       </div>
-      <p class="modal-hint">Skipped pages are left unnumbered; numbering then restarts at 1 on the next page.</p>
+      <p class="modal-hint">Pages before this are left unnumbered; numbering then restarts at 1 on the page you enter.</p>
       <div class="margin-grid">
         <label class="modal-field">Page number font
           <select id="pageNumberFontInput">
