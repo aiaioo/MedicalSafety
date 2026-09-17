@@ -238,11 +238,18 @@ a { color: #2266dd; }
 .editor .tiptap-content ol { list-style: none; }
 /* margin-right (not a trailing space in the marker's own text, which
    display:inline-block would trim as trailing whitespace at the edge of
-   its own line box -- invisible for a short "1." marker whose min-width
-   padding happens to cover for it, but a real missing-space bug for a
-   longer cascaded marker like "1(2)(3)" that already exceeds min-width) is
-   what actually separates a marker from the item's text. */
-.editor .tiptap-content .list-marker { display: inline-block; min-width: 1.6em; margin-right: 0.3em; }
+   its own line box) is what actually separates a marker from the item's
+   text. text-align: right keeps that margin the ONLY source of the gap
+   regardless of marker length: left-aligned, a short marker like "1." sits
+   flush against min-width's left edge, so its leftover min-width slack
+   piles up *after* the text -- on top of margin-right -- while a longer
+   cascaded marker like "1(2)(3)" (common a level or two down, since cascade
+   concatenates each ancestor level's own text) already exceeds min-width
+   and has no such slack, leaving only margin-right. That mismatch is what
+   made nested markers look tighter than the root level's. Right-aligning
+   moves any leftover slack to the marker's own left side instead, so the
+   gap after every marker -- root or nested -- is exactly margin-right. */
+.editor .tiptap-content .list-marker { display: inline-block; min-width: 1.6em; margin-right: 0.3em; text-align: right; }
 /* A snippet image is rendered by a ProseMirror NodeView (see
    static/src/resizableImage.js) as <span class="img-wrap"><img
    class="doc-snippet">, plus four resize-handle spans>. Unlike the old

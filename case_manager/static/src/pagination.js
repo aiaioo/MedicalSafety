@@ -8,7 +8,14 @@
 // document, and never conflicting with ProseMirror's view of the DOM.
 //
 // A block that doesn't fit on the current page moves to the next page
-// whole -- it's never split mid-paragraph, matching the old behavior.
+// whole -- it's never split mid-paragraph, matching the old behavior. That
+// atomicity only applies to actual text blocks (paragraphs/headings)
+// though: a <listItem>'s own paragraph is atomic, but sibling list items
+// (including nested sub-list items) are still separate break candidates --
+// see collectBreakUnits below -- otherwise an entire multi-item list would
+// count as a single unsplittable node, and a list that no longer quite fits
+// on the current page would jump to the next page as one block, leaving
+// the rest of the current page permanently blank.
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -28,7 +35,31 @@ function marginsPx(margins) {
   };
 }
 
-// Measures each top-level node's rendered position (via ProseMirror's own
+// Flattens the doc into break candidates: top-level blocks as-is, but with
+// orderedList/bulletList/listItem containers expanded into their children
+// instead of counted as one node -- so a break can land between two
+// sibling list items (at any nesting depth), or between an item's own
+// paragraph and a nested sub-list inside it, without ever splitting a
+// single paragraph/heading's own content. Mirrors the recursive walk
+// buildMarkerIndex (listNumbering.js) uses to compute markers, for the
+// same reason: list nesting is structural, not a unit of "atomic content".
+function collectBreakUnits(doc) {
+  const units = [];
+  function walk(node, basePos) {
+    node.forEach((child, offset) => {
+      const absPos = basePos + offset;
+      if (child.type.name === "orderedList" || child.type.name === "bulletList" || child.type.name === "listItem") {
+        walk(child, absPos + 1);
+      } else {
+        units.push(absPos);
+      }
+    });
+  }
+  walk(doc, 0);
+  return units;
+}
+
+// Measures each break unit's rendered position (via ProseMirror's own
 // pos<->DOM mapping, not by trusting DOM child order) and decides where a
 // page break needs to go. Because inserting a break changes the page's
 // remaining content height for everything below it, and that change can
@@ -53,18 +84,18 @@ function computeBreaks(view, margins) {
   const breaks = [];
   let pageNum = 1;
 
-  view.state.doc.forEach((_node, offset) => {
-    const dom = view.nodeDOM(offset);
-    if (!(dom instanceof HTMLElement)) return;
+  for (const pos of collectBreakUnits(view.state.doc)) {
+    const dom = view.nodeDOM(pos);
+    if (!(dom instanceof HTMLElement)) continue;
     const rect = dom.getBoundingClientRect();
     if (prevBottom !== null && rect.bottom - pageContentTop > pageContentHeight) {
       const fillerBefore = Math.max(0, pageContentHeight - (prevBottom - pageContentTop) + m.footer);
       pageNum += 1;
-      breaks.push({ pos: offset, fillerBefore, headerAfter: m.header, pageNum });
+      breaks.push({ pos, fillerBefore, headerAfter: m.header, pageNum });
       pageContentTop += pageContentHeight + m.footer + GAP_PX + m.header;
     }
     prevBottom = rect.bottom;
-  });
+  }
 
   // Pad the last page out to full page height too. Unlike the mid-document
   // fillerBefore above, this trailing filler doesn't need + m.footer: it
