@@ -971,10 +971,11 @@ import { Pagination, repaginate } from "./pagination.js";
         const label = s.annotated ? "Annotation" : "Snippet";
         const card = document.createElement("div");
         card.className = "snippet-card";
+        const annotationUrl = `/annotations?doc=${encodeURIComponent(source_doc)}&type=${encodeURIComponent(source_type)}&page=${encodeURIComponent(s.page)}`;
         card.innerHTML = `
           <img src="${s.url}" alt="${label} from page ${s.page}">
           <div class="snippet-actions">
-            <span class="tag">${label} &middot; p${s.page}</span>
+            <a class="tag" href="${annotationUrl}" title="Open page ${s.page} in annotations">${label} &middot; p${s.page}</a>
             <button type="button" class="insert-snippet">Insert</button>
           </div>`;
         card.querySelector(".insert-snippet").addEventListener("click", () => {

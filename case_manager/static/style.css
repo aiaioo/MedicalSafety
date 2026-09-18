@@ -15,6 +15,8 @@ a { color: #2266dd; }
   box-shadow: 0 1px 2px rgba(0,0,0,0.08); text-decoration: none; color: #1c1c1c; }
 .tag { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   background: #e7ebf3; color: #46536b; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+a.tag { text-decoration: none; cursor: pointer; }
+a.tag:hover { background: #d7deec; }
 .upload-form { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .btn { padding: 8px 14px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f1f3f4; color: #1c1c1c; font-size: 13px; cursor: pointer; }
