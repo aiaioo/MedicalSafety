@@ -220,12 +220,15 @@
         if (!res.ok) throw new Error(data.error || "Upload failed");
 
         const combo = `${data.id}|${data.type}`;
-        const label = `${data.id} (${data.type})`;
+        const fullLabel = `${data.id} (${data.type})`;
+        const shortName = data.id.length > 16 ? `${data.id.slice(0, 16)}...` : data.id;
+        const label = `${shortName} (${data.type})`;
         for (const select of [sourceSelect, newDocSource]) {
           if (!select) continue;
           const opt = document.createElement("option");
           opt.value = combo;
           opt.textContent = label;
+          opt.title = fullLabel;
           select.appendChild(opt);
         }
 
