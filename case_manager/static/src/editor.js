@@ -184,7 +184,7 @@ import { Pagination, repaginate } from "./pagination.js";
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      window.location.href = `/document?report=${encodeURIComponent(data.id)}`;
+      window.location.href = `/documents?report=${encodeURIComponent(data.id)}`;
     } catch (e) {
       newDocError.textContent = "Could not create document: " + e.message;
       newDocError.style.display = "block";
@@ -199,7 +199,7 @@ import { Pagination, repaginate } from "./pagination.js";
   function renderReportCard(r, container) {
     const card = document.createElement("a");
     card.className = "report-card";
-    card.href = `/document?report=${encodeURIComponent(r.id)}`;
+    card.href = `/documents?report=${encodeURIComponent(r.id)}`;
     const sourceLabel = r.source_doc ? `${r.source_doc} (${r.source_type})` : "No source document";
     card.innerHTML = `
       <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>

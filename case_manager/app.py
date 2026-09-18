@@ -1258,8 +1258,8 @@ def page_view():
     )
 
 
-@app.route("/document")
-def document_view():
+@app.route("/documents")
+def documents_view():
     pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
     docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
     source_docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
@@ -1278,7 +1278,7 @@ def document_view():
         check_doc_id(preselect_source)
 
     return render_template(
-        "document.html",
+        "documents.html",
         source_docs=source_docs,
         report_id=report_id,
         preselect_source=preselect_source,
