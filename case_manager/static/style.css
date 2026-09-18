@@ -32,6 +32,7 @@ a { color: #2266dd; }
 .doc-title a { margin-right: 6px; }
 .pagenav { display: flex; align-items: center; gap: 10px; }
 .pagenav .btn { background: #2a3350; padding: 6px 12px; border-radius: 4px; }
+.doc-title a.btn { color: #1c1c1c; text-decoration: underline; }
 .jump input { width: 54px; text-align: center; }
 
 .toolbar {
