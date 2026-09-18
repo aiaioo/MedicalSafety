@@ -31,17 +31,7 @@
     {% endif %}
     <span id="saveStatus" class="save-status"></span>
 
-    <div class="source-picker">
-      <label class="jump">Insert from
-        <select id="sourceSelect" {{ 'disabled' if not report_id }}>
-          <option value="">&mdash; none &mdash;</option>
-          {% for d in source_docs %}
-          <option value="{{ d.id }}|{{ d.type }}" title="{{ d.id }} ({{ d.type }})">{{ d.id[:16] }}{{ '...' if d.id|length > 16 }} ({{ d.type }})</option>
-          {% endfor %}
-        </select>
-      </label>
-      <a class="btn" id="annotateLink" href="#" style="display:none">Annotate source &raquo;</a>
-    </div>
+    <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Annotations</a>
   </header>
 
   <div class="toolbar doc-toolbar" id="formatToolbar">
@@ -146,6 +136,17 @@
       {% endif %}
     </div>
     <aside class="sidebar">
+      <div class="source-picker">
+        <label class="jump">Insert from
+          <select id="sourceSelect" {{ 'disabled' if not report_id }}>
+            <option value="">&mdash; none &mdash;</option>
+            {% for d in source_docs %}
+            <option value="{{ d.id }}|{{ d.type }}" title="{{ d.id }} ({{ d.type }})">{{ d.id[:16] }}{{ '...' if d.id|length > 16 }} ({{ d.type }})</option>
+            {% endfor %}
+          </select>
+        </label>
+        <a class="btn" id="annotateLink" href="#" style="display:none">Annotate source &raquo;</a>
+      </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
         <p class="empty">Pick a source document above to see its snippets here.</p>
