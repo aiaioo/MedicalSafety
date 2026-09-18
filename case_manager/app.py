@@ -1748,7 +1748,7 @@ def api_allegation_cases():
     return jsonify({"id": case_id, **data})
 
 
-@app.route("/api/allegation-case/<case_id>", methods=["GET", "POST"])
+@app.route("/api/allegation-case/<case_id>", methods=["GET", "POST", "DELETE"])
 def api_allegation_case(case_id):
     check_report_id(case_id)
     path = allegation_case_path(case_id)
@@ -1758,6 +1758,12 @@ def api_allegation_case(case_id):
 
     if request.method == "GET":
         return jsonify(existing)
+
+    if request.method == "DELETE":
+        if existing.get("hearings"):
+            raise DocumentError("Cannot delete a case that still has hearings", 400)
+        path.unlink(missing_ok=True)
+        return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", existing.get("name", ""))).strip()[:200]

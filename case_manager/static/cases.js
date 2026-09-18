@@ -134,6 +134,7 @@
     card.innerHTML = `
       <div class="allegation-card-head">
         <input type="text" class="allegation-title-input" placeholder="Case name" maxlength="200">
+        ${c.hearing_count === 0 ? '<button type="button" class="card-delete-btn" title="Delete case">✕</button>' : ""}
       </div>
       <textarea class="allegation-summary-input" rows="2" placeholder="Brief case summary…" maxlength="10000"></textarea>
       <div class="allegation-card-meta"></div>`;
@@ -155,12 +156,30 @@
 
     card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
 
+    const deleteBtn = card.querySelector(".card-delete-btn");
+    if (deleteBtn) wireConfirmDelete(deleteBtn, () => deleteCase(c.id));
+
     card.addEventListener("click", (e) => {
       if (e.target.closest("input, textarea, button")) return;
       selectCase(c.id);
     });
 
     return card;
+  }
+
+  function deleteCase(id) {
+    fetch(caseUrl(id), { method: "DELETE" })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        cases = cases.filter((c) => c.id !== id);
+        if (selectedId === id) {
+          selectedId = null;
+          detailCase = null;
+          renderDetail();
+        }
+        renderCaseList();
+      })
+      .catch((e) => setStatus("Could not delete case: " + e.message, true));
   }
 
   function renderCaseList() {
@@ -288,8 +307,22 @@
     c.court = detailCase.court;
     c.case_number = detailCase.case_number;
     c.hearing_count = detailCase.hearings.length;
-    const card = caseListEl.querySelector(`.case-card[data-id="${c.id}"] .allegation-card-meta`);
-    if (card) card.textContent = caseMetaLabel(c);
+    const card = caseListEl.querySelector(`.case-card[data-id="${c.id}"]`);
+    if (!card) return;
+    card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
+    const head = card.querySelector(".allegation-card-head");
+    const existingBtn = head.querySelector(".card-delete-btn");
+    if (c.hearing_count === 0 && !existingBtn) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "card-delete-btn";
+      btn.title = "Delete case";
+      btn.textContent = "✕";
+      head.appendChild(btn);
+      wireConfirmDelete(btn, () => deleteCase(c.id));
+    } else if (c.hearing_count !== 0 && existingBtn) {
+      existingBtn.remove();
+    }
   }
 
   function renderDetail() {
