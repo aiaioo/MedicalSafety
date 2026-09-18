@@ -218,6 +218,8 @@ a.tag:hover { background: #d7deec; }
 .fmt-btn { min-width: 32px; display: inline-flex; align-items: center; justify-content: center; }
 .fmt-btn svg { display: block; }
 .toolbar .fmt-btn.active { background: #dde6fb; border-color: #2266dd; }
+.toolbar button:disabled { opacity: 0.35; cursor: default; }
+.toolbar button:disabled:hover { background: #f7f8fa; }
 .fmt-btn-group { position: relative; display: inline-flex; gap: 1px; }
 .fmt-btn-caret { min-width: 20px; padding-left: 2px; padding-right: 2px; font-size: 10px; }
 .color-btn {

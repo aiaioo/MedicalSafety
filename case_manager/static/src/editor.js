@@ -682,6 +682,17 @@ import { Pagination, repaginate } from "./pagination.js";
     });
   }
 
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  undoBtn.addEventListener("click", () => editor.chain().focus().undo().run());
+  redoBtn.addEventListener("click", () => editor.chain().focus().redo().run());
+  function syncUndoRedoButtons() {
+    undoBtn.disabled = !editor.can().undo();
+    redoBtn.disabled = !editor.can().redo();
+  }
+  editor.on("transaction", syncUndoRedoButtons);
+  syncUndoRedoButtons();
+
   document.querySelector('.fmt-btn[data-cmd="insertOrderedList"]').addEventListener("click", () => {
     editor.chain().focus().toggleOrderedList().run();
     const root = findRootOrderedList(editor.state.doc, editor.state.selection.from);
@@ -1022,8 +1033,15 @@ import { Pagination, repaginate } from "./pagination.js";
       margins = normalizeMargins(data.margins);
       pageNumbers = normalizePageNumbers(data.pageNumbers);
       applyMarginsToCss();
-      if (data.doc && data.doc.type === "doc") editor.commands.setContent(data.doc);
-      else editor.commands.setContent(data.html || "");
+      // Loading a report's saved content is not a user edit -- without
+      // suppressing history here, this transaction becomes the first undo
+      // step, so the very first Cmd+Z after opening a report wipes the
+      // document back to the editor's pristine empty state instead of
+      // undoing anything the user actually did.
+      const loadChain = editor.chain().setMeta("addToHistory", false);
+      if (data.doc && data.doc.type === "doc") loadChain.setContent(data.doc);
+      else loadChain.setContent(data.html || "");
+      loadChain.run();
       const combo = data.source_doc ? `${data.source_doc}|${data.source_type}` : "";
       sourceSelect.value = combo;
       if (sourceSelect.value !== combo) sourceSelect.value = "";

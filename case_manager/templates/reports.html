@@ -52,6 +52,13 @@
     </nav>
     <span class="toolbar-sep"></span>
     <div class="fmt-controls" id="fmtControls" style="display: {{ 'none' if not report_id else 'contents' }};">
+    <button type="button" class="fmt-btn" id="undoBtn" title="Undo">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7H10a3.5 3.5 0 0 1 0 7H6.5"/><path d="M6 4 3 7l3 3"/></svg>
+    </button>
+    <button type="button" class="fmt-btn" id="redoBtn" title="Redo">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 7H6a3.5 3.5 0 0 0 0 7h3.5"/><path d="M10 4l3 3-3 3"/></svg>
+    </button>
+    <span class="toolbar-sep"></span>
     <select id="fontFamilySelect" class="fmt-select" title="Font">
       <option value="Arial" style="font-family:Arial">Arial</option>
       <option value="Georgia" style="font-family:Georgia">Georgia</option>
