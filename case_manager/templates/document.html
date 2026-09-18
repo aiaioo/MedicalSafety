@@ -21,22 +21,8 @@
 >
   <header class="docbar">
     <a class="home-link" href="{{ url_for('index') }}" title="All documents"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <a class="btn" href="{{ url_for('allegations_view') }}">Allegations</a>
 
-    <nav class="file-menu">
-      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
-      <div class="menu-dropdown" id="fileMenuDropdown">
-        <button type="button" id="newDocBtn">New document&hellip;</button>
-        <button type="button" id="openDocBtn">Open&hellip;</button>
-        <hr>
-        <button type="button" id="uploadSourceMenuBtn">Upload source&hellip;</button>
-        <input type="file" id="uploadSourceInput" accept=".pdf,.docx,.doc" hidden>
-        <hr>
-        <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
-        <hr>
-        <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
-        <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
-      </div>
-    </nav>
     <span id="uploadSourceStatus" class="upload-status"></span>
 
     {% if report_id %}
@@ -58,7 +44,24 @@
     </div>
   </header>
 
-  <div class="toolbar doc-toolbar {{ 'toolbar-hidden' if not report_id }}" id="formatToolbar">
+  <div class="toolbar doc-toolbar" id="formatToolbar">
+    <nav class="file-menu">
+      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
+      <div class="menu-dropdown" id="fileMenuDropdown">
+        <button type="button" id="newDocBtn">New document&hellip;</button>
+        <button type="button" id="openDocBtn">Open&hellip;</button>
+        <hr>
+        <button type="button" id="uploadSourceMenuBtn">Upload source&hellip;</button>
+        <input type="file" id="uploadSourceInput" accept=".pdf,.docx,.doc" hidden>
+        <hr>
+        <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
+        <hr>
+        <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
+        <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
+      </div>
+    </nav>
+    <span class="toolbar-sep"></span>
+    <div class="fmt-controls" id="fmtControls" style="display: {{ 'none' if not report_id else 'contents' }};">
     <select id="fontFamilySelect" class="fmt-select" title="Font">
       <option value="Arial" style="font-family:Arial">Arial</option>
       <option value="Georgia" style="font-family:Georgia">Georgia</option>
@@ -123,6 +126,7 @@
         <button type="button" id="customLevelsBtn">Custom levels&hellip;</button>
       </div>
     </span>
+    </div>
   </div>
   <style id="dynamicListStyles"></style>
 
