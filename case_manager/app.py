@@ -160,6 +160,18 @@ def check_report_id(report_id):
         raise DocumentError(f"Invalid document id: {report_id!r}", 400)
 
 
+def list_source_docs():
+    """All uploaded source documents (pdf/docx/doc) in documents/, as
+    {"id", "type"} dicts -- the same shape rendered into the annotations and
+    documents pages' source pickers."""
+    pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
+    docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
+    docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
+    docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
+    docs.sort(key=lambda d: d["id"])
+    return docs
+
+
 def resolve_pdf_path(doc_id, raw_type):
     check_doc_id(doc_id)
     norm_type = normalize_type(raw_type)
@@ -294,9 +306,15 @@ def sanitize_evidence_list(raw):
     for item in raw[:EVIDENCE_MAX_ITEMS]:
         if not isinstance(item, dict):
             continue
+        # An evidence item may link to at most one report (the editable
+        # documents managed in documents.html) -- drop the link rather than
+        # storing a dangling reference if that report no longer exists.
+        report_id = item.get("report_id")
+        has_report = isinstance(report_id, str) and DOC_ID_RE.match(report_id) and report_path(report_id).exists()
         out.append({
             "id": _sanitize_item_id(item.get("id")),
             "text": _sanitize_text(item.get("text"), ALLEGATION_MAX_TEXT_CHARS),
+            "report_id": report_id if has_report else "",
         })
     return out
 
@@ -1215,12 +1233,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
-        docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
-        docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
-        docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
-        docs.sort(key=lambda d: d["id"])
-        return render_template("annotations.html", doc_id="", docs=docs)
+        return render_template("annotations.html", doc_id="", docs=list_source_docs())
 
     try:
         page = int(request.args.get("page", 1))
@@ -1260,11 +1273,7 @@ def page_view():
 
 @app.route("/documents")
 def documents_view():
-    pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
-    docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
-    source_docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
-    source_docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
-    source_docs.sort(key=lambda d: d["id"])
+    source_docs = list_source_docs()
 
     report_id = request.args.get("report", "")
     if report_id:

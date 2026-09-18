@@ -6,7 +6,18 @@
   const allegationsOrderUrl = appEl.dataset.allegationsOrderUrl;
   const casesUrl = appEl.dataset.casesUrl;
   const casesPageUrl = appEl.dataset.casesPageUrl;
+  const reportsUrl = appEl.dataset.reportsUrl;
+  const documentsPageUrl = appEl.dataset.documentsPageUrl;
   const filterCaseId = appEl.dataset.filterCase || "";
+
+  function reportUrl(reportId) {
+    return `${documentsPageUrl}?report=${encodeURIComponent(reportId)}`;
+  }
+
+  function truncateMiddle(s, max) {
+    max = max || 28;
+    return s.length > max ? s.slice(0, max) + "…" : s;
+  }
 
   function allegationUrl(id) {
     return allegationUrlBase.replace("__ID__", encodeURIComponent(id));
@@ -103,6 +114,7 @@
   // ---------------------------------------------------------------------
   let allegations = [];
   let cases = []; // [{id, name, ...}] for the link picker + filter label
+  let reports = []; // [{id, name, ...}] documents (from documents.html), for evidence-item linking
   let selectedId = null;
   let filterActive = !!filterCaseId;
   const saveTimers = {};
@@ -333,15 +345,20 @@
     card.dataset.id = item.id;
     card.innerHTML = `
       <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <textarea rows="2" placeholder="Describe this evidence…" maxlength="10000"></textarea>
+      <div class="evidence-card-body">
+        <textarea rows="2" placeholder="Describe this evidence…" maxlength="10000"></textarea>
+      </div>
       <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
 
-    const textEl = card.querySelector("textarea");
+    const bodyEl = card.querySelector(".evidence-card-body");
+    const textEl = bodyEl.querySelector("textarea");
     textEl.value = item.text;
     textEl.addEventListener("input", () => {
       item.text = textEl.value;
       scheduleSave(allegation.id);
     });
+
+    bodyEl.appendChild(buildEvidenceReportControl(allegation, item));
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       allegation[kind] = allegation[kind].filter((e) => e.id !== item.id);
@@ -351,6 +368,153 @@
     });
 
     return card;
+  }
+
+  function reportName(report) {
+    return report.name || report.id;
+  }
+
+  // -------------------------------------------------------------------
+  // Evidence-card document link — each evidence item can associate with at
+  // most one document (a report from documents.html); clicking the
+  // resulting chip opens it in the document editor.
+  // -------------------------------------------------------------------
+  function buildEvidenceReportControl(allegation, item) {
+    const wrap = document.createElement("div");
+    wrap.className = "evidence-doc-control";
+    wrap.draggable = false;
+
+    let popoverEl = null;
+
+    function onOutsideClick(e) {
+      if (!wrap.contains(e.target)) closePopover();
+    }
+
+    function closePopover() {
+      if (popoverEl) {
+        popoverEl.remove();
+        popoverEl = null;
+      }
+      document.removeEventListener("click", onOutsideClick, true);
+      closeOpenDocPopover = () => {};
+    }
+
+    function pick(reportId) {
+      item.report_id = reportId;
+      closePopover();
+      renderControl();
+      scheduleSave(allegation.id);
+    }
+
+    function buildPopover() {
+      const popover = document.createElement("div");
+      popover.className = "evidence-doc-popover";
+      popover.draggable = false;
+      popover.addEventListener("click", (e) => e.stopPropagation());
+
+      if (!reports.length) {
+        popover.innerHTML = `<p class="empty">No documents yet. Create one in the <a href="${documentsPageUrl}">Documents</a> workspace.</p>`;
+        return popover;
+      }
+
+      const filterInput = document.createElement("input");
+      filterInput.type = "text";
+      filterInput.className = "evidence-doc-filter";
+      filterInput.placeholder = "Filter documents…";
+      popover.appendChild(filterInput);
+
+      const listEl = document.createElement("div");
+      listEl.className = "evidence-doc-popover-list";
+      popover.appendChild(listEl);
+
+      function renderList() {
+        const q = filterInput.value.trim().toLowerCase();
+        const matches = reports.filter((r) => !q || reportName(r).toLowerCase().includes(q));
+        listEl.innerHTML = "";
+        const noneBtn = document.createElement("button");
+        noneBtn.type = "button";
+        noneBtn.className = "evidence-doc-option evidence-doc-option-none";
+        noneBtn.textContent = "— No document —";
+        noneBtn.addEventListener("click", () => pick(""));
+        listEl.appendChild(noneBtn);
+        if (!matches.length) {
+          const p = document.createElement("p");
+          p.className = "empty";
+          p.textContent = "No matching documents.";
+          listEl.appendChild(p);
+        }
+        for (const r of matches) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          const isSelected = item.report_id === r.id;
+          btn.className = "evidence-doc-option" + (isSelected ? " selected" : "");
+          btn.title = reportName(r);
+          btn.textContent = truncateMiddle(reportName(r));
+          btn.addEventListener("click", () => pick(r.id));
+          listEl.appendChild(btn);
+        }
+      }
+      renderList();
+      filterInput.addEventListener("input", renderList);
+      setTimeout(() => filterInput.focus(), 0);
+
+      return popover;
+    }
+
+    function togglePopover() {
+      const wasOpen = !!popoverEl;
+      closeOpenDocPopover();
+      closeOpenCaseLinksPopover();
+      if (!wasOpen) {
+        popoverEl = buildPopover();
+        wrap.appendChild(popoverEl);
+        document.addEventListener("click", onOutsideClick, true);
+        closeOpenDocPopover = closePopover;
+      }
+    }
+
+    function renderControl() {
+      wrap.querySelectorAll(".evidence-doc-chip, .evidence-doc-add-btn, .evidence-doc-edit-btn").forEach((el) => el.remove());
+      const report = item.report_id ? reports.find((r) => r.id === item.report_id) : null;
+      // A linked report can be missing (deleted elsewhere) even though the
+      // id is still on the item until the next save round-trips through
+      // sanitize_evidence_list; fall back to the raw id so the chip still
+      // shows something instead of silently disappearing.
+      if (item.report_id) {
+        const label = report ? reportName(report) : item.report_id;
+        const link = document.createElement("a");
+        link.className = "evidence-doc-chip";
+        link.href = reportUrl(item.report_id);
+        link.title = `Open "${label}"`;
+        link.textContent = `📄 ${truncateMiddle(label)}`;
+        link.addEventListener("click", (e) => e.stopPropagation());
+        wrap.prepend(link);
+
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "evidence-doc-edit-btn";
+        editBtn.title = "Change linked document";
+        editBtn.textContent = "Change";
+        editBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          togglePopover();
+        });
+        wrap.insertBefore(editBtn, popoverEl);
+      } else {
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "evidence-doc-add-btn";
+        addBtn.textContent = "+ Link document";
+        addBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          togglePopover();
+        });
+        wrap.prepend(addBtn);
+      }
+    }
+
+    renderControl();
+    return wrap;
   }
 
   function buildEvidenceColumn(allegation, kind, label) {
@@ -377,7 +541,7 @@
     enableDragReorder(listEl, ".evidence-card", reorderFromDom);
 
     col.querySelector(".add-evidence-btn").addEventListener("click", () => {
-      const item = { id: genId(), text: "" };
+      const item = { id: genId(), text: "", report_id: "" };
       allegation[kind].push(item);
       renderDetail();
       updateAllegationCardMeta(allegation.id);
@@ -397,6 +561,7 @@
   // requires opening the detail pane.
   // ---------------------------------------------------------------------
   let closeOpenCaseLinksPopover = () => {};
+  let closeOpenDocPopover = () => {};
 
   function buildCaseLinksInline(allegation) {
     const wrap = document.createElement("div");
@@ -455,6 +620,7 @@
       e.stopPropagation();
       const wasOpen = !popover.hidden;
       closeOpenCaseLinksPopover();
+      closeOpenDocPopover();
       if (!wasOpen) {
         popover.hidden = false;
         document.addEventListener("click", onOutsideClick, true);
@@ -469,6 +635,7 @@
   }
 
   function renderDetail() {
+    closeOpenDocPopover();
     const allegation = allegations.find((a) => a.id === selectedId);
     if (!allegation) {
       allegationDetailEl.innerHTML = '<p class="empty">Select or add an allegation on the left to see its evidence.</p>';
@@ -489,10 +656,15 @@
   // ---------------------------------------------------------------------
   (async function init() {
     try {
-      const [allegationsRes, casesRes] = await Promise.all([fetch(allegationsUrl), fetch(casesUrl)]);
+      const [allegationsRes, casesRes, reportsRes] = await Promise.all([
+        fetch(allegationsUrl),
+        fetch(casesUrl),
+        fetch(reportsUrl),
+      ]);
       if (!allegationsRes.ok) throw new Error(await allegationsRes.text());
       allegations = await allegationsRes.json();
       cases = casesRes.ok ? await casesRes.json() : [];
+      reports = reportsRes.ok ? await reportsRes.json() : [];
       renderFilterBar();
       renderAllegationList();
       renderDetail();
