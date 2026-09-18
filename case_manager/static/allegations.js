@@ -114,7 +114,7 @@
   // ---------------------------------------------------------------------
   let allegations = [];
   let cases = []; // [{id, name, ...}] for the link picker + filter label
-  let reports = []; // [{id, name, ...}] documents (from documents.html), for evidence-item linking
+  let reports = []; // [{id, name, ...}] reports (from reports.html), for evidence-item linking
   let selectedId = null;
   let filterActive = !!filterCaseId;
   const saveTimers = {};
@@ -375,9 +375,9 @@
   }
 
   // -------------------------------------------------------------------
-  // Evidence-card document link — each evidence item can associate with at
-  // most one document (a report from documents.html); clicking the
-  // resulting chip opens it in the document editor.
+  // Evidence-card report link — each evidence item can associate with at
+  // most one report (from reports.html); clicking the
+  // resulting chip opens it in the report editor.
   // -------------------------------------------------------------------
   function buildEvidenceReportControl(allegation, item) {
     const wrap = document.createElement("div");
@@ -413,14 +413,14 @@
       popover.addEventListener("click", (e) => e.stopPropagation());
 
       if (!reports.length) {
-        popover.innerHTML = `<p class="empty">No documents yet. Create one in the <a href="${documentsPageUrl}">Documents</a> workspace.</p>`;
+        popover.innerHTML = `<p class="empty">No reports yet. Create one in the <a href="${documentsPageUrl}">Reports</a> workspace.</p>`;
         return popover;
       }
 
       const filterInput = document.createElement("input");
       filterInput.type = "text";
       filterInput.className = "evidence-doc-filter";
-      filterInput.placeholder = "Filter documents…";
+      filterInput.placeholder = "Filter reports…";
       popover.appendChild(filterInput);
 
       const listEl = document.createElement("div");
@@ -434,13 +434,13 @@
         const noneBtn = document.createElement("button");
         noneBtn.type = "button";
         noneBtn.className = "evidence-doc-option evidence-doc-option-none";
-        noneBtn.textContent = "— No document —";
+        noneBtn.textContent = "— No report —";
         noneBtn.addEventListener("click", () => pick(""));
         listEl.appendChild(noneBtn);
         if (!matches.length) {
           const p = document.createElement("p");
           p.className = "empty";
-          p.textContent = "No matching documents.";
+          p.textContent = "No matching reports.";
           listEl.appendChild(p);
         }
         for (const r of matches) {
@@ -493,7 +493,7 @@
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "evidence-doc-edit-btn";
-        editBtn.title = "Change linked document";
+        editBtn.title = "Change linked report";
         editBtn.textContent = "Change";
         editBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -504,7 +504,7 @@
         const addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.className = "evidence-doc-add-btn";
-        addBtn.textContent = "+ Link document";
+        addBtn.textContent = "+ Link report";
         addBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           togglePopover();

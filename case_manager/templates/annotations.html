@@ -51,8 +51,8 @@
 >
   <header class="topbar">
     <div class="doc-title">
-      <a href="{{ url_for('index') }}" title="All documents"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
-      <a class="btn" href="{{ url_for('documents_view') }}">Documents</a>
+      <a href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+      <a class="btn" href="{{ url_for('documents_view') }}">Reports</a>
       {{ doc_id }} <span class="tag">{{ doc_type }}</span>
     </div>
     <button type="button" id="saveBtn" class="save-btn">Save</button>

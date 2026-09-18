@@ -63,7 +63,7 @@ def sanitize_margins(raw, fallback=None):
 # Report page-number settings: where to print them (or "none"), how many
 # leading pages to leave unnumbered (e.g. a cover page), and the font/size to
 # draw them in. Font names mirror the #pageNumberFontInput <option> values in
-# document.html (quoted where the CSS family name has a space, so the same
+# reports.html (quoted where the CSS family name has a space, so the same
 # string can be dropped straight into a font-family declaration).
 REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11}
 REPORT_PAGE_NUMBER_POSITIONS = {
@@ -157,13 +157,13 @@ def check_doc_id(doc_id):
 
 def check_report_id(report_id):
     if not report_id or not DOC_ID_RE.match(report_id):
-        raise DocumentError(f"Invalid document id: {report_id!r}", 400)
+        raise DocumentError(f"Invalid report id: {report_id!r}", 400)
 
 
 def list_source_docs():
     """All uploaded source documents (pdf/docx/doc) in documents/, as
     {"id", "type"} dicts -- the same shape rendered into the annotations and
-    documents pages' source pickers."""
+    reports pages' source pickers."""
     pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
     docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
     docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
@@ -307,7 +307,7 @@ def sanitize_evidence_list(raw):
         if not isinstance(item, dict):
             continue
         # An evidence item may link to at most one report (the editable
-        # documents managed in documents.html) -- drop the link rather than
+        # reports managed in reports.html) -- drop the link rather than
         # storing a dangling reference if that report no longer exists.
         report_id = item.get("report_id")
         has_report = isinstance(report_id, str) and DOC_ID_RE.match(report_id) and report_path(report_id).exists()
@@ -1149,7 +1149,7 @@ def _docx_add_conditional_page_field(paragraph, skip):
 def _docx_clean_font_name(name):
     """Strips the CSS-quoting single quotes multi-word font values carry
     (e.g. "'Times New Roman'", matching the #pageNumberFontInput option
-    values in document.html) -- python-docx's run.font.name wants the bare
+    values in reports.html) -- python-docx's run.font.name wants the bare
     family name, not a CSS font-family value."""
     return name.strip("'") if isinstance(name, str) else name
 
@@ -1271,7 +1271,7 @@ def page_view():
     )
 
 
-@app.route("/documents")
+@app.route("/reports")
 def documents_view():
     source_docs = list_source_docs()
 
@@ -1279,7 +1279,7 @@ def documents_view():
     if report_id:
         check_report_id(report_id)
         if not report_path(report_id).exists():
-            raise DocumentError(f"No document with id {report_id!r}", 404)
+            raise DocumentError(f"No report with id {report_id!r}", 404)
 
     preselect_source = request.args.get("source", "")
     preselect_type = request.args.get("type", "pdf")
@@ -1287,7 +1287,7 @@ def documents_view():
         check_doc_id(preselect_source)
 
     return render_template(
-        "documents.html",
+        "reports.html",
         source_docs=source_docs,
         report_id=report_id,
         preselect_source=preselect_source,
@@ -1578,7 +1578,7 @@ def api_reports():
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()[:200]
     if not name:
-        raise DocumentError("A document name is required", 400)
+        raise DocumentError("A report name is required", 400)
 
     source_doc = str(body.get("source_doc") or "")
     source_type = "pdf"
@@ -1608,7 +1608,7 @@ def api_report(report_id):
     path = report_path(report_id)
     existing = load_json(path, default=None)
     if existing is None:
-        raise DocumentError(f"No document with id {report_id!r}", 404)
+        raise DocumentError(f"No report with id {report_id!r}", 404)
 
     if request.method == "GET":
         resp = dict(existing)
@@ -1619,7 +1619,7 @@ def api_report(report_id):
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", existing.get("name", ""))).strip()[:200]
     if not name:
-        raise DocumentError("A document name is required", 400)
+        raise DocumentError("A report name is required", 400)
 
     source_doc = str(body.get("source_doc", existing.get("source_doc", "")))
     source_type = "pdf"
@@ -1649,14 +1649,14 @@ def api_report_export(report_id):
     check_report_id(report_id)
     data = load_json(report_path(report_id), default=None)
     if data is None:
-        raise DocumentError(f"No document with id {report_id!r}", 404)
+        raise DocumentError(f"No report with id {report_id!r}", 404)
 
     title = data.get("name") or report_id
     doc_json = data.get("doc")
     if doc_json is None:
-        raise DocumentError("This document was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
+        raise DocumentError("This report was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
     if not doc_json.get("content"):
-        raise DocumentError("Document is empty — add some content before exporting", 400)
+        raise DocumentError("Report is empty — add some content before exporting", 400)
 
     pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
 
@@ -1672,14 +1672,14 @@ def api_report_export_docx(report_id):
     check_report_id(report_id)
     data = load_json(report_path(report_id), default=None)
     if data is None:
-        raise DocumentError(f"No document with id {report_id!r}", 404)
+        raise DocumentError(f"No report with id {report_id!r}", 404)
 
     title = data.get("name") or report_id
     doc_json = data.get("doc")
     if doc_json is None:
-        raise DocumentError("This document was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
+        raise DocumentError("This report was saved by an older editor version — open and save it once to upgrade it before exporting", 400)
     if not doc_json.get("content"):
-        raise DocumentError("Document is empty — add some content before exporting", 400)
+        raise DocumentError("Report is empty — add some content before exporting", 400)
 
     docx_bytes = render_report_docx(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
 

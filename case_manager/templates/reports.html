@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if report_id %}Document editor{% else %}Documents{% endif %}</title>
+<title>{% if report_id %}Report editor{% else %}Reports{% endif %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -20,13 +20,13 @@
      {% endif %}
 >
   <header class="docbar">
-    <a class="home-link" href="{{ url_for('index') }}" title="All documents"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <a class="home-link" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
     <a class="btn" href="{{ url_for('allegations_view') }}">Allegations</a>
 
     <span id="uploadSourceStatus" class="upload-status"></span>
 
     {% if report_id %}
-    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document">
+    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled report">
     <button type="button" id="saveBtn" class="save-btn">Save</button>
     {% endif %}
     <span id="saveStatus" class="save-status"></span>
@@ -38,7 +38,7 @@
     <nav class="file-menu">
       <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
       <div class="menu-dropdown" id="fileMenuDropdown">
-        <button type="button" id="newDocBtn">New document&hellip;</button>
+        <button type="button" id="newDocBtn">New report&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
         <hr>
         <button type="button" id="uploadSourceMenuBtn">Upload source&hellip;</button>
@@ -129,8 +129,8 @@
       </div>
       {% else %}
       <div class="doc-landing">
-        <h2>Your documents</h2>
-        <p class="empty" id="landingEmptyHint">No documents yet. Use File &rarr; New document to create one.</p>
+        <h2>Your reports</h2>
+        <p class="empty" id="landingEmptyHint">No reports yet. Use File &rarr; New report to create one.</p>
         <div id="reportListLanding" class="report-grid"></div>
       </div>
       {% endif %}
@@ -156,7 +156,7 @@
 
   <div class="modal-overlay" id="newDocModal">
     <div class="modal">
-      <h3>New document</h3>
+      <h3>New report</h3>
       <label class="modal-field">Name
         <input id="newDocName" type="text" placeholder="e.g. Case summary — Jane Doe" maxlength="200">
       </label>
@@ -178,7 +178,7 @@
 
   <div class="modal-overlay" id="openDocModal">
     <div class="modal">
-      <h3>Open a document</h3>
+      <h3>Open a report</h3>
       <div id="openDocList" class="report-list"></div>
       <div class="modal-actions">
         <button type="button" id="openDocCancel">Close</button>
