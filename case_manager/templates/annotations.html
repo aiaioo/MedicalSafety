@@ -9,29 +9,35 @@
 </head>
 <body>
 {% if not doc_id %}
-<div class="container">
-  <h1>Source Annotations</h1>
-  <section class="index-section">
-    <h2>Pick a source document to annotate</h2>
-    {% if docs %}
-    <ul class="doc-list">
-      {% for d in docs %}
-      <li>
-        <a href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-          {{ d.id }} <span class="tag">{{ d.type }}</span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="empty">No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload, or upload one below.</p>
-    {% endif %}
-    <div class="upload-form">
-      <button type="button" id="uploadSubmit" class="btn">Upload source&hellip;</button>
-      <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
-      <span id="uploadStatus" class="upload-status"></span>
+<div id="app">
+  <header class="docbar">
+    <a class="home-link" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <a class="btn" href="{{ url_for('documents_view') }}">Reports</a>
+  </header>
+  <main class="viewer-layout">
+    <div class="editor-container">
+      <div class="doc-landing">
+        <h2>Source annotations</h2>
+        {% if docs %}
+        <div class="report-grid">
+          {% for d in docs %}
+          <a class="report-card" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
+            <div class="report-card-name">{{ d.id }}</div>
+            <div class="report-card-meta">{{ d.type }}</div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty" id="landingEmptyHint">No documents found. Drop PDF or Word files into the <code>documents/</code> folder and reload, or upload one below.</p>
+        {% endif %}
+        <div class="upload-form">
+          <button type="button" id="uploadSubmit" class="btn">Upload source&hellip;</button>
+          <input type="file" id="uploadInput" accept=".pdf,.docx,.doc" hidden>
+          <span id="uploadStatus" class="upload-status"></span>
+        </div>
+      </div>
     </div>
-  </section>
+  </main>
 </div>
 <script src="{{ url_for('static', filename='annotations-landing.js') }}"></script>
 {% else %}
