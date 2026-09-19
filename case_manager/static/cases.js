@@ -128,7 +128,13 @@
       if (!isSaveShortcut(e)) return;
       if (e.key !== "Enter") e.preventDefault();
       setTimeout(() => {
-        if (!saveTimers[key]) return;
+        if (!saveTimers[key]) {
+          // Nothing pending (e.g. the debounce already fired, or nothing
+          // changed) -- it's already saved, but the keypress was an
+          // explicit request for confirmation, so flash anyway.
+          flashSaved(el);
+          return;
+        }
         clearTimeout(saveTimers[key]);
         saveTimers[key] = null;
         savePartial(id, buildPartial())

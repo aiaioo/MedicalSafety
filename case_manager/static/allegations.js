@@ -198,7 +198,13 @@
       if (!isSaveShortcut(e)) return;
       if (e.key !== "Enter") e.preventDefault();
       setTimeout(() => {
-        if (!saveTimers[id]) return;
+        if (!saveTimers[id]) {
+          // Nothing pending (e.g. the debounce already fired, or nothing
+          // changed) -- it's already saved, but the keypress was an
+          // explicit request for confirmation, so flash anyway.
+          flashSaved(el);
+          return;
+        }
         clearTimeout(saveTimers[id]);
         saveTimers[id] = null;
         saveAllegation(id)
