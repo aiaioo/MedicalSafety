@@ -457,8 +457,8 @@ a.tag:hover { background: #d7deec; }
 
 .allegation-list { display: flex; flex-direction: column; gap: 12px; }
 .allegation-card {
-  background: white; border: 1px solid #e0e2e8; border-radius: 8px; padding: 12px 14px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06); cursor: grab;
+  background: white; border: 1px solid #e0e2e8; border-radius: 8px; padding: 12px 14px 32px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06); cursor: grab; position: relative;
 }
 .allegation-card:hover { border-color: #cfd4e0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 .allegation-card.selected { border-color: #2266dd; box-shadow: 0 0 0 2px rgba(34,102,221,0.18); }
@@ -486,6 +486,14 @@ a.tag:hover { background: #d7deec; }
 .card-delete-btn:hover { background: #f7e8e6; color: #c0392b; }
 .card-delete-btn.confirming { background: #c0392b; color: white; font-size: 11px; padding: 4px 8px; }
 
+/* Per-card save button, pinned to the bottom-right corner so it's reachable
+   regardless of how tall the card's content has grown. */
+.card-save-btn {
+  position: absolute; right: 8px; bottom: 6px; border: none; background: none; color: #b0b4bd; cursor: pointer;
+  font-size: 13px; padding: 4px 6px; border-radius: 4px; line-height: 1;
+}
+.card-save-btn:hover { background: #eef3fc; color: #2266dd; }
+
 /* Brief highlight on a field right after Enter forces an immediate save,
    since the header's save-status text is easy to miss while eyes are on
    the field being edited. */
@@ -507,7 +515,8 @@ a.tag:hover { background: #d7deec; }
 .evidence-list { display: flex; flex-direction: column; gap: 10px; }
 .evidence-card {
   display: flex; align-items: flex-start; gap: 8px; background: white; border: 1px solid #e0e2e8;
-  border-radius: 8px; padding: 10px 10px 10px 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); cursor: grab;
+  border-radius: 8px; padding: 10px 10px 30px 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); cursor: grab;
+  position: relative;
 }
 .evidence-card.dragging { opacity: 0.4; }
 .evidence-card .drag-handle { color: #9aa0ad; cursor: grab; flex-shrink: 0; margin-top: 6px; line-height: 1; }

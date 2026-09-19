@@ -117,6 +117,22 @@
     return e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s");
   }
 
+  // Flushes a pending debounced save immediately, flashing `flashEl` once it
+  // lands (or right away if nothing was pending -- the request was still an
+  // explicit ask for confirmation). Shared by the Enter/Ctrl/Cmd+S key
+  // handler below and each card's save button.
+  function flushSaveNow(flashEl, key, id, buildPartial) {
+    if (!saveTimers[key]) {
+      flashSaved(flashEl);
+      return;
+    }
+    clearTimeout(saveTimers[key]);
+    saveTimers[key] = null;
+    savePartial(id, buildPartial())
+      .then(() => flashSaved(flashEl))
+      .catch((err) => setStatus("Save failed: " + err.message, true));
+  }
+
   // Pressing Enter, or Ctrl/Cmd+S, in a field should save right away instead
   // of waiting out the debounce. `buildPartial` is called at flush time (not
   // capture time) so it picks up the keystroke's own "input" event, e.g. a
@@ -127,21 +143,24 @@
     el.addEventListener("keydown", (e) => {
       if (!isSaveShortcut(e)) return;
       if (e.key !== "Enter") e.preventDefault();
-      setTimeout(() => {
-        if (!saveTimers[key]) {
-          // Nothing pending (e.g. the debounce already fired, or nothing
-          // changed) -- it's already saved, but the keypress was an
-          // explicit request for confirmation, so flash anyway.
-          flashSaved(el);
-          return;
-        }
-        clearTimeout(saveTimers[key]);
-        saveTimers[key] = null;
-        savePartial(id, buildPartial())
-          .then(() => flashSaved(el))
-          .catch((err) => setStatus("Save failed: " + err.message, true));
-      }, 0);
+      setTimeout(() => flushSaveNow(el, key, id, buildPartial), 0);
     });
+  }
+
+  // A small disk icon pinned to the bottom-right of a card, saving it the
+  // same way Ctrl/Cmd+S would (and flashing the whole card, not just a
+  // field, since it's not tied to any one input).
+  function buildCardSaveBtn(flashEl, key, id, buildPartial) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "card-save-btn";
+    btn.title = "Save";
+    btn.textContent = "\u{1F4BE}︎"; // floppy disk, text presentation so it stays monochrome like the other card icons
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      flushSaveNow(flashEl, key, id, buildPartial);
+    });
+    return btn;
   }
 
   // ---------------------------------------------------------------------
@@ -240,6 +259,8 @@
 
     const deleteBtn = card.querySelector(".card-delete-btn");
     if (deleteBtn) wireConfirmDelete(deleteBtn, () => deleteCase(c.id));
+
+    card.appendChild(buildCardSaveBtn(card, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary })));
 
     card.addEventListener("click", (e) => {
       if (e.target.closest("input, textarea, button")) return;
@@ -566,6 +587,14 @@
       updateSelectedCaseMeta();
       saveDetail();
     });
+
+    card.appendChild(
+      buildCardSaveBtn(card, "detail:" + detailCase.id, detailCase.id, () => ({
+        court: detailCase.court,
+        case_number: detailCase.case_number,
+        hearings: detailCase.hearings,
+      }))
+    );
 
     return card;
   }
