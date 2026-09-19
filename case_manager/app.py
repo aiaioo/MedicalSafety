@@ -342,6 +342,7 @@ def sanitize_hearings(raw):
         out.append({
             "id": _sanitize_item_id(item.get("id")),
             "date": _sanitize_text(item.get("date"), CASE_MAX_DATE_CHARS),
+            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
             "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
         })
     return out

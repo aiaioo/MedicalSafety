@@ -275,6 +275,28 @@
     return h.date ? h.date : "No date";
   }
 
+  function isIsoDate(s) {
+    return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  }
+
+  // Hearings used to store a single free-text "date" field that people filled
+  // with both the date and a label (e.g. "2026-03-05 First Hearing"), before
+  // the two were split into separate fields. Split any such legacy value the
+  // first time it's loaded, so it lands in the right field instead of just
+  // failing to populate the new date picker.
+  function migrateLegacyHearingDate(hearing) {
+    if (isIsoDate(hearing.date) || hearing.title) return;
+    const raw = hearing.date || "";
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2})\s*(.*)$/);
+    if (m) {
+      hearing.date = m[1];
+      hearing.title = m[2];
+    } else if (raw) {
+      hearing.title = raw;
+      hearing.date = "";
+    }
+  }
+
   function buildHearingCard(hearing) {
     const card = document.createElement("div");
     card.className = "evidence-card hearing-card";
@@ -283,34 +305,45 @@
     card.innerHTML = `
       <span class="drag-handle" title="Drag to reorder">⠿</span>
       <div class="hearing-fields">
-        <input type="text" class="hearing-date-input" placeholder="Date (e.g. 2026-03-05)" maxlength="40">
-        <textarea rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
+        <div class="hearing-card-head">
+          <input type="date" class="hearing-date-input" lang="en-GB" title="Hearing date">
+          <input type="text" class="hearing-title-input" placeholder="Hearing title (e.g. First hearing)" maxlength="300">
+        </div>
+        <textarea class="hearing-summary-input" rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
       </div>
       <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
 
+    function flushHearingField(el) {
+      flushSaveOnEnter(el, "detail:" + detailCase.id, detailCase.id, () => ({
+        court: detailCase.court,
+        case_number: detailCase.case_number,
+        hearings: detailCase.hearings,
+      }));
+    }
+
     const dateEl = card.querySelector(".hearing-date-input");
-    dateEl.value = hearing.date;
+    dateEl.value = isIsoDate(hearing.date) ? hearing.date : "";
     dateEl.addEventListener("input", () => {
       hearing.date = dateEl.value;
       saveDetail();
     });
-    flushSaveOnEnter(dateEl, "detail:" + detailCase.id, detailCase.id, () => ({
-      court: detailCase.court,
-      case_number: detailCase.case_number,
-      hearings: detailCase.hearings,
-    }));
+    flushHearingField(dateEl);
 
-    const summaryEl = card.querySelector("textarea");
+    const titleEl = card.querySelector(".hearing-title-input");
+    titleEl.value = hearing.title || "";
+    titleEl.addEventListener("input", () => {
+      hearing.title = titleEl.value;
+      saveDetail();
+    });
+    flushHearingField(titleEl);
+
+    const summaryEl = card.querySelector(".hearing-summary-input");
     summaryEl.value = hearing.summary;
     summaryEl.addEventListener("input", () => {
       hearing.summary = summaryEl.value;
       saveDetail();
     });
-    flushSaveOnEnter(summaryEl, "detail:" + detailCase.id, detailCase.id, () => ({
-      court: detailCase.court,
-      case_number: detailCase.case_number,
-      hearings: detailCase.hearings,
-    }));
+    flushHearingField(summaryEl);
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       detailCase.hearings = detailCase.hearings.filter((h) => h.id !== hearing.id);
@@ -423,12 +456,12 @@
     }));
 
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
-      const hearing = { id: genId(), date: "", summary: "" };
+      const hearing = { id: genId(), date: "", title: "", summary: "" };
       detailCase.hearings.push(hearing);
       renderHearingList();
       updateSelectedCaseMeta();
       saveDetail();
-      const newCard = caseDetailEl.querySelector(`.hearing-card[data-id="${hearing.id}"] .hearing-date-input`);
+      const newCard = caseDetailEl.querySelector(`.hearing-card[data-id="${hearing.id}"] .hearing-title-input`);
       if (newCard) setTimeout(() => newCard.focus(), 0);
     });
 
@@ -446,6 +479,7 @@
       const data = await res.json();
       detailCase = { id, ...data };
       if (!Array.isArray(detailCase.hearings)) detailCase.hearings = [];
+      detailCase.hearings.forEach(migrateLegacyHearingDate);
       renderDetail();
     } catch (e) {
       caseDetailEl.innerHTML = `<p class="empty">Failed to load case: ${escapeHtml(e.message)}</p>`;
