@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causes</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="causesApp"
+     data-causes-url="{{ url_for('api_causes') }}"
+     data-cause-url-base="{{ url_for('api_cause', cause_id='__ID__') }}"
+     data-cases-url="{{ url_for('api_allegation_cases') }}"
+     data-cases-page-url="{{ url_for('cases_view') }}"
+>
+  <header class="docbar" style="position: relative;">
+    <a class="home-link" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <span class="doc-name doc-name-static" style="position: absolute; left: 50%; transform: translateX(-50%);">Causes</span>
+    <span id="saveStatus" class="save-status"></span>
+    <a class="btn" style="margin-left: auto;" href="{{ url_for('cases_view') }}">Cases</a>
+  </header>
+
+  <main class="allegations-layout">
+    <div class="allegations-workspace" id="causesWorkspace">
+      <aside class="allegations-column causes-column">
+        <div class="allegations-column-head">
+          <h2>Causes</h2>
+          <button type="button" class="btn" id="addCauseBtn">+ New cause</button>
+        </div>
+        <p class="empty" id="causeListEmpty" style="display:none">No causes yet. Add one to get started.</p>
+        <div class="allegation-list" id="causeList"></div>
+      </aside>
+      <section class="allegation-detail" id="causeDetail">
+        <p class="empty">Select or add a cause on the left to see its goals.</p>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='causes.js') }}"></script>
+</body>
+</html>

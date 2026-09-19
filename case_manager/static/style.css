@@ -658,3 +658,19 @@ a.tag:hover { background: #d7deec; }
 .case-links-popover .case-link-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; padding: 3px 0; }
 .case-links-popover .case-link-row input { margin: 0; }
 .case-links-popover .empty { margin: 0; font-size: 12px; }
+
+/* ---- causes workspace: goal cards (title + description + linked cases,
+   reusing the .evidence-card shell and .case-links-inline popover above) ---- */
+.goal-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.goal-title-input {
+  border: 1px solid transparent; background: transparent; border-radius: 4px;
+  padding: 4px 6px; font-family: inherit; font-size: 14px; font-weight: 600; color: #1c1c1c;
+}
+.goal-title-input:hover { background: #f7f8fa; }
+.goal-title-input:focus { outline: none; background: white; border-color: #cfd4e0; }
+.goal-description-input {
+  display: block; width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent;
+  border-radius: 4px; padding: 4px 6px; font-size: 13px; color: #1c1c1c; resize: vertical; overflow-y: hidden; font-family: inherit; line-height: 1.4;
+}
+.goal-description-input:hover { background: #f7f8fa; }
+.goal-description-input:focus { outline: none; background: white; border-color: #cfd4e0; }

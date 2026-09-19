@@ -28,10 +28,11 @@ ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
 SNIPPETS_DIR = STORAGE_DIR / "snippets"
 REPORTS_DIR = STORAGE_DIR / "reports"
 CASES_DIR = STORAGE_DIR / "cases"
+CAUSES_DIR = STORAGE_DIR / "causes"
 ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
 DOC_META_DIR = STORAGE_DIR / "doc_meta"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, ALLEGATIONS_DIR, DOC_META_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, CAUSES_DIR, ALLEGATIONS_DIR, DOC_META_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -262,6 +263,10 @@ def allegation_case_path(case_id):
     return CASES_DIR / f"{case_id}.json"
 
 
+def cause_path(cause_id):
+    return CAUSES_DIR / f"{cause_id}.json"
+
+
 def allegation_item_path(allegation_id):
     return ALLEGATIONS_DIR / f"{allegation_id}.json"
 
@@ -420,6 +425,32 @@ def sanitize_hearings(raw):
             "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
             "submitted_docs": sanitize_hearing_doc_list(item.get("submitted_docs")),
             "received_docs": sanitize_hearing_doc_list(item.get("received_docs")),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Causes workspace: a cause is just a title/description (see
+# api_causes below) holding an ordered list of goals. Each goal is likewise
+# only a title/description, plus an optional set of linked case ids -- the
+# same many-to-many shape allegations use for their case links, so a goal
+# can pertain to zero or more cases.
+# ---------------------------------------------------------------------------
+CAUSE_MAX_GOAL_ITEMS = 300
+
+
+def sanitize_goals(raw):
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:CAUSE_MAX_GOAL_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
+            "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
+            "case_ids": sanitize_case_ids(item.get("case_ids")),
         })
     return out
 
@@ -1388,6 +1419,11 @@ def allegations_view():
     return render_template("allegations.html", filter_case_id=filter_case_id)
 
 
+@app.route("/causes")
+def causes_view():
+    return render_template("causes.html")
+
+
 @app.route("/cases")
 def cases_view():
     return render_template("cases.html")
@@ -1948,6 +1984,83 @@ def api_allegation_case(case_id):
         "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
         "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", []))),
+        "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_json(path, data)
+    return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# API: causes, each holding an ordered list of goals (see sanitize_goals
+# above). A cause can only be deleted once it has no goals, and the UI only
+# offers to delete a goal once it has no linked cases -- mirroring the
+# case/hearing deletion rules just above.
+# ---------------------------------------------------------------------------
+
+@app.route("/api/causes", methods=["GET", "POST"])
+def api_causes():
+    if request.method == "GET":
+        items = []
+        for f in CAUSES_DIR.glob("*.json"):
+            data = load_json(f, default=None)
+            if not isinstance(data, dict):
+                continue
+            items.append({
+                "id": f.stem,
+                "title": data.get("title") or f.stem,
+                "description": data.get("description", ""),
+                "goal_count": len(data.get("goals") or []),
+                "created_at": data.get("created_at", ""),
+                "updated_at": data.get("updated_at", ""),
+            })
+        items.sort(key=lambda x: x["updated_at"], reverse=True)
+        return jsonify(items)
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "").strip()[:ALLEGATION_MAX_TITLE_CHARS]
+    if not title:
+        raise DocumentError("A cause title is required", 400)
+
+    cause_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "title": title,
+        "description": _sanitize_text(body.get("description"), ALLEGATION_MAX_TEXT_CHARS),
+        "goals": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    save_json(cause_path(cause_id), data)
+    return jsonify({"id": cause_id, **data})
+
+
+@app.route("/api/cause/<cause_id>", methods=["GET", "POST", "DELETE"])
+def api_cause(cause_id):
+    check_report_id(cause_id)
+    path = cause_path(cause_id)
+    existing = load_json(path, default=None)
+    if existing is None:
+        raise DocumentError(f"No cause with id {cause_id!r}", 404)
+
+    if request.method == "GET":
+        return jsonify(existing)
+
+    if request.method == "DELETE":
+        if existing.get("goals"):
+            raise DocumentError("Cannot delete a cause that still has goals", 400)
+        path.unlink(missing_ok=True)
+        return jsonify({"ok": True})
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title", existing.get("title", ""))).strip()[:ALLEGATION_MAX_TITLE_CHARS]
+    if not title:
+        raise DocumentError("A cause title is required", 400)
+
+    data = {
+        "title": title,
+        "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
+        "goals": sanitize_goals(body.get("goals", existing.get("goals", []))),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
