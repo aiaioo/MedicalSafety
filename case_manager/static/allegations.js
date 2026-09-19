@@ -158,6 +158,39 @@
     }, 900);
   }
 
+  // Briefly highlights a field right after Enter forces its save, since the
+  // header's save-status text is easy to miss while eyes are on the field.
+  function flashSaved(el) {
+    el.classList.remove("save-flash");
+    void el.offsetWidth; // restart the animation if it's already running
+    el.classList.add("save-flash");
+    el.addEventListener("animationend", () => el.classList.remove("save-flash"), { once: true });
+  }
+
+  function isSaveShortcut(e) {
+    return e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s");
+  }
+
+  // Pressing Enter, or Ctrl/Cmd+S, in a field should save right away instead
+  // of waiting out the debounce. Deferred via setTimeout so it runs after the
+  // keystroke's own "input" event (e.g. the newline a textarea just
+  // inserted); Ctrl/Cmd+S has no such side effect, but the browser's own
+  // save-page shortcut must still be suppressed either way.
+  function flushSaveOnEnter(el, id) {
+    el.addEventListener("keydown", (e) => {
+      if (!isSaveShortcut(e)) return;
+      if (e.key !== "Enter") e.preventDefault();
+      setTimeout(() => {
+        if (!saveTimers[id]) return;
+        clearTimeout(saveTimers[id]);
+        saveTimers[id] = null;
+        saveAllegation(id)
+          .then(() => flashSaved(el))
+          .catch((err) => setStatus("Save failed: " + err.message, true));
+      }, 0);
+    });
+  }
+
   async function saveAllegation(id) {
     const allegation = allegations.find((a) => a.id === id);
     if (!allegation) return;
@@ -226,6 +259,7 @@
       }
       scheduleSave(allegation.id);
     });
+    flushSaveOnEnter(titleEl, allegation.id);
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = allegation.description;
@@ -233,6 +267,7 @@
       allegation.description = summaryEl.value;
       scheduleSave(allegation.id);
     });
+    flushSaveOnEnter(summaryEl, allegation.id);
 
     card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
     card.querySelector(".case-links-inline").appendChild(buildCaseLinksInline(allegation));
@@ -357,6 +392,7 @@
       item.text = textEl.value;
       scheduleSave(allegation.id);
     });
+    flushSaveOnEnter(textEl, allegation.id);
 
     bodyEl.appendChild(buildEvidenceReportControl(allegation, item));
 

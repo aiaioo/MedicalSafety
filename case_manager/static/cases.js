@@ -76,6 +76,40 @@
     return res.json();
   }
 
+  // Briefly highlights a field right after Enter forces its save, since the
+  // header's save-status text is easy to miss while eyes are on the field.
+  function flashSaved(el) {
+    el.classList.remove("save-flash");
+    void el.offsetWidth; // restart the animation if it's already running
+    el.classList.add("save-flash");
+    el.addEventListener("animationend", () => el.classList.remove("save-flash"), { once: true });
+  }
+
+  function isSaveShortcut(e) {
+    return e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s");
+  }
+
+  // Pressing Enter, or Ctrl/Cmd+S, in a field should save right away instead
+  // of waiting out the debounce. `buildPartial` is called at flush time (not
+  // capture time) so it picks up the keystroke's own "input" event, e.g. a
+  // textarea's freshly-inserted newline. Deferred via setTimeout so that
+  // event has a chance to run first; Ctrl/Cmd+S has no such side effect, but
+  // the browser's own save-page shortcut must still be suppressed either way.
+  function flushSaveOnEnter(el, key, id, buildPartial) {
+    el.addEventListener("keydown", (e) => {
+      if (!isSaveShortcut(e)) return;
+      if (e.key !== "Enter") e.preventDefault();
+      setTimeout(() => {
+        if (!saveTimers[key]) return;
+        clearTimeout(saveTimers[key]);
+        saveTimers[key] = null;
+        savePartial(id, buildPartial())
+          .then(() => flashSaved(el))
+          .catch((err) => setStatus("Save failed: " + err.message, true));
+      }, 0);
+    });
+  }
+
   // ---------------------------------------------------------------------
   // Drag-to-reorder (mirrors static/allegations.js)
   // ---------------------------------------------------------------------
@@ -146,6 +180,7 @@
       if (selectedId === c.id) caseDetailEl.querySelector(".allegation-detail-head h2").textContent = c.name || "Untitled case";
       scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary });
     });
+    flushSaveOnEnter(titleEl, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary }));
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = c.summary;
@@ -153,6 +188,7 @@
       c.summary = summaryEl.value;
       scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary });
     });
+    flushSaveOnEnter(summaryEl, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary }));
 
     card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
 
@@ -258,6 +294,11 @@
       hearing.date = dateEl.value;
       saveDetail();
     });
+    flushSaveOnEnter(dateEl, "detail:" + detailCase.id, detailCase.id, () => ({
+      court: detailCase.court,
+      case_number: detailCase.case_number,
+      hearings: detailCase.hearings,
+    }));
 
     const summaryEl = card.querySelector("textarea");
     summaryEl.value = hearing.summary;
@@ -265,6 +306,11 @@
       hearing.summary = summaryEl.value;
       saveDetail();
     });
+    flushSaveOnEnter(summaryEl, "detail:" + detailCase.id, detailCase.id, () => ({
+      court: detailCase.court,
+      case_number: detailCase.case_number,
+      hearings: detailCase.hearings,
+    }));
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       detailCase.hearings = detailCase.hearings.filter((h) => h.id !== hearing.id);
@@ -357,6 +403,11 @@
       updateSelectedCaseMeta();
       saveDetail();
     });
+    flushSaveOnEnter(courtInput, "detail:" + detailCase.id, detailCase.id, () => ({
+      court: detailCase.court,
+      case_number: detailCase.case_number,
+      hearings: detailCase.hearings,
+    }));
 
     const caseNumberInput = caseDetailEl.querySelector("#caseNumberInput");
     caseNumberInput.value = detailCase.case_number;
@@ -365,6 +416,11 @@
       updateSelectedCaseMeta();
       saveDetail();
     });
+    flushSaveOnEnter(caseNumberInput, "detail:" + detailCase.id, detailCase.id, () => ({
+      court: detailCase.court,
+      case_number: detailCase.case_number,
+      hearings: detailCase.hearings,
+    }));
 
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
       const hearing = { id: genId(), date: "", summary: "" };
