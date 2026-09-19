@@ -661,6 +661,35 @@
     titleDirty = false;
   }
 
+  // Briefly highlights the title field to confirm an explicit save (mirrors
+  // static/cases.js's card fields).
+  function flashSaved(el) {
+    el.classList.remove("save-flash");
+    void el.offsetWidth; // restart the animation if it's already running
+    el.classList.add("save-flash");
+    el.addEventListener("animationend", () => el.classList.remove("save-flash"), { once: true });
+  }
+
+  // Pressing Enter, or Ctrl/Cmd+S while the title is focused, saves it right
+  // away instead of waiting for the page-level Save button.
+  titleInput.addEventListener("keydown", (e) => {
+    const isSaveShortcut = e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s");
+    if (!isSaveShortcut) return;
+    if (e.key !== "Enter") e.preventDefault();
+    setTimeout(() => {
+      if (!titleDirty) {
+        flashSaved(titleInput);
+        return;
+      }
+      saveTitle()
+        .then(() => {
+          setStatus("Saved");
+          flashSaved(titleInput);
+        })
+        .catch((err) => setStatus("Save failed: " + err.message, true));
+    }, 0);
+  });
+
   document.getElementById("saveBtn").addEventListener("click", async () => {
     const dirtyPages = Array.from(pageState.entries())
       .filter(([, s]) => s.dirty)

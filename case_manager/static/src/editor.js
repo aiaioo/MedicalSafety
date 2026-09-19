@@ -119,6 +119,15 @@ import { Pagination, repaginate } from "./pagination.js";
     saveStatusEl.style.color = isError ? "#c0392b" : "#8a92a5";
   }
 
+  // Briefly highlights the title field to confirm an explicit save, since
+  // the header's save-status text is easy to miss (mirrors static/cases.js).
+  function flashSaved(el) {
+    el.classList.remove("save-flash");
+    void el.offsetWidth; // restart the animation if it's already running
+    el.classList.add("save-flash");
+    el.addEventListener("animationend", () => el.classList.remove("save-flash"), { once: true });
+  }
+
   function fmtDate(iso) {
     if (!iso) return "";
     try {
@@ -943,6 +952,18 @@ import { Pagination, repaginate } from "./pagination.js";
 
   titleInput.addEventListener("input", markDirty);
 
+  // Pressing Enter in the title field saves right away instead of waiting
+  // out the autosave debounce, flashing the field green on success (mirrors
+  // the card fields on the cases/allegations pages).
+  titleInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    setTimeout(() => {
+      saveReport()
+        .then(() => flashSaved(titleInput))
+        .catch((err) => setStatus("Save failed: " + err.message, true));
+    }, 0);
+  });
+
   window.addEventListener("beforeunload", () => {
     if (!dirty) return;
     try {
@@ -983,7 +1004,9 @@ import { Pagination, repaginate } from "./pagination.js";
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
-      saveReport().catch((err) => setStatus("Save failed: " + err.message, true));
+      saveReport()
+        .then(() => flashSaved(titleInput))
+        .catch((err) => setStatus("Save failed: " + err.message, true));
     }
   });
 
