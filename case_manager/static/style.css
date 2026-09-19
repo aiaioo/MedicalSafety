@@ -144,10 +144,15 @@ a.tag:hover { background: #d7deec; }
 
 /* ---- document editor (Google Docs-ish look) ---- */
 .docbar {
+  position: relative;
   display: flex; align-items: center; gap: 14px; padding: 10px 16px;
   background: white; border-bottom: 1px solid #e0e2e8; flex-shrink: 0;
 }
 .docbar .home-link { color: #5f6368; font-size: 16px; text-decoration: none; }
+.docbar-title {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 16px; font-weight: 600; color: #1c1c1c; pointer-events: none;
+}
 
 .file-menu { position: relative; }
 .menu-trigger {
