@@ -4,9 +4,20 @@
   const casesUrl = appEl.dataset.casesUrl;
   const caseUrlBase = appEl.dataset.caseUrlBase;
   const allegationsUrlBase = appEl.dataset.allegationsUrlBase;
+  const sourceDocumentsUrl = appEl.dataset.sourceDocumentsUrl;
+  const annotationsPageUrl = appEl.dataset.annotationsPageUrl;
 
   function caseUrl(id) {
     return caseUrlBase.replace("__ID__", encodeURIComponent(id));
+  }
+
+  function sourceDocUrl(doc) {
+    return `${annotationsPageUrl}?doc=${encodeURIComponent(doc.doc_id)}&type=${encodeURIComponent(doc.doc_type || "pdf")}`;
+  }
+
+  function truncateMiddle(s, max) {
+    max = max || 28;
+    return s.length > max ? s.slice(0, max) + "…" : s;
   }
 
   const saveStatusEl = document.getElementById("saveStatus");
@@ -28,6 +39,23 @@
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  // Grows a textarea to fit its content instead of clipping overflow text
+  // behind its fixed rows="2" height. Call on every "input" so typing never
+  // outgrows the box.
+  function autoGrow(el) {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }
+
+  // scrollHeight reads 0 (or the CSS rows height) on a node that isn't in the
+  // document yet, which every card here is at the point its value is first
+  // set -- cards are built off-DOM, then appended by the caller. Defer to the
+  // next frame, by which point the append has happened, so pre-existing long
+  // text is expanded on first render instead of only once it's next edited.
+  function autoGrowOnAttach(el) {
+    requestAnimationFrame(() => autoGrow(el));
   }
 
   function wireConfirmDelete(btn, onConfirm) {
@@ -154,6 +182,16 @@
   // ---------------------------------------------------------------------
   let cases = [];
   let selectedId = null;
+  let sourceDocs = []; // [{id, type}] uploaded source documents, for the hearing document pickers
+
+  async function loadSourceDocs() {
+    try {
+      const res = await fetch(sourceDocumentsUrl);
+      sourceDocs = res.ok ? await res.json() : [];
+    } catch (e) {
+      sourceDocs = [];
+    }
+  }
 
   function caseMetaLabel(c) {
     const idBits = [c.court || "No court", c.case_number || "No case #"].join(" · ");
@@ -184,8 +222,10 @@
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = c.summary;
+    autoGrowOnAttach(summaryEl);
     summaryEl.addEventListener("input", () => {
       c.summary = summaryEl.value;
+      autoGrow(summaryEl);
       scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary });
     });
     flushSaveOnEnter(summaryEl, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary }));
@@ -226,8 +266,8 @@
 
   async function loadCases() {
     try {
-      const res = await fetch(casesUrl);
-      cases = await res.json();
+      const [casesRes] = await Promise.all([fetch(casesUrl), loadSourceDocs()]);
+      cases = await casesRes.json();
       renderCaseList();
     } catch (e) {
       console.error(e);
@@ -297,6 +337,168 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Per-hearing document lists ("Submitted" / "Received") -- each entry
+  // links to an uploaded source document (documents/), picked from a
+  // popover mirroring the evidence-item report picker in allegations.js,
+  // but appending to a list instead of setting a single value.
+  // ---------------------------------------------------------------------
+  let closeOpenHearingDocPopover = () => {};
+
+  function buildHearingDocList(hearing, key, label) {
+    const wrap = document.createElement("div");
+    wrap.className = "hearing-doc-list";
+    wrap.draggable = false;
+
+    const head = document.createElement("div");
+    head.className = "hearing-doc-list-head";
+    const labelEl = document.createElement("span");
+    labelEl.className = "hearing-doc-list-label";
+    labelEl.textContent = label;
+    head.appendChild(labelEl);
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "evidence-doc-add-btn";
+    addBtn.textContent = "+ Add";
+    head.appendChild(addBtn);
+    wrap.appendChild(head);
+
+    const chipsEl = document.createElement("div");
+    chipsEl.className = "hearing-doc-chips";
+    wrap.appendChild(chipsEl);
+
+    let popoverEl = null;
+
+    function onOutsideClick(e) {
+      if (!wrap.contains(e.target)) closePopover();
+    }
+
+    function closePopover() {
+      if (popoverEl) {
+        popoverEl.remove();
+        popoverEl = null;
+      }
+      document.removeEventListener("click", onOutsideClick, true);
+      closeOpenHearingDocPopover = () => {};
+    }
+
+    function renderChips() {
+      chipsEl.innerHTML = "";
+      const list = hearing[key] || [];
+      if (!list.length) {
+        const p = document.createElement("span");
+        p.className = "hearing-doc-empty";
+        p.textContent = "None";
+        chipsEl.appendChild(p);
+        return;
+      }
+      for (const item of list) {
+        const chip = document.createElement("span");
+        chip.className = "hearing-doc-chip";
+        const link = document.createElement("a");
+        link.className = "evidence-doc-chip";
+        link.href = sourceDocUrl(item);
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.title = `Open "${item.doc_id}"`;
+        link.textContent = `📄 ${truncateMiddle(item.doc_id)}`;
+        link.addEventListener("click", (e) => e.stopPropagation());
+        chip.appendChild(link);
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "hearing-doc-remove-btn";
+        rm.title = "Remove";
+        rm.textContent = "✕";
+        rm.addEventListener("click", (e) => {
+          e.stopPropagation();
+          hearing[key] = (hearing[key] || []).filter((x) => x.id !== item.id);
+          renderChips();
+          saveDetail();
+        });
+        chip.appendChild(rm);
+        chipsEl.appendChild(chip);
+      }
+    }
+    renderChips();
+
+    function addDoc(doc) {
+      if (!Array.isArray(hearing[key])) hearing[key] = [];
+      hearing[key].push({ id: genId(), doc_id: doc.id, doc_type: doc.type });
+      closePopover();
+      renderChips();
+      saveDetail();
+    }
+
+    function buildPopover() {
+      const popover = document.createElement("div");
+      popover.className = "evidence-doc-popover";
+      popover.draggable = false;
+      popover.addEventListener("click", (e) => e.stopPropagation());
+
+      if (!sourceDocs.length) {
+        popover.innerHTML = `<p class="empty">No source documents uploaded yet.</p>`;
+        return popover;
+      }
+
+      const linkedIds = new Set((hearing[key] || []).map((x) => x.doc_id));
+
+      const filterInput = document.createElement("input");
+      filterInput.type = "text";
+      filterInput.className = "evidence-doc-filter";
+      filterInput.placeholder = "Filter documents…";
+      popover.appendChild(filterInput);
+
+      const listEl = document.createElement("div");
+      listEl.className = "evidence-doc-popover-list";
+      popover.appendChild(listEl);
+
+      function renderList() {
+        const q = filterInput.value.trim().toLowerCase();
+        const matches = sourceDocs.filter((d) => !q || d.id.toLowerCase().includes(q));
+        listEl.innerHTML = "";
+        if (!matches.length) {
+          const p = document.createElement("p");
+          p.className = "empty";
+          p.textContent = "No matching documents.";
+          listEl.appendChild(p);
+        }
+        for (const d of matches) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          const already = linkedIds.has(d.id);
+          btn.className = "evidence-doc-option" + (already ? " selected" : "");
+          btn.title = d.id;
+          btn.textContent = truncateMiddle(d.id) + (already ? " (added)" : "");
+          btn.addEventListener("click", () => addDoc(d));
+          listEl.appendChild(btn);
+        }
+      }
+      renderList();
+      filterInput.addEventListener("input", renderList);
+      setTimeout(() => filterInput.focus(), 0);
+
+      return popover;
+    }
+
+    function togglePopover() {
+      const wasOpen = !!popoverEl;
+      closeOpenHearingDocPopover();
+      if (!wasOpen) {
+        popoverEl = buildPopover();
+        wrap.appendChild(popoverEl);
+        document.addEventListener("click", onOutsideClick, true);
+        closeOpenHearingDocPopover = closePopover;
+      }
+    }
+
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePopover();
+    });
+
+    return wrap;
+  }
+
   function buildHearingCard(hearing) {
     const card = document.createElement("div");
     card.className = "evidence-card hearing-card";
@@ -310,6 +512,7 @@
           <input type="text" class="hearing-title-input" placeholder="Hearing title (e.g. First hearing)" maxlength="300">
         </div>
         <textarea class="hearing-summary-input" rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
+        <div class="hearing-doc-lists"></div>
       </div>
       <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
 
@@ -339,11 +542,17 @@
 
     const summaryEl = card.querySelector(".hearing-summary-input");
     summaryEl.value = hearing.summary;
+    autoGrowOnAttach(summaryEl);
     summaryEl.addEventListener("input", () => {
       hearing.summary = summaryEl.value;
+      autoGrow(summaryEl);
       saveDetail();
     });
     flushHearingField(summaryEl);
+
+    const docListsEl = card.querySelector(".hearing-doc-lists");
+    docListsEl.appendChild(buildHearingDocList(hearing, "submitted_docs", "Submitted documents"));
+    docListsEl.appendChild(buildHearingDocList(hearing, "received_docs", "Received documents"));
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       detailCase.hearings = detailCase.hearings.filter((h) => h.id !== hearing.id);
@@ -456,7 +665,7 @@
     }));
 
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
-      const hearing = { id: genId(), date: "", title: "", summary: "" };
+      const hearing = { id: genId(), date: "", title: "", summary: "", submitted_docs: [], received_docs: [] };
       detailCase.hearings.push(hearing);
       renderHearingList();
       updateSelectedCaseMeta();

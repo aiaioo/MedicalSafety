@@ -12,6 +12,8 @@
      data-cases-url="{{ url_for('api_allegation_cases') }}"
      data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
      data-allegations-url-base="{{ url_for('allegations_view') }}"
+     data-source-documents-url="{{ url_for('api_source_documents') }}"
+     data-annotations-page-url="{{ url_for('page_view') }}"
 >
   <header class="docbar" style="position: relative;">
     <a class="home-link" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>

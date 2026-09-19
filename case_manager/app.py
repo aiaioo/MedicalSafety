@@ -288,6 +288,7 @@ CASE_MAX_COURT_CHARS = 200
 CASE_MAX_NUMBER_CHARS = 100
 CASE_MAX_DATE_CHARS = 40
 HEARING_MAX_ITEMS = 300
+HEARING_DOC_MAX_ITEMS = 100
 ALLEGATION_MAX_CASE_LINKS = 50
 
 
@@ -332,6 +333,36 @@ def sanitize_case_ids(raw):
     return out
 
 
+def _source_doc_exists(doc_id, doc_type):
+    if not isinstance(doc_id, str) or not DOC_ID_RE.match(doc_id):
+        return False
+    if doc_type in ("docx", "doc", "word"):
+        return (DOCUMENTS_DIR / f"{doc_id}.docx").exists() or (DOCUMENTS_DIR / f"{doc_id}.doc").exists()
+    return (DOCUMENTS_DIR / f"{doc_id}.pdf").exists()
+
+
+def sanitize_hearing_doc_list(raw):
+    """A hearing's submitted/received document list -- each entry links to an
+    uploaded source document (documents/), not a report. Drop entries whose
+    document no longer exists rather than storing a dangling reference."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:HEARING_DOC_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        doc_id = item.get("doc_id")
+        doc_type = "docx" if item.get("doc_type") in ("docx", "doc", "word") else "pdf"
+        if not _source_doc_exists(doc_id, doc_type):
+            continue
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "doc_id": doc_id,
+            "doc_type": doc_type,
+        })
+    return out
+
+
 def sanitize_hearings(raw):
     if not isinstance(raw, list):
         return []
@@ -344,6 +375,8 @@ def sanitize_hearings(raw):
             "date": _sanitize_text(item.get("date"), CASE_MAX_DATE_CHARS),
             "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
             "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
+            "submitted_docs": sanitize_hearing_doc_list(item.get("submitted_docs")),
+            "received_docs": sanitize_hearing_doc_list(item.get("received_docs")),
         })
     return out
 
@@ -1692,6 +1725,11 @@ def api_report_export_docx(report_id):
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.docx"'
     return resp
+
+
+@app.route("/api/source-documents")
+def api_source_documents():
+    return jsonify(list_source_docs())
 
 
 def count_linked_allegations():

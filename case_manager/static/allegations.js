@@ -45,6 +45,23 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  // Grows a textarea to fit its content instead of clipping overflow text
+  // behind its fixed rows="2" height. Call on every "input" so typing never
+  // outgrows the box.
+  function autoGrow(el) {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }
+
+  // scrollHeight reads 0 (or the CSS rows height) on a node that isn't in the
+  // document yet, which every card here is at the point its value is first
+  // set -- cards are built off-DOM, then appended by the caller. Defer to the
+  // next frame, by which point the append has happened, so pre-existing long
+  // text is expanded on first render instead of only once it's next edited.
+  function autoGrowOnAttach(el) {
+    requestAnimationFrame(() => autoGrow(el));
+  }
+
   function wireConfirmDelete(btn, onConfirm) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -263,8 +280,10 @@
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = allegation.description;
+    autoGrowOnAttach(summaryEl);
     summaryEl.addEventListener("input", () => {
       allegation.description = summaryEl.value;
+      autoGrow(summaryEl);
       scheduleSave(allegation.id);
     });
     flushSaveOnEnter(summaryEl, allegation.id);
@@ -388,8 +407,10 @@
     const bodyEl = card.querySelector(".evidence-card-body");
     const textEl = bodyEl.querySelector("textarea");
     textEl.value = item.text;
+    autoGrowOnAttach(textEl);
     textEl.addEventListener("input", () => {
       item.text = textEl.value;
+      autoGrow(textEl);
       scheduleSave(allegation.id);
     });
     flushSaveOnEnter(textEl, allegation.id);
