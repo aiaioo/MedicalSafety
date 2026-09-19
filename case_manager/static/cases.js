@@ -4,6 +4,7 @@
   const casesUrl = appEl.dataset.casesUrl;
   const caseUrlBase = appEl.dataset.caseUrlBase;
   const allegationsUrlBase = appEl.dataset.allegationsUrlBase;
+  const causesUrl = appEl.dataset.causesUrl;
   const sourceDocumentsUrl = appEl.dataset.sourceDocumentsUrl;
   const annotationsPageUrl = appEl.dataset.annotationsPageUrl;
 
@@ -208,6 +209,7 @@
   let cases = [];
   let selectedId = null;
   let sourceDocs = []; // [{id, type}] uploaded source documents, for the hearing document pickers
+  let causes = []; // [{id, title, ...}] every case belongs to exactly one of these
 
   async function loadSourceDocs() {
     try {
@@ -218,10 +220,53 @@
     }
   }
 
+  async function loadCauses() {
+    try {
+      const res = await fetch(causesUrl);
+      causes = res.ok ? await res.json() : [];
+    } catch (e) {
+      causes = [];
+    }
+  }
+
+  function causeName(id) {
+    const cause = causes.find((x) => x.id === id);
+    return cause ? cause.title || id : id;
+  }
+
   function caseMetaLabel(c) {
     const idBits = [c.court || "No court", c.case_number || "No case #"].join(" · ");
     const hearingLabel = `${c.hearing_count} hearing${c.hearing_count === 1 ? "" : "s"}`;
     return `${idBits} · ${hearingLabel}`;
+  }
+
+  // A case's cause is mandatory (see app.py's ensure_case_cause), so the
+  // select always has a value; it just may not match any option yet if the
+  // causes list hasn't loaded/refreshed since a cause was renamed elsewhere.
+  function buildCauseSelect(c) {
+    const select = document.createElement("select");
+    select.className = "case-cause-select";
+    select.title = "Cause";
+    const known = causes.some((cause) => cause.id === c.cause_id);
+    if (!known && c.cause_id) {
+      const opt = document.createElement("option");
+      opt.value = c.cause_id;
+      opt.textContent = causeName(c.cause_id);
+      select.appendChild(opt);
+    }
+    for (const cause of causes) {
+      const opt = document.createElement("option");
+      opt.value = cause.id;
+      opt.textContent = cause.title || cause.id;
+      if (cause.id === c.cause_id) opt.selected = true;
+      select.appendChild(opt);
+    }
+    select.addEventListener("click", (e) => e.stopPropagation());
+    select.addEventListener("change", () => {
+      c.cause_id = select.value;
+      scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary, cause_id: c.cause_id });
+    });
+    return select;
   }
 
   function buildCaseCard(c) {
@@ -234,16 +279,23 @@
         ${c.hearing_count === 0 ? '<button type="button" class="card-delete-btn" title="Delete case">✕</button>' : ""}
       </div>
       <textarea class="allegation-summary-input" rows="2" placeholder="Brief case summary…" maxlength="10000"></textarea>
+      <div class="case-cause-row">
+        <label class="case-cause-label">Cause</label>
+      </div>
       <div class="allegation-card-meta"></div>`;
+
+    function cardPartial() {
+      return { name: c.name, summary: c.summary, cause_id: c.cause_id };
+    }
 
     const titleEl = card.querySelector(".allegation-title-input");
     titleEl.value = c.name;
     titleEl.addEventListener("input", () => {
       c.name = titleEl.value;
       if (selectedId === c.id) caseDetailEl.querySelector(".allegation-detail-head h2").textContent = c.name || "Untitled case";
-      scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary });
+      scheduleSave("card:" + c.id, c.id, cardPartial());
     });
-    flushSaveOnEnter(titleEl, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary }));
+    flushSaveOnEnter(titleEl, "card:" + c.id, c.id, cardPartial);
 
     const summaryEl = card.querySelector(".allegation-summary-input");
     summaryEl.value = c.summary;
@@ -251,19 +303,21 @@
     summaryEl.addEventListener("input", () => {
       c.summary = summaryEl.value;
       autoGrow(summaryEl);
-      scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary });
+      scheduleSave("card:" + c.id, c.id, cardPartial());
     });
-    flushSaveOnEnter(summaryEl, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary }));
+    flushSaveOnEnter(summaryEl, "card:" + c.id, c.id, cardPartial);
+
+    card.querySelector(".case-cause-row").appendChild(buildCauseSelect(c));
 
     card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
 
     const deleteBtn = card.querySelector(".card-delete-btn");
     if (deleteBtn) wireConfirmDelete(deleteBtn, () => deleteCase(c.id));
 
-    card.appendChild(buildCardSaveBtn(card, "card:" + c.id, c.id, () => ({ name: c.name, summary: c.summary })));
+    card.appendChild(buildCardSaveBtn(card, "card:" + c.id, c.id, cardPartial));
 
     card.addEventListener("click", (e) => {
-      if (e.target.closest("input, textarea, button")) return;
+      if (e.target.closest("input, textarea, button, select")) return;
       selectCase(c.id);
     });
 
@@ -293,7 +347,7 @@
 
   async function loadCases() {
     try {
-      const [casesRes] = await Promise.all([fetch(casesUrl), loadSourceDocs()]);
+      const [casesRes] = await Promise.all([fetch(casesUrl), loadSourceDocs(), loadCauses()]);
       cases = await casesRes.json();
       renderCaseList();
     } catch (e) {
@@ -311,9 +365,14 @@
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
+      // A brand-new install has no causes yet, so the backend creates a
+      // "General" one on the fly for the first case -- refresh the local
+      // list so its select shows the real title instead of a raw id.
+      if (!causes.some((cause) => cause.id === data.cause_id)) await loadCauses();
       cases.unshift({
         id: data.id,
         name: data.name,
+        cause_id: data.cause_id,
         court: data.court,
         case_number: data.case_number,
         summary: data.summary,

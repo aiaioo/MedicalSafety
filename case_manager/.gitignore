@@ -12,6 +12,7 @@ storage/annotations/*
 storage/snippets/*
 storage/reports/*
 storage/cases/*
+storage/causes/*
 storage/allegations/*
 storage/doc_meta/*
 !storage/cache/.gitkeep
@@ -19,5 +20,6 @@ storage/doc_meta/*
 !storage/snippets/.gitkeep
 !storage/reports/.gitkeep
 !storage/cases/.gitkeep
+!storage/causes/.gitkeep
 !storage/allegations/.gitkeep
 !storage/doc_meta/.gitkeep

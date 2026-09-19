@@ -267,6 +267,83 @@ def cause_path(cause_id):
     return CAUSES_DIR / f"{cause_id}.json"
 
 
+# A case's cause is a mandatory, non-null association -- every case belongs
+# to exactly one cause, defaulting to whichever cause was most recently used
+# (tracked here) so a fresh case picks up the cause the user is evidently
+# already working in, rather than an arbitrary one. Stored as a bare JSON
+# string (not an object) inside CAUSES_DIR so it's naturally skipped by the
+# "isinstance(data, dict)" filter every cause listing already applies, the
+# same trick ALLEGATION_ORDER_PATH uses for allegation ordering.
+LAST_USED_CAUSE_PATH = CAUSES_DIR / "_last_used.json"
+
+
+def load_last_used_cause():
+    val = load_json(LAST_USED_CAUSE_PATH, default=None)
+    return val if isinstance(val, str) else None
+
+
+def remember_last_used_cause(cause_id):
+    save_json(LAST_USED_CAUSE_PATH, cause_id)
+
+
+def sanitize_cause_id(raw):
+    """Keep a case's cause id only if it names a cause that actually exists,
+    so a case never points at something the causes workspace can't
+    resolve."""
+    return raw if isinstance(raw, str) and DOC_ID_RE.match(raw) and cause_path(raw).exists() else ""
+
+
+def most_recently_updated_cause_id():
+    latest_id, latest_at = None, ""
+    for f in CAUSES_DIR.glob("*.json"):
+        data = load_json(f, default=None)
+        if not isinstance(data, dict):
+            continue
+        updated_at = data.get("updated_at", "")
+        if updated_at >= latest_at:
+            latest_id, latest_at = f.stem, updated_at
+    return latest_id
+
+
+def create_default_cause():
+    now = datetime.now(timezone.utc).isoformat()
+    cause_id = f"general-{uuid.uuid4().hex[:6]}"
+    save_json(cause_path(cause_id), {
+        "title": "General",
+        "description": "",
+        "goals": [],
+        "created_at": now,
+        "updated_at": now,
+    })
+    return cause_id
+
+
+def resolve_default_cause_id():
+    """The cause id to fall back to whenever a case doesn't already carry a
+    valid one: whichever cause was most recently used, else the most
+    recently updated cause, else a freshly created "General" cause if none
+    exist at all -- a case's cause is mandatory, so this never returns
+    empty."""
+    last = load_last_used_cause()
+    if last and cause_path(last).exists():
+        return last
+    return most_recently_updated_cause_id() or create_default_cause()
+
+
+def ensure_case_cause(path, data):
+    """Backfills a missing/invalid cause_id on a case record loaded from
+    disk. A case's cause is mandatory, not just a default applied at
+    creation, so any case predating this field (or left with a dangling
+    cause_id after its cause was deleted) is repaired the moment it's next
+    read, not just the next time it's edited."""
+    if sanitize_cause_id(data.get("cause_id")):
+        return data
+    data = dict(data)
+    data["cause_id"] = resolve_default_cause_id()
+    save_json(path, data)
+    return data
+
+
 def allegation_item_path(allegation_id):
     return ALLEGATIONS_DIR / f"{allegation_id}.json"
 
@@ -1918,9 +1995,11 @@ def api_allegation_cases():
             data = load_json(f, default=None)
             if not isinstance(data, dict):
                 continue
+            data = ensure_case_cause(f, data)
             items.append({
                 "id": f.stem,
                 "name": data.get("name") or f.stem,
+                "cause_id": data.get("cause_id", ""),
                 "court": data.get("court", ""),
                 "case_number": data.get("case_number", ""),
                 "summary": data.get("summary", ""),
@@ -1937,10 +2016,17 @@ def api_allegation_cases():
     if not name:
         raise DocumentError("A case name is required", 400)
 
+    # A case's cause is mandatory: an explicit (valid) cause_id wins, else
+    # fall back to whichever cause was most recently used -- see
+    # resolve_default_cause_id, which is guaranteed to return a real id.
+    cause_id = sanitize_cause_id(body.get("cause_id")) or resolve_default_cause_id()
+    remember_last_used_cause(cause_id)
+
     case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "name": name,
+        "cause_id": cause_id,
         "court": _sanitize_text(body.get("court"), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
@@ -1959,6 +2045,7 @@ def api_allegation_case(case_id):
     existing = load_json(path, default=None)
     if existing is None:
         raise DocumentError(f"No case with id {case_id!r}", 404)
+    existing = ensure_case_cause(path, existing)
 
     if request.method == "GET":
         return jsonify(existing)
@@ -1974,12 +2061,20 @@ def api_allegation_case(case_id):
     if not name:
         raise DocumentError("A case name is required", 400)
 
+    # A case's cause is mandatory -- an invalid or missing cause_id (e.g. its
+    # cause was deleted) falls back to the most recently used cause rather
+    # than ever being left empty.
+    cause_id = sanitize_cause_id(body.get("cause_id", existing.get("cause_id", ""))) or resolve_default_cause_id()
+    if cause_id != existing.get("cause_id"):
+        remember_last_used_cause(cause_id)
+
     # Each caller (the allegations editor, the cases workspace) only ever
     # sends the fields it owns -- falling back to the value already on disk
     # for everything else (via dict.get's default, not truthiness) means one
     # page's save can never clobber the other's data.
     data = {
         "name": name,
+        "cause_id": cause_id,
         "court": _sanitize_text(body.get("court", existing.get("court", "")), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
