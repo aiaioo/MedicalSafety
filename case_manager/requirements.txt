@@ -2,6 +2,6 @@ Flask>=3.0
 PyMuPDF>=1.24
 python-docx>=1.1
 
-# Only needed for db/migrate_json_to_postgres.py (the app itself still reads/
-# writes storage/*.json until it's rewired to talk to Postgres).
+# PostgreSQL driver -- used by storage.py (the app's persistence layer) and
+# by db/migrate_json_to_postgres.py.
 psycopg2-binary>=2.9
