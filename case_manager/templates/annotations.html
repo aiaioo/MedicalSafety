@@ -23,6 +23,7 @@
         <div class="report-grid">
           {% for d in docs %}
           <a class="report-card" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
+            <button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>
             <div class="report-card-name">{{ d.title }}</div>
             <div class="report-card-meta">{{ d.type }}</div>
           </a>

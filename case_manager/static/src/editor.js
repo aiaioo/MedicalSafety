@@ -196,15 +196,47 @@ import { Pagination, repaginate } from "./pagination.js";
     if (e.key === "Enter") createDocument();
   });
 
-  function renderReportCard(r, container) {
+  // Same click-to-arm confirmation as the allegation/evidence cards
+  // (static/allegations.js's wireConfirmDelete): first click shows a red
+  // "Confirm?" for 3s, second click within that window actually deletes.
+  function wireConfirmDelete(btn, onConfirm) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!btn.classList.contains("confirming")) {
+        btn.classList.add("confirming");
+        btn.textContent = "Confirm?";
+        btn._confirmTimer = setTimeout(() => {
+          btn.classList.remove("confirming");
+          btn.textContent = "✕";
+        }, 3000);
+        return;
+      }
+      clearTimeout(btn._confirmTimer);
+      onConfirm();
+    });
+  }
+
+  function renderReportCard(r, container, onDeleted) {
     const card = document.createElement("a");
     card.className = "report-card";
     card.href = `/reports?report=${encodeURIComponent(r.id)}`;
     const sourceLabel = r.source_doc ? `${r.source_doc} (${r.source_type})` : "No source document";
     card.innerHTML = `
+      <button type="button" class="report-card-delete card-delete-btn" title="Delete report">✕</button>
       <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>
       <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
       <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
+    wireConfirmDelete(card.querySelector(".report-card-delete"), async () => {
+      try {
+        const res = await fetch(`/api/report/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        card.remove();
+        if (onDeleted) onDeleted();
+      } catch (err) {
+        window.alert("Could not delete report: " + err.message);
+      }
+    });
     container.appendChild(card);
   }
 
@@ -223,7 +255,13 @@ import { Pagination, repaginate } from "./pagination.js";
         openDocList.innerHTML = '<p class="empty">No documents yet.</p>';
         return;
       }
-      for (const r of list) renderReportCard(r, openDocList);
+      for (const r of list) {
+        renderReportCard(r, openDocList, () => {
+          if (!openDocList.querySelector(".report-card")) {
+            openDocList.innerHTML = '<p class="empty">No documents yet.</p>';
+          }
+        });
+      }
     } catch (e) {
       openDocList.innerHTML = '<p class="empty">Failed to load documents.</p>';
     }
@@ -239,7 +277,11 @@ import { Pagination, repaginate } from "./pagination.js";
       const list = await fetchReports();
       reportListLanding.innerHTML = "";
       landingEmptyHint.style.display = list.length ? "none" : "block";
-      for (const r of list) renderReportCard(r, reportListLanding);
+      for (const r of list) {
+        renderReportCard(r, reportListLanding, () => {
+          landingEmptyHint.style.display = reportListLanding.querySelector(".report-card") ? "none" : "block";
+        });
+      }
     } catch (e) {
       console.error(e);
     }

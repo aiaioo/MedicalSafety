@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape
@@ -376,6 +377,33 @@ def sanitize_hearing_doc_list(raw):
             "doc_type": doc_type,
         })
     return out
+
+
+def unlink_document_from_hearings(doc_id):
+    """Strip a deleted source document from every case's hearings' submitted/
+    received document lists, so it disappears from those lists immediately
+    rather than lingering until the hearing is next saved (sanitize_hearings
+    already drops dangling doc_ids on save, but a delete shouldn't have to
+    wait for that)."""
+    for f in CASES_DIR.glob("*.json"):
+        data = load_json(f, default=None)
+        if not isinstance(data, dict):
+            continue
+        changed = False
+        for hearing in data.get("hearings") or []:
+            if not isinstance(hearing, dict):
+                continue
+            for kind in ("submitted_docs", "received_docs"):
+                docs = hearing.get(kind)
+                if not isinstance(docs, list):
+                    continue
+                kept = [d for d in docs if not (isinstance(d, dict) and d.get("doc_id") == doc_id)]
+                if len(kept) != len(docs):
+                    hearing[kind] = kept
+                    changed = True
+        if changed:
+            data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_json(f, data)
 
 
 def sanitize_hearings(raw):
@@ -1434,6 +1462,54 @@ def api_doc_title(doc_id):
     return jsonify({"title": title})
 
 
+def _doc_files(doc_id):
+    """Every file on disk for a source document, across whichever extension
+    it was uploaded with."""
+    return [DOCUMENTS_DIR / f"{doc_id}{ext}" for ext in (".pdf", ".docx", ".doc") if (DOCUMENTS_DIR / f"{doc_id}{ext}").exists()]
+
+
+def _doc_norm_type(doc_id):
+    if (DOCUMENTS_DIR / f"{doc_id}.pdf").exists():
+        return "pdf"
+    if (DOCUMENTS_DIR / f"{doc_id}.docx").exists() or (DOCUMENTS_DIR / f"{doc_id}.doc").exists():
+        return "docx"
+    return None
+
+
+def _doc_has_annotations(doc_id, norm_type):
+    data = load_json(annotations_path(doc_id, norm_type), default={})
+    return isinstance(data, dict) and any(isinstance(v, list) and v for v in data.values())
+
+
+def _doc_has_snippets(doc_id, norm_type):
+    meta = load_json(snippets_meta_path(doc_id, norm_type), default=[])
+    return isinstance(meta, list) and len(meta) > 0
+
+
+@app.route("/api/document/<doc_id>", methods=["DELETE"])
+def api_delete_document(doc_id):
+    check_doc_id(doc_id)
+    norm_type = _doc_norm_type(doc_id)
+    if norm_type is None:
+        raise DocumentError(f"No document with id {doc_id!r}", 404)
+
+    if _doc_has_annotations(doc_id, norm_type):
+        raise DocumentError("Cannot delete a document that has annotations. Remove them first.", 400)
+    if _doc_has_snippets(doc_id, norm_type):
+        raise DocumentError("Cannot delete a document that has snippets. Remove them first.", 400)
+
+    for f in _doc_files(doc_id):
+        f.unlink(missing_ok=True)
+    (CACHE_DIR / f"{doc_id}.pdf").unlink(missing_ok=True)
+    doc_meta_path(doc_id).unlink(missing_ok=True)
+    annotations_path(doc_id, norm_type).unlink(missing_ok=True)
+    snippets_meta_path(doc_id, norm_type).unlink(missing_ok=True)
+    shutil.rmtree(snippets_dir(doc_id, norm_type), ignore_errors=True)
+
+    unlink_document_from_hearings(doc_id)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/doc/<doc_id>/render/<int:page>")
 def api_render(doc_id, page):
     path, _ = resolve_pdf_path(doc_id, request.args.get("type", "pdf"))
@@ -1665,7 +1741,26 @@ def api_reports():
     return jsonify({"id": report_id, **data})
 
 
-@app.route("/api/report/<report_id>", methods=["GET", "POST"])
+def unlink_report_from_evidence(report_id):
+    """Strip references to a deleted report from every allegation's evidence
+    lists, so a dangling report_id never lingers on an evidence card after
+    the report it pointed at is gone."""
+    for f in ALLEGATIONS_DIR.glob("*.json"):
+        data = load_json(f, default=None)
+        if not isinstance(data, dict):
+            continue
+        changed = False
+        for kind in ("inculpatory", "exculpatory"):
+            for item in data.get(kind) or []:
+                if isinstance(item, dict) and item.get("report_id") == report_id:
+                    item["report_id"] = ""
+                    changed = True
+        if changed:
+            data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_json(f, data)
+
+
+@app.route("/api/report/<report_id>", methods=["GET", "POST", "DELETE"])
 def api_report(report_id):
     check_report_id(report_id)
     path = report_path(report_id)
@@ -1678,6 +1773,11 @@ def api_report(report_id):
         resp["margins"] = sanitize_margins(existing.get("margins"))
         resp["pageNumbers"] = sanitize_page_numbers(existing.get("pageNumbers"))
         return jsonify(resp)
+
+    if request.method == "DELETE":
+        path.unlink(missing_ok=True)
+        unlink_report_from_evidence(report_id)
+        return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", existing.get("name", ""))).strip()[:200]
