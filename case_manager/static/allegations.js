@@ -239,6 +239,7 @@
     const payload = {
       title: allegation.title,
       description: allegation.description,
+      to_prove: allegation.to_prove,
       inculpatory: allegation.inculpatory,
       exculpatory: allegation.exculpatory,
       case_ids: allegation.case_ids,
@@ -375,6 +376,7 @@
     const payload = {
       title: "",
       description: "",
+      to_prove: [],
       inculpatory: [],
       exculpatory: [],
       // Creating from a case-filtered view links the new allegation to that
@@ -446,6 +448,11 @@
 
     wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
       allegation[kind] = allegation[kind].filter((e) => e.id !== item.id);
+      // A "to prove" item can associate with this evidence card; drop that
+      // association too so nothing is left pointing at a deleted item.
+      for (const toProveItem of allegation.to_prove || []) {
+        toProveItem.evidence_ids = (toProveItem.evidence_ids || []).filter((id) => id !== item.id);
+      }
       renderDetail();
       updateAllegationCardMeta(allegation.id);
       scheduleSave(allegation.id);
@@ -454,6 +461,20 @@
     card.appendChild(buildCardSaveBtn(card, allegation.id));
 
     return card;
+  }
+
+  // All evidence items (both kinds) for an allegation, tagged with their
+  // kind -- used by the "to prove" evidence-link picker, which lets a "to
+  // prove" item associate with evidence from either column.
+  function allEvidenceItems(allegation) {
+    return [
+      ...allegation.inculpatory.map((e) => ({ ...e, kind: "inculpatory" })),
+      ...allegation.exculpatory.map((e) => ({ ...e, kind: "exculpatory" })),
+    ];
+  }
+
+  function evidenceItemById(allegation, id) {
+    return allegation.inculpatory.find((e) => e.id === id) || allegation.exculpatory.find((e) => e.id === id) || null;
   }
 
   function reportName(report) {
@@ -551,6 +572,7 @@
       const wasOpen = !!popoverEl;
       closeOpenDocPopover();
       closeOpenCaseLinksPopover();
+      closeOpenToProveEvidencePopover();
       if (!wasOpen) {
         popoverEl = buildPopover();
         wrap.appendChild(popoverEl);
@@ -648,6 +670,7 @@
   // ---------------------------------------------------------------------
   let closeOpenCaseLinksPopover = () => {};
   let closeOpenDocPopover = () => {};
+  let closeOpenToProveEvidencePopover = () => {};
 
   function buildCaseLinksInline(allegation) {
     const wrap = document.createElement("div");
@@ -707,6 +730,7 @@
       const wasOpen = !popover.hidden;
       closeOpenCaseLinksPopover();
       closeOpenDocPopover();
+      closeOpenToProveEvidencePopover();
       if (!wasOpen) {
         popover.hidden = false;
         document.addEventListener("click", onOutsideClick, true);
@@ -720,8 +744,178 @@
     return wrap;
   }
 
+  // ---------------------------------------------------------------------
+  // "Things to Prove" (part of the detail pane, above the evidence
+  // columns) -- each card is a thing to prove, with a title, a summary, and
+  // an optional set of associated evidence cards from the columns below.
+  // ---------------------------------------------------------------------
+  function toProveEvidenceSummary(allegation, item) {
+    const ids = item.evidence_ids || [];
+    if (!ids.length) return "None";
+    const labels = ids
+      .map((id) => evidenceItemById(allegation, id))
+      .filter(Boolean)
+      .map((e) => truncateMiddle(e.text || "(empty)", 24));
+    return labels.length ? labels.join(", ") : "None";
+  }
+
+  function buildToProveEvidenceLinks(allegation, item) {
+    const wrap = document.createElement("div");
+    wrap.className = "to-prove-evidence-links";
+    wrap.draggable = false;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "to-prove-evidence-toggle";
+    toggle.innerHTML = `Evidence: <span class="to-prove-evidence-summary">${escapeHtml(toProveEvidenceSummary(allegation, item))}</span>`;
+
+    const popover = document.createElement("div");
+    popover.className = "to-prove-evidence-popover";
+    popover.hidden = true;
+    popover.draggable = false;
+
+    function renderPopoverBody() {
+      const items = allEvidenceItems(allegation);
+      if (!items.length) {
+        popover.innerHTML = '<p class="empty">No evidence yet. Add evidence below first.</p>';
+        return;
+      }
+      const linked = new Set(item.evidence_ids || []);
+      popover.innerHTML = items
+        .map(
+          (e) => `
+        <label class="to-prove-evidence-row kind-${e.kind}">
+          <input type="checkbox" value="${escapeHtml(e.id)}" ${linked.has(e.id) ? "checked" : ""}>
+          <span><span class="to-prove-evidence-kind">${e.kind === "inculpatory" ? "Inc" : "Exc"}</span> ${escapeHtml(truncateMiddle(e.text || "(empty)", 60))}</span>
+        </label>`
+        )
+        .join("");
+      popover.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const set = new Set(item.evidence_ids || []);
+          if (cb.checked) set.add(cb.value);
+          else set.delete(cb.value);
+          item.evidence_ids = [...set];
+          toggle.querySelector(".to-prove-evidence-summary").textContent = toProveEvidenceSummary(allegation, item);
+          scheduleSave(allegation.id);
+        });
+      });
+    }
+    renderPopoverBody();
+
+    function onOutsideClick(e) {
+      if (!wrap.contains(e.target)) closePopover();
+    }
+
+    function closePopover() {
+      popover.hidden = true;
+      document.removeEventListener("click", onOutsideClick, true);
+      closeOpenToProveEvidencePopover = () => {};
+    }
+
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = !popover.hidden;
+      closeOpenCaseLinksPopover();
+      closeOpenDocPopover();
+      closeOpenToProveEvidencePopover();
+      if (!wasOpen) {
+        popover.hidden = false;
+        document.addEventListener("click", onOutsideClick, true);
+        closeOpenToProveEvidencePopover = closePopover;
+      }
+    });
+    popover.addEventListener("click", (e) => e.stopPropagation());
+
+    wrap.appendChild(toggle);
+    wrap.appendChild(popover);
+    return wrap;
+  }
+
+  function buildToProveCard(allegation, item) {
+    const card = document.createElement("div");
+    card.className = "evidence-card to-prove-card";
+    card.draggable = true;
+    card.dataset.id = item.id;
+    card.innerHTML = `
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+      <div class="to-prove-fields">
+        <input type="text" class="to-prove-title-input" placeholder="What must be proven…" maxlength="300">
+        <textarea class="to-prove-summary-input" rows="2" placeholder="Summarize what needs to be proven…" maxlength="10000"></textarea>
+        <div class="to-prove-evidence-links-slot"></div>
+      </div>
+      <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
+
+    const titleEl = card.querySelector(".to-prove-title-input");
+    titleEl.value = item.title || "";
+    titleEl.addEventListener("input", () => {
+      item.title = titleEl.value;
+      scheduleSave(allegation.id);
+    });
+    flushSaveOnEnter(titleEl, allegation.id);
+
+    const summaryEl = card.querySelector(".to-prove-summary-input");
+    summaryEl.value = item.summary || "";
+    autoGrowOnAttach(summaryEl);
+    summaryEl.addEventListener("input", () => {
+      item.summary = summaryEl.value;
+      autoGrow(summaryEl);
+      scheduleSave(allegation.id);
+    });
+    flushSaveOnEnter(summaryEl, allegation.id);
+
+    card.querySelector(".to-prove-evidence-links-slot").replaceWith(buildToProveEvidenceLinks(allegation, item));
+
+    wireConfirmDelete(card.querySelector(".card-delete-btn"), () => {
+      allegation.to_prove = (allegation.to_prove || []).filter((t) => t.id !== item.id);
+      renderDetail();
+      scheduleSave(allegation.id);
+    });
+
+    card.appendChild(buildCardSaveBtn(card, allegation.id));
+
+    return card;
+  }
+
+  function buildToProveSection(allegation) {
+    if (!Array.isArray(allegation.to_prove)) allegation.to_prove = [];
+    const section = document.createElement("div");
+    section.className = "to-prove-section";
+    section.innerHTML = `
+      <div class="evidence-column-head">
+        <h3>Things to Prove</h3>
+        <button type="button" class="btn add-to-prove-btn">+ Add to prove</button>
+      </div>
+      <p class="empty to-prove-empty" style="display:none">Nothing added yet.</p>
+      <div class="evidence-list to-prove-list"></div>`;
+
+    const listEl = section.querySelector(".to-prove-list");
+    const emptyEl = section.querySelector(".to-prove-empty");
+    emptyEl.style.display = allegation.to_prove.length ? "none" : "block";
+    for (const item of allegation.to_prove) listEl.appendChild(buildToProveCard(allegation, item));
+
+    function reorderFromDom() {
+      const ids = [...listEl.querySelectorAll(".to-prove-card")].map((el) => el.dataset.id);
+      allegation.to_prove.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      scheduleSave(allegation.id);
+    }
+    enableDragReorder(listEl, ".to-prove-card", reorderFromDom);
+
+    section.querySelector(".add-to-prove-btn").addEventListener("click", () => {
+      const item = { id: genId(), title: "", summary: "", evidence_ids: [] };
+      allegation.to_prove.push(item);
+      renderDetail();
+      scheduleSave(allegation.id);
+      const newTitleEl = allegationDetailEl.querySelector(`.to-prove-card[data-id="${item.id}"] .to-prove-title-input`);
+      if (newTitleEl) setTimeout(() => newTitleEl.focus(), 0);
+    });
+
+    return section;
+  }
+
   function renderDetail() {
     closeOpenDocPopover();
+    closeOpenToProveEvidencePopover();
     const allegation = allegations.find((a) => a.id === selectedId);
     if (!allegation) {
       allegationDetailEl.innerHTML = '<p class="empty">Select or add an allegation on the left to see its evidence.</p>';
@@ -731,7 +925,9 @@
       <div class="allegation-detail-head">
         <h2>${escapeHtml(allegation.title || "Untitled allegation")}</h2>
       </div>
+      <div class="to-prove-slot"></div>
       <div class="evidence-columns"></div>`;
+    allegationDetailEl.querySelector(".to-prove-slot").replaceWith(buildToProveSection(allegation));
     const columnsEl = allegationDetailEl.querySelector(".evidence-columns");
     columnsEl.appendChild(buildEvidenceColumn(allegation, "inculpatory", "Inculpatory Evidence"));
     columnsEl.appendChild(buildEvidenceColumn(allegation, "exculpatory", "Exculpatory Evidence"));

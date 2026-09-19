@@ -684,3 +684,43 @@ a.tag:hover { background: #d7deec; }
 }
 .goal-description-input:hover { background: #f7f8fa; }
 .goal-description-input:focus { outline: none; background: white; border-color: #cfd4e0; }
+
+/* ---- allegations: "Things to Prove" section (above the evidence columns;
+   reuses the .evidence-card shell like the goal cards above) ---- */
+.to-prove-section { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid #e0e2e8; }
+.to-prove-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.to-prove-title-input {
+  border: 1px solid transparent; background: transparent; border-radius: 4px;
+  padding: 4px 6px; font-family: inherit; font-size: 14px; font-weight: 600; color: #1c1c1c;
+}
+.to-prove-title-input:hover { background: #f7f8fa; }
+.to-prove-title-input:focus { outline: none; background: white; border-color: #cfd4e0; }
+.to-prove-summary-input {
+  display: block; width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent;
+  border-radius: 4px; padding: 4px 6px; font-size: 13px; color: #1c1c1c; resize: vertical; overflow-y: hidden; font-family: inherit; line-height: 1.4;
+}
+.to-prove-summary-input:hover { background: #f7f8fa; }
+.to-prove-summary-input:focus { outline: none; background: white; border-color: #cfd4e0; }
+
+/* ---- allegations: per-to-prove evidence-links popover (a "to prove" item
+   can associate with zero or more evidence cards from the columns below) ---- */
+.to-prove-evidence-links { margin-top: 6px; padding: 0 6px; position: relative; }
+.to-prove-evidence-toggle {
+  display: inline-flex; align-items: center; gap: 4px; border: none; background: none;
+  color: #8a92a5; font-size: 11px; cursor: pointer; padding: 2px 0; font-family: inherit;
+}
+.to-prove-evidence-toggle:hover { color: #2266dd; }
+.to-prove-evidence-toggle .to-prove-evidence-summary { color: #46536b; font-weight: 500; }
+.to-prove-evidence-toggle:hover .to-prove-evidence-summary { color: #2266dd; text-decoration: underline; }
+.to-prove-evidence-popover {
+  position: absolute; top: 100%; left: 6px; right: 6px; z-index: 20; margin-top: 4px;
+  background: white; border: 1px solid #cfd4e0; border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.14); padding: 8px 10px; box-sizing: border-box;
+  cursor: default; max-height: 220px; overflow-y: auto;
+}
+.to-prove-evidence-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #1c1c1c; cursor: pointer; padding: 4px 0; }
+.to-prove-evidence-row input { margin: 2px 0 0; flex-shrink: 0; }
+.to-prove-evidence-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.to-prove-evidence-row.kind-inculpatory .to-prove-evidence-kind { color: #a02020; }
+.to-prove-evidence-row.kind-exculpatory .to-prove-evidence-kind { color: #1e7d3c; }
+.to-prove-evidence-popover .empty { margin: 0; font-size: 12px; }

@@ -372,12 +372,14 @@ def ordered_allegation_ids(item_ids_by_created_at):
 # ---------------------------------------------------------------------------
 # Allegations workspace: allegations are standalone records (see
 # templates/allegations.html, static/allegations.js), each carrying its own
-# ordered inculpatory/exculpatory evidence lists plus an optional set of
-# linked case ids -- an allegation can pertain to zero or more cases rather
-# than belonging to exactly one, so the link lives on the allegation, not
-# nested inside a case file. Plain text only (no rich formatting), so
-# sanitizing is just shape/length whitelisting -- unlike sanitize_report_doc
-# there's no HTML/ProseMirror tree to walk.
+# ordered inculpatory/exculpatory evidence lists, an ordered "to_prove" list
+# (each item optionally linking to one or more evidence items from those
+# same lists), plus an optional set of linked case ids -- an allegation can
+# pertain to zero or more cases rather than belonging to exactly one, so the
+# link lives on the allegation, not nested inside a case file. Plain text
+# only (no rich formatting), so sanitizing is just shape/length
+# whitelisting -- unlike sanitize_report_doc there's no HTML/ProseMirror
+# tree to walk.
 # ---------------------------------------------------------------------------
 ALLEGATION_MAX_TITLE_CHARS = 300
 ALLEGATION_MAX_TEXT_CHARS = 10_000
@@ -414,6 +416,33 @@ def sanitize_evidence_list(raw):
             "id": _sanitize_item_id(item.get("id")),
             "text": _sanitize_text(item.get("text"), ALLEGATION_MAX_TEXT_CHARS),
             "report_id": report_id if has_report else "",
+        })
+    return out
+
+
+def sanitize_to_prove_list(raw, valid_evidence_ids):
+    """Each "to prove" item can link to zero or more evidence items from the
+    same allegation; `valid_evidence_ids` is the id set of that allegation's
+    freshly-sanitized inculpatory+exculpatory lists, so a link to evidence
+    that was deleted (in this save or an earlier one) is dropped rather than
+    left dangling."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:EVIDENCE_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        evidence_ids = item.get("evidence_ids")
+        linked = []
+        if isinstance(evidence_ids, list):
+            for eid in evidence_ids[:EVIDENCE_MAX_ITEMS]:
+                if isinstance(eid, str) and eid in valid_evidence_ids and eid not in linked:
+                    linked.append(eid)
+        out.append({
+            "id": _sanitize_item_id(item.get("id")),
+            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
+            "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
+            "evidence_ids": linked,
         })
     return out
 
@@ -2183,11 +2212,15 @@ def api_allegations():
     body = request.get_json(silent=True) or {}
     allegation_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
+    inculpatory = sanitize_evidence_list(body.get("inculpatory"))
+    exculpatory = sanitize_evidence_list(body.get("exculpatory"))
+    valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
     data = {
         "title": _sanitize_text(body.get("title"), ALLEGATION_MAX_TITLE_CHARS),
         "description": _sanitize_text(body.get("description"), ALLEGATION_MAX_TEXT_CHARS),
-        "inculpatory": sanitize_evidence_list(body.get("inculpatory")),
-        "exculpatory": sanitize_evidence_list(body.get("exculpatory")),
+        "to_prove": sanitize_to_prove_list(body.get("to_prove"), valid_evidence_ids),
+        "inculpatory": inculpatory,
+        "exculpatory": exculpatory,
         "case_ids": sanitize_case_ids(body.get("case_ids")),
         "created_at": now,
         "updated_at": now,
@@ -2212,11 +2245,15 @@ def api_allegation_item(allegation_id):
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
+    inculpatory = sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", [])))
+    exculpatory = sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", [])))
+    valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
     data = {
         "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
         "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
-        "inculpatory": sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", []))),
-        "exculpatory": sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", []))),
+        "to_prove": sanitize_to_prove_list(body.get("to_prove", existing.get("to_prove", [])), valid_evidence_ids),
+        "inculpatory": inculpatory,
+        "exculpatory": exculpatory,
         "case_ids": sanitize_case_ids(body.get("case_ids", existing.get("case_ids", []))),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
