@@ -25,6 +25,14 @@ a.tag:hover { background: #d7deec; }
 
 #app { display: flex; flex-direction: column; width: 100%; height: 100vh; }
 
+/* The report editor's #docApp deliberately doesn't get #app's height:100vh
+   shell (see the .viewer-layout comment below) so a tall document scrolls
+   the whole page instead of clipping. The reports landing list has no such
+   document to protect, so it opts back in here -- without this its
+   .editor-container's grey background only reaches as far as the card grid
+   instead of filling the viewport like the documents landing page does. */
+#docApp.doc-app-landing { display: flex; flex-direction: column; width: 100%; height: 100vh; }
+
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 16px; background: #1c2333; color: white; flex-shrink: 0;

@@ -9,6 +9,7 @@
 </head>
 <body>
 <div id="docApp"
+     class="{{ '' if report_id else 'doc-app-landing' }}"
      data-report="{{ report_id }}"
      data-reports-url="{{ url_for('api_reports') }}"
      data-preselect-source="{{ preselect_source }}"
