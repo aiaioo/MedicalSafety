@@ -35,6 +35,9 @@ a.tag:hover { background: #d7deec; }
 .pagenav { display: flex; align-items: center; gap: 10px; }
 .pagenav .btn { background: #2a3350; padding: 6px 12px; border-radius: 4px; }
 .doc-title a.btn { color: #1c1c1c; text-decoration: underline; }
+.doc-title .doc-name { color: white; min-width: 140px; max-width: 260px; }
+.doc-title .doc-name:hover { background: rgba(255, 255, 255, 0.12); }
+.doc-title .doc-name:focus { background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.35); color: white; }
 .jump input { width: 54px; text-align: center; }
 
 .toolbar {

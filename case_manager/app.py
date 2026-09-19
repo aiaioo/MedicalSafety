@@ -28,8 +28,9 @@ SNIPPETS_DIR = STORAGE_DIR / "snippets"
 REPORTS_DIR = STORAGE_DIR / "reports"
 CASES_DIR = STORAGE_DIR / "cases"
 ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
+DOC_META_DIR = STORAGE_DIR / "doc_meta"
 
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, ALLEGATIONS_DIR):
+for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, ALLEGATIONS_DIR, DOC_META_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -162,13 +163,15 @@ def check_report_id(report_id):
 
 def list_source_docs():
     """All uploaded source documents (pdf/docx/doc) in documents/, as
-    {"id", "type"} dicts -- the same shape rendered into the annotations and
-    reports pages' source pickers."""
+    {"id", "type", "title"} dicts -- the same shape rendered into the
+    annotations and reports pages' source pickers."""
     pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
     docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
     docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
     docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
     docs.sort(key=lambda d: d["id"])
+    for d in docs:
+        d["title"] = get_doc_title(d["id"])
     return docs
 
 
@@ -231,6 +234,18 @@ def snippets_meta_path(doc_id, norm_type):
 
 def snippets_dir(doc_id, norm_type):
     return SNIPPETS_DIR / f"{doc_id}__{norm_type}"
+
+
+def doc_meta_path(doc_id):
+    return DOC_META_DIR / f"{doc_id}.json"
+
+
+def get_doc_title(doc_id):
+    """A source document's display title -- defaults to its id (the file name,
+    minus extension) until someone edits it on the annotations page."""
+    meta = load_json(doc_meta_path(doc_id), default={})
+    title = meta.get("title") if isinstance(meta, dict) else None
+    return title.strip() if isinstance(title, str) and title.strip() else doc_id
 
 
 def report_path(report_id):
@@ -1297,6 +1312,8 @@ def page_view():
         doc_id=doc_id,
         doc_type=raw_type,
         norm_type=norm_type,
+        doc_title=get_doc_title(doc_id),
+        title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
         page_count=page_count,
         render_url_base=render_url_base,
@@ -1403,6 +1420,18 @@ def api_doc_info(doc_id):
     with fitz.open(path) as d:
         pages = [{"width": p.rect.width, "height": p.rect.height} for p in d]
     return jsonify({"page_count": len(pages), "pages": pages})
+
+
+@app.route("/api/doc/<doc_id>/title", methods=["POST"])
+def api_doc_title(doc_id):
+    check_doc_id(doc_id)
+    if not any((DOCUMENTS_DIR / f"{doc_id}{ext}").exists() for ext in (".pdf", ".docx", ".doc")):
+        raise DocumentError(f"No document with id {doc_id!r}", 404)
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "").strip()[:200] or doc_id
+    save_json(doc_meta_path(doc_id), {"title": title})
+    return jsonify({"title": title})
 
 
 @app.route("/api/doc/<doc_id>/render/<int:page>")

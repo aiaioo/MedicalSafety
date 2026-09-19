@@ -12,9 +12,11 @@
   const snippetsAllUrl = appEl.dataset.snippetsAllUrl;
   const snippetDeleteBase = appEl.dataset.snippetDeleteBase; // contains literal "__ID__"
   const downloadUrl = appEl.dataset.downloadUrl;
+  const titleUrl = appEl.dataset.titleUrl;
 
   const container = document.getElementById("viewerContainer");
   const statusMsg = document.getElementById("statusMsg");
+  const titleInput = document.getElementById("titleInput");
   const snippetListEl = document.getElementById("snippetList");
   const snippetsHeading = document.getElementById("snippetsHeading");
   const colorPicker = document.getElementById("colorPicker");
@@ -644,16 +646,33 @@
     state.dirty = false;
   }
 
+  let titleDirty = false;
+  titleInput.addEventListener("input", () => {
+    titleDirty = true;
+  });
+
+  async function saveTitle() {
+    const res = await fetch(titleUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: titleInput.value.trim() || docId }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    titleDirty = false;
+  }
+
   document.getElementById("saveBtn").addEventListener("click", async () => {
     const dirtyPages = Array.from(pageState.entries())
       .filter(([, s]) => s.dirty)
       .map(([p]) => p);
-    if (!dirtyPages.length) {
+    if (!dirtyPages.length && !titleDirty) {
       setStatus("Nothing to save");
       return;
     }
     try {
-      await Promise.all(dirtyPages.map(saveOnePage));
+      const tasks = dirtyPages.map(saveOnePage);
+      if (titleDirty) tasks.push(saveTitle());
+      await Promise.all(tasks);
       setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
     } catch (e) {
       setStatus("Save failed: " + e.message, true);

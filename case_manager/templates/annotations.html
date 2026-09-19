@@ -22,7 +22,7 @@
         <div class="report-grid">
           {% for d in docs %}
           <a class="report-card" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-            <div class="report-card-name">{{ d.id }}</div>
+            <div class="report-card-name">{{ d.title }}</div>
             <div class="report-card-meta">{{ d.type }}</div>
           </a>
           {% endfor %}
@@ -54,12 +54,14 @@
      data-snippets-all-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}"
      data-snippet-delete-base="{{ url_for('api_delete_snippet', doc_id=doc_id, snippet_id='__ID__') }}?type={{ doc_type }}"
      data-download-url="{{ url_for('api_download_annotated', doc_id=doc_id) }}?type={{ doc_type }}"
+     data-title-url="{{ title_url }}"
 >
   <header class="topbar">
     <div class="doc-title">
       <a href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
       <a class="btn" href="{{ url_for('documents_view') }}">Reports</a>
-      {{ doc_id }} <span class="tag">{{ doc_type }}</span>
+      <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" value="{{ doc_title }}">
+      <span class="tag">{{ doc_type }}</span>
     </div>
     <button type="button" id="saveBtn" class="save-btn">Save</button>
     <label class="toggle-label"><input type="checkbox" id="continuousToggle" checked> Continuous view</label>

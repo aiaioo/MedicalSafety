@@ -149,7 +149,7 @@
           <select id="sourceSelect">
             <option value="">&mdash; none &mdash;</option>
             {% for d in source_docs %}
-            <option value="{{ d.id }}|{{ d.type }}" title="{{ d.id }} ({{ d.type }})">{{ d.id[:16] }}{{ '...' if d.id|length > 16 }} ({{ d.type }})</option>
+            <option value="{{ d.id }}|{{ d.type }}" title="{{ d.title }} ({{ d.type }})">{{ d.title[:16] }}{{ '...' if d.title|length > 16 }} ({{ d.type }})</option>
             {% endfor %}
           </select>
         </label>
@@ -173,7 +173,7 @@
         <select id="newDocSource">
           <option value="">&mdash; none &mdash;</option>
           {% for d in source_docs %}
-          <option value="{{ d.id }}|{{ d.type }}" title="{{ d.id }} ({{ d.type }})">{{ d.id[:16] }}{{ '...' if d.id|length > 16 }} ({{ d.type }})</option>
+          <option value="{{ d.id }}|{{ d.type }}" title="{{ d.title }} ({{ d.type }})">{{ d.title[:16] }}{{ '...' if d.title|length > 16 }} ({{ d.type }})</option>
           {% endfor %}
         </select>
       </label>
