@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if doc_id %}{{ doc_id }} — page {{ page }}{% else %}Source annotations{% endif %}</title>
+<title>{% if doc_id %}{{ doc_id }} — page {{ page }}{% else %}Documents{% endif %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -13,11 +13,12 @@
   <header class="docbar">
     <a class="home-link" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
     <a class="btn" href="{{ url_for('documents_view') }}">Reports</a>
+    <span class="docbar-title">Documents</span>
   </header>
   <main class="viewer-layout">
     <div class="editor-container">
       <div class="doc-landing">
-        <h2>Source annotations</h2>
+        <h2>Your documents</h2>
         {% if docs %}
         <div class="report-grid">
           {% for d in docs %}
