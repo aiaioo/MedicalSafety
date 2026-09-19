@@ -31,6 +31,10 @@ If you're migrating an existing `storage/*.json` tree from before this app
 used a database, run `python3 db/migrate_json_to_postgres.py` once against
 the new (empty) database to import it.
 
+Deploying to a server (e.g. a DigitalOcean droplet), including how
+`DATABASE_URL` is kept as a secret rather than committed or hardcoded, is
+covered in [`deploy/README.md`](deploy/README.md).
+
 The document editor (`/document`) is a Tiptap-based rich text editor and needs
 a one-time JS build (and again after editing anything under `static/src/`):
 

@@ -1,0 +1,46 @@
+# systemd unit for running case_manager on a DigitalOcean droplet.
+#
+# Install once:
+#   sudo cp deploy/case-manager.service /etc/systemd/system/case-manager.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now case-manager
+#
+# Secrets (DATABASE_URL) live in /etc/case-manager/case-manager.env -- see
+# case-manager.env.example in this directory for the template and the setup
+# commands. That file is root/service-account-only (chmod 600) and is never
+# checked into git; systemd reads it and injects it as this process's
+# environment, so nothing on disk in the app's own directory (which is what
+# gets deployed from git) ever holds a credential.
+#
+# Update code with: cd /opt/case_manager && git pull && sudo systemctl restart case-manager
+
+[Unit]
+Description=case_manager (Flask app, PostgreSQL-backed)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=case-manager
+Group=case-manager
+WorkingDirectory=/opt/case_manager
+EnvironmentFile=/etc/case-manager/case-manager.env
+ExecStart=/opt/case_manager/.venv/bin/gunicorn \
+    --bind 127.0.0.1:8000 \
+    --workers 3 \
+    --timeout 120 \
+    app:app
+Restart=on-failure
+RestartSec=3
+
+# Basic hardening -- this process only needs to read its own code/venv, read
+# and write documents/ and storage/cache/ under WorkingDirectory, and talk to
+# Postgres over the network/socket named in DATABASE_URL.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/case_manager/documents /opt/case_manager/storage
+
+[Install]
+WantedBy=multi-user.target

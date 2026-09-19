@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 
+# Real secrets files -- only the .example templates under deploy/ are tracked
+.env
+*.env
+!deploy/*.env.example
+
 node_modules/
 static/dist/
 
