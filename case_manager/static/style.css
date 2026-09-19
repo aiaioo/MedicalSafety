@@ -592,8 +592,8 @@ a.tag:hover { background: #d7deec; }
 .hearing-summary-input:focus { outline: none; background: white; border-color: #cfd4e0; }
 
 /* ---- hearing document lists (submitted/received source documents) ---- */
-.hearing-doc-lists { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; padding: 0 6px; }
-.hearing-doc-list { position: relative; }
+.hearing-doc-lists { display: flex; flex-flow: row wrap; gap: 6px 24px; margin-top: 2px; padding: 0 6px; }
+.hearing-doc-list { position: relative; flex: 1 1 220px; min-width: 0; }
 .hearing-doc-list-head { display: flex; align-items: center; gap: 8px; }
 .hearing-doc-list-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #8a92a5; }
 .hearing-doc-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
