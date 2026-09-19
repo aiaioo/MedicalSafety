@@ -269,7 +269,8 @@ def migrate_reports(cur, document_ids: set[str]) -> set[str]:
                 margins = EXCLUDED.margins, page_numbers = EXCLUDED.page_numbers,
                 created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
             """,
-            (report_id, data.get("name", ""), psycopg2.extras.Json(data.get("doc") or {}), source_doc,
+            (report_id, data.get("name", ""),
+             psycopg2.extras.Json(data["doc"]) if data.get("doc") is not None else None, source_doc,
              psycopg2.extras.Json(data.get("margins") or {}), psycopg2.extras.Json(data.get("pageNumbers") or {}),
              data.get("created_at"), data.get("updated_at")),
         )

@@ -17,6 +17,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+All structured data (cases, causes, allegations, reports, annotations,
+snippet metadata) lives in PostgreSQL — see `db/schema.sql` and `storage.py`.
+Create the database once and point the app at it:
+
+```
+createdb case_manager
+psql case_manager -f db/schema.sql
+export DATABASE_URL=postgresql:///case_manager   # defaults to this if unset
+```
+
+If you're migrating an existing `storage/*.json` tree from before this app
+used a database, run `python3 db/migrate_json_to_postgres.py` once against
+the new (empty) database to import it.
+
 The document editor (`/document`) is a Tiptap-based rich text editor and needs
 a one-time JS build (and again after editing anything under `static/src/`):
 
@@ -88,12 +102,15 @@ resolution.
 
 ## Storage layout
 
+Binary files stay on disk; everything else (annotation shapes, snippet
+metadata, reports, cases, causes, allegations) lives in PostgreSQL (see
+`db/schema.sql`). Nothing outside `storage.py` — see that file's module
+docstring — talks to the database or to these paths directly:
+
 ```
-documents/                        source PDFs / Word docs (you add these)
-storage/cache/<doc_id>.pdf         Word -> PDF conversion cache
-storage/annotations/<doc_id>__<type>.json     {"<page>": [annotation, ...]}
-storage/snippets/<doc_id>__<type>.json        snippet metadata list
-storage/snippets/<doc_id>__<type>/*.png       extracted snippet images
+documents/<doc_id>.<ext>          source PDFs / Word docs (you add these)
+storage/cache/<doc_id>.pdf        Word -> PDF conversion cache (disposable, never in the database)
+storage/snippets/<doc_id>__<type>/*.png   extracted snippet images (row per file in the `snippets` table)
 ```
 
 ## API

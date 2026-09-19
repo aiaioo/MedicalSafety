@@ -2,12 +2,11 @@ import base64
 import io
 import json
 import re
-import shutil
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
@@ -16,24 +15,9 @@ from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
-from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, jsonify, render_template, request, url_for
 
-from converters import ConversionError, convert_to_pdf
-
-BASE_DIR = Path(__file__).resolve().parent
-DOCUMENTS_DIR = BASE_DIR / "documents"
-STORAGE_DIR = BASE_DIR / "storage"
-CACHE_DIR = STORAGE_DIR / "cache"
-ANNOTATIONS_DIR = STORAGE_DIR / "annotations"
-SNIPPETS_DIR = STORAGE_DIR / "snippets"
-REPORTS_DIR = STORAGE_DIR / "reports"
-CASES_DIR = STORAGE_DIR / "cases"
-CAUSES_DIR = STORAGE_DIR / "causes"
-ALLEGATIONS_DIR = STORAGE_DIR / "allegations"
-DOC_META_DIR = STORAGE_DIR / "doc_meta"
-
-for d in (DOCUMENTS_DIR, CACHE_DIR, ANNOTATIONS_DIR, SNIPPETS_DIR, REPORTS_DIR, CASES_DIR, CAUSES_DIR, ALLEGATIONS_DIR, DOC_META_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+import storage
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -164,94 +148,29 @@ def check_report_id(report_id):
 
 
 def list_source_docs():
-    """All uploaded source documents (pdf/docx/doc) in documents/, as
-    {"id", "type", "title"} dicts -- the same shape rendered into the
-    annotations and reports pages' source pickers."""
-    pdf_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.pdf")}
-    docx_ids = {f.stem for f in DOCUMENTS_DIR.glob("*.docx")} | {f.stem for f in DOCUMENTS_DIR.glob("*.doc")}
-    docs = [{"id": i, "type": "pdf"} for i in sorted(pdf_ids)]
-    docs += [{"id": i, "type": "docx"} for i in sorted(docx_ids - pdf_ids)]
-    docs.sort(key=lambda d: d["id"])
+    """All uploaded source documents (pdf/docx/doc), as {"id", "type",
+    "title"} dicts -- the same shape rendered into the annotations and
+    reports pages' source pickers."""
+    docs = storage.list_documents()
     for d in docs:
-        d["title"] = get_doc_title(d["id"])
+        d["type"] = normalize_type(d["type"])
     return docs
 
 
-def resolve_pdf_path(doc_id, raw_type):
+def _get_pdf_bytes(doc_id, raw_type):
+    """Validates doc_id/raw_type and returns (pdf_bytes, norm_type) --
+    storage.get_document_pdf_bytes handles fetching the right bytes and, for
+    a Word document, converting+caching a PDF rendering of it; this is just
+    the existence check and error translation for callers who don't already
+    know the document exists."""
     check_doc_id(doc_id)
     norm_type = normalize_type(raw_type)
-
-    if norm_type == "pdf":
-        path = DOCUMENTS_DIR / f"{doc_id}.pdf"
-        if not path.exists():
-            raise DocumentError(f"No PDF found for doc '{doc_id}' (expected {path.name} in documents/)")
-        return path, norm_type
-
-    src = None
-    for ext in (".docx", ".doc"):
-        candidate = DOCUMENTS_DIR / f"{doc_id}{ext}"
-        if candidate.exists():
-            src = candidate
-            break
-    if src is None:
-        raise DocumentError(f"No Word document found for doc '{doc_id}' (expected .docx or .doc in documents/)")
-
-    cached = CACHE_DIR / f"{doc_id}.pdf"
-    if not cached.exists() or src.stat().st_mtime > cached.stat().st_mtime:
-        try:
-            converted = convert_to_pdf(src, CACHE_DIR)
-        except ConversionError as exc:
-            raise DocumentError(str(exc), 500) from exc
-        if converted != cached:
-            converted.replace(cached)
-    return cached, norm_type
-
-
-# ---------------------------------------------------------------------------
-# JSON storage helpers
-# ---------------------------------------------------------------------------
-
-def load_json(path: Path, default):
-    if not path.exists():
-        return default
-    with open(path) as f:
-        return json.load(f)
-
-
-def save_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    tmp.replace(path)
-
-
-def annotations_path(doc_id, norm_type):
-    return ANNOTATIONS_DIR / f"{doc_id}__{norm_type}.json"
-
-
-def snippets_meta_path(doc_id, norm_type):
-    return SNIPPETS_DIR / f"{doc_id}__{norm_type}.json"
-
-
-def snippets_dir(doc_id, norm_type):
-    return SNIPPETS_DIR / f"{doc_id}__{norm_type}"
-
-
-def doc_meta_path(doc_id):
-    return DOC_META_DIR / f"{doc_id}.json"
-
-
-def get_doc_title(doc_id):
-    """A source document's display title -- defaults to its id (the file name,
-    minus extension) until someone edits it on the annotations page."""
-    meta = load_json(doc_meta_path(doc_id), default={})
-    title = meta.get("title") if isinstance(meta, dict) else None
-    return title.strip() if isinstance(title, str) and title.strip() else doc_id
-
-
-def report_path(report_id):
-    return REPORTS_DIR / f"{report_id}.json"
+    if storage.get_document_type(doc_id) is None:
+        raise DocumentError(f"No document with id {doc_id!r}", 404)
+    try:
+        return storage.get_document_pdf_bytes(doc_id), norm_type
+    except storage.StorageError as exc:
+        raise DocumentError(str(exc), 500) from exc
 
 
 def slugify_report_name(name):
@@ -259,56 +178,17 @@ def slugify_report_name(name):
     return slug[:50] or "document"
 
 
-def allegation_case_path(case_id):
-    return CASES_DIR / f"{case_id}.json"
-
-
-def cause_path(cause_id):
-    return CAUSES_DIR / f"{cause_id}.json"
-
-
-# A case's cause is a mandatory, non-null association -- every case belongs
-# to exactly one cause, defaulting to whichever cause was most recently used
-# (tracked here) so a fresh case picks up the cause the user is evidently
-# already working in, rather than an arbitrary one. Stored as a bare JSON
-# string (not an object) inside CAUSES_DIR so it's naturally skipped by the
-# "isinstance(data, dict)" filter every cause listing already applies, the
-# same trick ALLEGATION_ORDER_PATH uses for allegation ordering.
-LAST_USED_CAUSE_PATH = CAUSES_DIR / "_last_used.json"
-
-
-def load_last_used_cause():
-    val = load_json(LAST_USED_CAUSE_PATH, default=None)
-    return val if isinstance(val, str) else None
-
-
-def remember_last_used_cause(cause_id):
-    save_json(LAST_USED_CAUSE_PATH, cause_id)
-
-
 def sanitize_cause_id(raw):
     """Keep a case's cause id only if it names a cause that actually exists,
     so a case never points at something the causes workspace can't
     resolve."""
-    return raw if isinstance(raw, str) and DOC_ID_RE.match(raw) and cause_path(raw).exists() else ""
-
-
-def most_recently_updated_cause_id():
-    latest_id, latest_at = None, ""
-    for f in CAUSES_DIR.glob("*.json"):
-        data = load_json(f, default=None)
-        if not isinstance(data, dict):
-            continue
-        updated_at = data.get("updated_at", "")
-        if updated_at >= latest_at:
-            latest_id, latest_at = f.stem, updated_at
-    return latest_id
+    return raw if isinstance(raw, str) and DOC_ID_RE.match(raw) and storage.cause_exists(raw) else ""
 
 
 def create_default_cause():
     now = datetime.now(timezone.utc).isoformat()
     cause_id = f"general-{uuid.uuid4().hex[:6]}"
-    save_json(cause_path(cause_id), {
+    storage.save_cause(cause_id, {
         "title": "General",
         "description": "",
         "goals": [],
@@ -318,55 +198,18 @@ def create_default_cause():
     return cause_id
 
 
-def resolve_default_cause_id():
+def resolve_default_cause_id(exclude_cause_id=None):
     """The cause id to fall back to whenever a case doesn't already carry a
     valid one: whichever cause was most recently used, else the most
     recently updated cause, else a freshly created "General" cause if none
     exist at all -- a case's cause is mandatory, so this never returns
-    empty."""
-    last = load_last_used_cause()
-    if last and cause_path(last).exists():
+    empty. `exclude_cause_id` is passed when reassigning cases off a cause
+    that's about to be deleted, so that cause is never offered back as its
+    own replacement."""
+    last = storage.get_last_used_cause()
+    if last and last != exclude_cause_id and storage.cause_exists(last):
         return last
-    return most_recently_updated_cause_id() or create_default_cause()
-
-
-def ensure_case_cause(path, data):
-    """Backfills a missing/invalid cause_id on a case record loaded from
-    disk. A case's cause is mandatory, not just a default applied at
-    creation, so any case predating this field (or left with a dangling
-    cause_id after its cause was deleted) is repaired the moment it's next
-    read, not just the next time it's edited."""
-    if sanitize_cause_id(data.get("cause_id")):
-        return data
-    data = dict(data)
-    data["cause_id"] = resolve_default_cause_id()
-    save_json(path, data)
-    return data
-
-
-def allegation_item_path(allegation_id):
-    return ALLEGATIONS_DIR / f"{allegation_id}.json"
-
-
-# Allegations are stored one-file-per-record (see api_allegations below), so
-# there's no single array whose element order can just be preserved on save
-# the way case-scoped allegations used to be ordered. This tracks the
-# user's chosen display order separately; ids that fall out of it (freshly
-# created, or the order file predating them) are appended in creation order.
-ALLEGATION_ORDER_PATH = ALLEGATIONS_DIR / "allegation_order.json"
-
-
-def load_allegation_order():
-    order = load_json(ALLEGATION_ORDER_PATH, default=[])
-    return order if isinstance(order, list) else []
-
-
-def ordered_allegation_ids(item_ids_by_created_at):
-    order = load_allegation_order()
-    known = set(item_ids_by_created_at)
-    ordered = [i for i in order if i in known]
-    ordered += [i for i in item_ids_by_created_at if i not in set(ordered)]
-    return ordered
+    return storage.most_recently_updated_cause_id(exclude=exclude_cause_id) or create_default_cause()
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +254,7 @@ def sanitize_evidence_list(raw):
         # reports managed in reports.html) -- drop the link rather than
         # storing a dangling reference if that report no longer exists.
         report_id = item.get("report_id")
-        has_report = isinstance(report_id, str) and DOC_ID_RE.match(report_id) and report_path(report_id).exists()
+        has_report = isinstance(report_id, str) and DOC_ID_RE.match(report_id) and storage.report_exists(report_id)
         out.append({
             "id": _sanitize_item_id(item.get("id")),
             "text": _sanitize_text(item.get("text"), ALLEGATION_MAX_TEXT_CHARS),
@@ -448,14 +291,14 @@ def sanitize_to_prove_list(raw, valid_evidence_ids):
 
 
 def sanitize_case_ids(raw):
-    """Keep only ids that look valid and name a case that actually exists on
-    disk, so a link never points at something the cases workspace can't
+    """Keep only ids that look valid and name a case that actually exists,
+    so a link never points at something the cases workspace can't
     resolve."""
     if not isinstance(raw, list):
         return []
     out = []
     for cid in raw[:ALLEGATION_MAX_CASE_LINKS]:
-        if isinstance(cid, str) and DOC_ID_RE.match(cid) and cid not in out and allegation_case_path(cid).exists():
+        if isinstance(cid, str) and DOC_ID_RE.match(cid) and cid not in out and storage.case_exists(cid):
             out.append(cid)
     return out
 
@@ -463,9 +306,11 @@ def sanitize_case_ids(raw):
 def _source_doc_exists(doc_id, doc_type):
     if not isinstance(doc_id, str) or not DOC_ID_RE.match(doc_id):
         return False
-    if doc_type in ("docx", "doc", "word"):
-        return (DOCUMENTS_DIR / f"{doc_id}.docx").exists() or (DOCUMENTS_DIR / f"{doc_id}.doc").exists()
-    return (DOCUMENTS_DIR / f"{doc_id}.pdf").exists()
+    actual_type = storage.get_document_type(doc_id)
+    if actual_type is None:
+        return False
+    wanted_family = "docx" if doc_type in ("docx", "doc", "word") else "pdf"
+    return normalize_type(actual_type) == wanted_family
 
 
 def sanitize_hearing_doc_list(raw):
@@ -488,33 +333,6 @@ def sanitize_hearing_doc_list(raw):
             "doc_type": doc_type,
         })
     return out
-
-
-def unlink_document_from_hearings(doc_id):
-    """Strip a deleted source document from every case's hearings' submitted/
-    received document lists, so it disappears from those lists immediately
-    rather than lingering until the hearing is next saved (sanitize_hearings
-    already drops dangling doc_ids on save, but a delete shouldn't have to
-    wait for that)."""
-    for f in CASES_DIR.glob("*.json"):
-        data = load_json(f, default=None)
-        if not isinstance(data, dict):
-            continue
-        changed = False
-        for hearing in data.get("hearings") or []:
-            if not isinstance(hearing, dict):
-                continue
-            for kind in ("submitted_docs", "received_docs"):
-                docs = hearing.get(kind)
-                if not isinstance(docs, list):
-                    continue
-                kept = [d for d in docs if not (isinstance(d, dict) and d.get("doc_id") == doc_id)]
-                if len(kept) != len(docs):
-                    hearing[kind] = kept
-                    changed = True
-        if changed:
-            data["updated_at"] = datetime.now(timezone.utc).isoformat()
-            save_json(f, data)
 
 
 def sanitize_hearings(raw):
@@ -821,14 +639,10 @@ def inline_doc_images(node):
         if parsed.path.startswith("/media/snippets/") and len(parts) >= 2:
             filename, url_doc_id = parts[-1], parts[-2]
             if DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename:
-                try:
-                    url_type = normalize_type(parse_qs(parsed.query).get("type", ["pdf"])[0])
-                    f = snippets_dir(url_doc_id, url_type) / filename
-                    if f.exists():
-                        b64 = base64.b64encode(f.read_bytes()).decode("ascii")
-                        attrs["src"] = f"data:image/png;base64,{b64}"
-                except DocumentError:
-                    pass
+                data = storage.read_snippet_bytes(url_doc_id, filename)
+                if data is not None:
+                    b64 = base64.b64encode(data).decode("ascii")
+                    attrs["src"] = f"data:image/png;base64,{b64}"
         return {**node, "attrs": attrs}
     if "content" in node:
         return {**node, "content": [inline_doc_images(c) for c in node["content"]]}
@@ -1454,8 +1268,8 @@ def page_view():
     except ValueError:
         raise DocumentError("page must be an integer", 400)
 
-    path, norm_type = resolve_pdf_path(doc_id, raw_type)
-    with fitz.open(path) as d:
+    pdf_bytes, norm_type = _get_pdf_bytes(doc_id, raw_type)
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         page_count = d.page_count
     if page_count == 0:
         raise DocumentError("Document has no pages", 400)
@@ -1477,7 +1291,7 @@ def page_view():
         doc_id=doc_id,
         doc_type=raw_type,
         norm_type=norm_type,
-        doc_title=get_doc_title(doc_id),
+        doc_title=storage.get_document_title(doc_id),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
         page_count=page_count,
@@ -1494,7 +1308,7 @@ def documents_view():
     report_id = request.args.get("report", "")
     if report_id:
         check_report_id(report_id)
-        if not report_path(report_id).exists():
+        if not storage.report_exists(report_id):
             raise DocumentError(f"No report with id {report_id!r}", 404)
 
     preselect_source = request.args.get("source", "")
@@ -1519,7 +1333,7 @@ def allegations_view():
     filter_case_id = request.args.get("case", "")
     if filter_case_id:
         check_report_id(filter_case_id)
-        if not allegation_case_path(filter_case_id).exists():
+        if not storage.case_exists(filter_case_id):
             raise DocumentError(f"No case with id {filter_case_id!r}", 404)
 
     return render_template("allegations.html", filter_case_id=filter_case_id)
@@ -1571,13 +1385,12 @@ def api_upload_document():
 
     stem = slugify_report_name(Path(f.filename).stem)
     doc_id = stem
-    while any((DOCUMENTS_DIR / f"{doc_id}{e}").exists() for e in (".pdf", ".docx", ".doc")):
+    while storage.document_exists(doc_id):
         doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
 
-    out_path = DOCUMENTS_DIR / f"{doc_id}{ext}"
-    out_path.write_bytes(data)
+    storage.create_document(doc_id, ext.lstrip("."), data)
 
-    return jsonify({"id": doc_id, "type": norm_type, "filename": out_path.name})
+    return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
 
 
 # ---------------------------------------------------------------------------
@@ -1586,8 +1399,8 @@ def api_upload_document():
 
 @app.route("/api/doc/<doc_id>/info")
 def api_doc_info(doc_id):
-    path, _ = resolve_pdf_path(doc_id, request.args.get("type", "pdf"))
-    with fitz.open(path) as d:
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         pages = [{"width": p.rect.width, "height": p.rect.height} for p in d]
     return jsonify({"page_count": len(pages), "pages": pages})
 
@@ -1595,73 +1408,40 @@ def api_doc_info(doc_id):
 @app.route("/api/doc/<doc_id>/title", methods=["POST"])
 def api_doc_title(doc_id):
     check_doc_id(doc_id)
-    if not any((DOCUMENTS_DIR / f"{doc_id}{ext}").exists() for ext in (".pdf", ".docx", ".doc")):
+    if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
     body = request.get_json(silent=True) or {}
     title = str(body.get("title") or "").strip()[:200] or doc_id
-    save_json(doc_meta_path(doc_id), {"title": title})
+    storage.set_document_title(doc_id, title)
     return jsonify({"title": title})
-
-
-def _doc_files(doc_id):
-    """Every file on disk for a source document, across whichever extension
-    it was uploaded with."""
-    return [DOCUMENTS_DIR / f"{doc_id}{ext}" for ext in (".pdf", ".docx", ".doc") if (DOCUMENTS_DIR / f"{doc_id}{ext}").exists()]
-
-
-def _doc_norm_type(doc_id):
-    if (DOCUMENTS_DIR / f"{doc_id}.pdf").exists():
-        return "pdf"
-    if (DOCUMENTS_DIR / f"{doc_id}.docx").exists() or (DOCUMENTS_DIR / f"{doc_id}.doc").exists():
-        return "docx"
-    return None
-
-
-def _doc_has_annotations(doc_id, norm_type):
-    data = load_json(annotations_path(doc_id, norm_type), default={})
-    return isinstance(data, dict) and any(isinstance(v, list) and v for v in data.values())
-
-
-def _doc_has_snippets(doc_id, norm_type):
-    meta = load_json(snippets_meta_path(doc_id, norm_type), default=[])
-    return isinstance(meta, list) and len(meta) > 0
 
 
 @app.route("/api/document/<doc_id>", methods=["DELETE"])
 def api_delete_document(doc_id):
     check_doc_id(doc_id)
-    norm_type = _doc_norm_type(doc_id)
-    if norm_type is None:
+    if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
-    if _doc_has_annotations(doc_id, norm_type):
+    if storage.document_has_annotations(doc_id):
         raise DocumentError("Cannot delete a document that has annotations. Remove them first.", 400)
-    if _doc_has_snippets(doc_id, norm_type):
+    if storage.document_has_snippets(doc_id):
         raise DocumentError("Cannot delete a document that has snippets. Remove them first.", 400)
 
-    for f in _doc_files(doc_id):
-        f.unlink(missing_ok=True)
-    (CACHE_DIR / f"{doc_id}.pdf").unlink(missing_ok=True)
-    doc_meta_path(doc_id).unlink(missing_ok=True)
-    annotations_path(doc_id, norm_type).unlink(missing_ok=True)
-    snippets_meta_path(doc_id, norm_type).unlink(missing_ok=True)
-    shutil.rmtree(snippets_dir(doc_id, norm_type), ignore_errors=True)
-
-    unlink_document_from_hearings(doc_id)
+    storage.delete_document(doc_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/doc/<doc_id>/render/<int:page>")
 def api_render(doc_id, page):
-    path, _ = resolve_pdf_path(doc_id, request.args.get("type", "pdf"))
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
     try:
         dpi = int(request.args.get("dpi", 150))
     except ValueError:
         dpi = 150
     dpi = max(50, min(dpi, 600))
 
-    with fitz.open(path) as d:
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         if not (1 <= page <= d.page_count):
             raise DocumentError("Page out of range", 404)
         zoom = dpi / 72
@@ -1685,29 +1465,24 @@ def api_all_annotations(doc_id):
     require one GET per page; single-page mode doesn't need this.
     """
     check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    data = load_json(annotations_path(doc_id, norm_type), default={})
-    return jsonify(data)
+    normalize_type(request.args.get("type", "pdf"))
+    return jsonify(storage.get_all_annotations(doc_id))
 
 
 @app.route("/api/doc/<doc_id>/annotations/<int:page>", methods=["GET", "POST"])
 def api_annotations(doc_id, page):
     check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    path = annotations_path(doc_id, norm_type)
+    normalize_type(request.args.get("type", "pdf"))
 
     if request.method == "GET":
-        data = load_json(path, default={})
-        return jsonify(data.get(str(page), []))
+        return jsonify(storage.get_page_annotations(doc_id, page))
 
     body = request.get_json(silent=True) or {}
     anns = body.get("annotations")
     if not isinstance(anns, list):
         raise DocumentError("Body must contain an 'annotations' list", 400)
 
-    data = load_json(path, default={})
-    data[str(page)] = anns
-    save_json(path, data)
+    storage.set_page_annotations(doc_id, page, anns)
     return jsonify({"status": "ok", "count": len(anns)})
 
 
@@ -1718,7 +1493,7 @@ def api_annotations(doc_id, page):
 @app.route("/api/doc/<doc_id>/snippet/<int:page>", methods=["POST"])
 def api_create_snippet(doc_id, page):
     raw_type = request.args.get("type", "pdf")
-    pdf_path, norm_type = resolve_pdf_path(doc_id, raw_type)
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
 
     body = request.get_json(silent=True) or {}
     try:
@@ -1736,7 +1511,7 @@ def api_create_snippet(doc_id, page):
 
     annotations = sanitize_annotations(body.get("annotations"))
 
-    with fitz.open(pdf_path) as d:
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         if not (1 <= page <= d.page_count):
             raise DocumentError("Page out of range", 404)
         p = d[page - 1]
@@ -1752,38 +1527,21 @@ def api_create_snippet(doc_id, page):
         pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
         png_bytes = pix.tobytes("png")
 
-    snippet_id = uuid.uuid4().hex[:12]
-    out_dir = snippets_dir(doc_id, norm_type)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"p{page}_{snippet_id}.png"
-    (out_dir / filename).write_bytes(png_bytes)
-
-    meta_path = snippets_meta_path(doc_id, norm_type)
-    meta = load_json(meta_path, default=[])
-    entry = {
-        "id": snippet_id,
-        "page": page,
-        "filename": filename,
-        "rect": {"x": x, "y": y, "w": w, "h": h},
-        "annotated": bool(annotations),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    meta.append(entry)
-    save_json(meta_path, meta)
+    entry = storage.create_snippet(doc_id, page, {"x": x, "y": y, "w": w, "h": h}, bool(annotations), png_bytes)
 
     result = dict(entry)
-    result["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=filename, type=raw_type)
+    result["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)
     return jsonify(result)
 
 
 @app.route("/api/doc/<doc_id>/download")
 def api_download_annotated(doc_id):
     raw_type = request.args.get("type", "pdf")
-    pdf_path, norm_type = resolve_pdf_path(doc_id, raw_type)
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
 
-    data = load_json(annotations_path(doc_id, norm_type), default={})
+    data = storage.get_all_annotations(doc_id)
 
-    with fitz.open(pdf_path) as d:
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         for page_key, raw_anns in data.items():
             try:
                 page_num = int(page_key)
@@ -1796,9 +1554,9 @@ def api_download_annotated(doc_id):
                 continue
             p = d[page_num - 1]
             draw_annotations_on_page(p, annotations, p.rect)
-        pdf_bytes = d.tobytes(deflate=True)
+        annotated_pdf_bytes = d.tobytes(deflate=True)
 
-    resp = Response(pdf_bytes, mimetype="application/pdf")
+    resp = Response(annotated_pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}-annotated.pdf"'
     return resp
@@ -1807,12 +1565,10 @@ def api_download_annotated(doc_id):
 @app.route("/api/doc/<doc_id>/snippets")
 def api_list_snippets(doc_id):
     check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
+    normalize_type(request.args.get("type", "pdf"))
     page = request.args.get("page", type=int)
 
-    meta = load_json(snippets_meta_path(doc_id, norm_type), default=[])
-    if page is not None:
-        meta = [m for m in meta if m["page"] == page]
+    meta = storage.list_snippets(doc_id, page=page)
     raw_type = request.args.get("type", "pdf")
     for m in meta:
         m["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=m["filename"], type=raw_type)
@@ -1822,37 +1578,16 @@ def api_list_snippets(doc_id):
 @app.route("/api/doc/<doc_id>/snippet/<snippet_id>", methods=["DELETE"])
 def api_delete_snippet(doc_id, snippet_id):
     check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    meta_path = snippets_meta_path(doc_id, norm_type)
-    meta = load_json(meta_path, default=[])
-    remaining = [m for m in meta if m["id"] != snippet_id]
-    removed = [m for m in meta if m["id"] == snippet_id]
-    if not removed:
+    normalize_type(request.args.get("type", "pdf"))
+    if not storage.delete_snippet(doc_id, snippet_id):
         raise DocumentError(f"No snippet with id {snippet_id}", 404)
-    save_json(meta_path, remaining)
-    for m in removed:
-        f = snippets_dir(doc_id, norm_type) / m["filename"]
-        if f.exists():
-            f.unlink()
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/reports", methods=["GET", "POST"])
 def api_reports():
     if request.method == "GET":
-        items = []
-        for f in REPORTS_DIR.glob("*.json"):
-            data = load_json(f, default=None)
-            if not isinstance(data, dict):
-                continue
-            items.append({
-                "id": f.stem,
-                "name": data.get("name") or f.stem,
-                "source_doc": data.get("source_doc", ""),
-                "source_type": data.get("source_type", "pdf"),
-                "created_at": data.get("created_at", ""),
-                "updated_at": data.get("updated_at", ""),
-            })
+        items = storage.list_reports()
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return jsonify(items)
 
@@ -1866,6 +1601,8 @@ def api_reports():
     if source_doc:
         check_doc_id(source_doc)
         source_type = normalize_type(body.get("source_type", "pdf"))
+        if not storage.document_exists(source_doc):
+            source_doc, source_type = "", "pdf"
 
     report_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
@@ -1879,34 +1616,14 @@ def api_reports():
         "created_at": now,
         "updated_at": now,
     }
-    save_json(report_path(report_id), data)
+    storage.save_report(report_id, data)
     return jsonify({"id": report_id, **data})
-
-
-def unlink_report_from_evidence(report_id):
-    """Strip references to a deleted report from every allegation's evidence
-    lists, so a dangling report_id never lingers on an evidence card after
-    the report it pointed at is gone."""
-    for f in ALLEGATIONS_DIR.glob("*.json"):
-        data = load_json(f, default=None)
-        if not isinstance(data, dict):
-            continue
-        changed = False
-        for kind in ("inculpatory", "exculpatory"):
-            for item in data.get(kind) or []:
-                if isinstance(item, dict) and item.get("report_id") == report_id:
-                    item["report_id"] = ""
-                    changed = True
-        if changed:
-            data["updated_at"] = datetime.now(timezone.utc).isoformat()
-            save_json(f, data)
 
 
 @app.route("/api/report/<report_id>", methods=["GET", "POST", "DELETE"])
 def api_report(report_id):
     check_report_id(report_id)
-    path = report_path(report_id)
-    existing = load_json(path, default=None)
+    existing = storage.get_report(report_id)
     if existing is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
 
@@ -1917,8 +1634,7 @@ def api_report(report_id):
         return jsonify(resp)
 
     if request.method == "DELETE":
-        path.unlink(missing_ok=True)
-        unlink_report_from_evidence(report_id)
+        storage.delete_report(report_id)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -1931,6 +1647,8 @@ def api_report(report_id):
     if source_doc:
         check_doc_id(source_doc)
         source_type = normalize_type(body.get("source_type", existing.get("source_type", "pdf")))
+        if not storage.document_exists(source_doc):
+            source_doc, source_type = "", "pdf"
 
     doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
     margins = sanitize_margins(body.get("margins"), existing.get("margins"))
@@ -1945,14 +1663,14 @@ def api_report(report_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_json(path, data)
+    storage.save_report(report_id, data)
     return jsonify(data)
 
 
 @app.route("/api/report/<report_id>/export")
 def api_report_export(report_id):
     check_report_id(report_id)
-    data = load_json(report_path(report_id), default=None)
+    data = storage.get_report(report_id)
     if data is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
 
@@ -1975,7 +1693,7 @@ def api_report_export(report_id):
 @app.route("/api/report/<report_id>/export.docx")
 def api_report_export_docx(report_id):
     check_report_id(report_id)
-    data = load_json(report_path(report_id), default=None)
+    data = storage.get_report(report_id)
     if data is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
 
@@ -2003,39 +1721,23 @@ def api_source_documents():
     return jsonify(list_source_docs())
 
 
-def count_linked_allegations():
-    """Case id -> number of global allegations that link to it."""
-    counts = {}
-    for f in ALLEGATIONS_DIR.glob("*.json"):
-        data = load_json(f, default=None)
-        if not isinstance(data, dict):
-            continue
-        for cid in data.get("case_ids") or []:
-            counts[cid] = counts.get(cid, 0) + 1
-    return counts
-
-
 @app.route("/api/allegation-cases", methods=["GET", "POST"])
 def api_allegation_cases():
     if request.method == "GET":
-        allegation_counts = count_linked_allegations()
+        allegation_counts = storage.count_allegations_by_case()
         items = []
-        for f in CASES_DIR.glob("*.json"):
-            data = load_json(f, default=None)
-            if not isinstance(data, dict):
-                continue
-            data = ensure_case_cause(f, data)
+        for case in storage.list_cases():
             items.append({
-                "id": f.stem,
-                "name": data.get("name") or f.stem,
-                "cause_id": data.get("cause_id", ""),
-                "court": data.get("court", ""),
-                "case_number": data.get("case_number", ""),
-                "summary": data.get("summary", ""),
-                "allegation_count": allegation_counts.get(f.stem, 0),
-                "hearing_count": len(data.get("hearings") or []),
-                "created_at": data.get("created_at", ""),
-                "updated_at": data.get("updated_at", ""),
+                "id": case["id"],
+                "name": case["name"] or case["id"],
+                "cause_id": case["cause_id"],
+                "court": case["court"],
+                "case_number": case["case_number"],
+                "summary": case["summary"],
+                "allegation_count": allegation_counts.get(case["id"], 0),
+                "hearing_count": len(case["hearings"]),
+                "created_at": case["created_at"],
+                "updated_at": case["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return jsonify(items)
@@ -2049,7 +1751,7 @@ def api_allegation_cases():
     # fall back to whichever cause was most recently used -- see
     # resolve_default_cause_id, which is guaranteed to return a real id.
     cause_id = sanitize_cause_id(body.get("cause_id")) or resolve_default_cause_id()
-    remember_last_used_cause(cause_id)
+    storage.set_last_used_cause(cause_id)
 
     case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
@@ -2063,18 +1765,16 @@ def api_allegation_cases():
         "created_at": now,
         "updated_at": now,
     }
-    save_json(allegation_case_path(case_id), data)
+    storage.save_case(case_id, data)
     return jsonify({"id": case_id, **data})
 
 
 @app.route("/api/allegation-case/<case_id>", methods=["GET", "POST", "DELETE"])
 def api_allegation_case(case_id):
     check_report_id(case_id)
-    path = allegation_case_path(case_id)
-    existing = load_json(path, default=None)
+    existing = storage.get_case(case_id)
     if existing is None:
         raise DocumentError(f"No case with id {case_id!r}", 404)
-    existing = ensure_case_cause(path, existing)
 
     if request.method == "GET":
         return jsonify(existing)
@@ -2082,7 +1782,7 @@ def api_allegation_case(case_id):
     if request.method == "DELETE":
         if existing.get("hearings"):
             raise DocumentError("Cannot delete a case that still has hearings", 400)
-        path.unlink(missing_ok=True)
+        storage.delete_case(case_id)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -2095,10 +1795,10 @@ def api_allegation_case(case_id):
     # than ever being left empty.
     cause_id = sanitize_cause_id(body.get("cause_id", existing.get("cause_id", ""))) or resolve_default_cause_id()
     if cause_id != existing.get("cause_id"):
-        remember_last_used_cause(cause_id)
+        storage.set_last_used_cause(cause_id)
 
     # Each caller (the allegations editor, the cases workspace) only ever
-    # sends the fields it owns -- falling back to the value already on disk
+    # sends the fields it owns -- falling back to the value already saved
     # for everything else (via dict.get's default, not truthiness) means one
     # page's save can never clobber the other's data.
     data = {
@@ -2111,7 +1811,7 @@ def api_allegation_case(case_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_json(path, data)
+    storage.save_case(case_id, data)
     return jsonify(data)
 
 
@@ -2126,17 +1826,14 @@ def api_allegation_case(case_id):
 def api_causes():
     if request.method == "GET":
         items = []
-        for f in CAUSES_DIR.glob("*.json"):
-            data = load_json(f, default=None)
-            if not isinstance(data, dict):
-                continue
+        for cause in storage.list_causes():
             items.append({
-                "id": f.stem,
-                "title": data.get("title") or f.stem,
-                "description": data.get("description", ""),
-                "goal_count": len(data.get("goals") or []),
-                "created_at": data.get("created_at", ""),
-                "updated_at": data.get("updated_at", ""),
+                "id": cause["id"],
+                "title": cause["title"] or cause["id"],
+                "description": cause["description"],
+                "goal_count": len(cause["goals"]),
+                "created_at": cause["created_at"],
+                "updated_at": cause["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return jsonify(items)
@@ -2155,15 +1852,14 @@ def api_causes():
         "created_at": now,
         "updated_at": now,
     }
-    save_json(cause_path(cause_id), data)
+    storage.save_cause(cause_id, data)
     return jsonify({"id": cause_id, **data})
 
 
 @app.route("/api/cause/<cause_id>", methods=["GET", "POST", "DELETE"])
 def api_cause(cause_id):
     check_report_id(cause_id)
-    path = cause_path(cause_id)
-    existing = load_json(path, default=None)
+    existing = storage.get_cause(cause_id)
     if existing is None:
         raise DocumentError(f"No cause with id {cause_id!r}", 404)
 
@@ -2173,7 +1869,18 @@ def api_cause(cause_id):
     if request.method == "DELETE":
         if existing.get("goals"):
             raise DocumentError("Cannot delete a cause that still has goals", 400)
-        path.unlink(missing_ok=True)
+        # A case's cause is mandatory (NOT NULL), so any case still pointing
+        # at this cause has to be reassigned before the cause itself can go.
+        affected_case_ids = storage.list_case_ids_by_cause(cause_id)
+        if affected_case_ids:
+            fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
+            now = datetime.now(timezone.utc).isoformat()
+            for affected_case_id in affected_case_ids:
+                case = storage.get_case(affected_case_id)
+                case["cause_id"] = fallback_cause_id
+                case["updated_at"] = now
+                storage.save_case(affected_case_id, case)
+        storage.delete_cause(cause_id)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -2188,7 +1895,7 @@ def api_cause(cause_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_json(path, data)
+    storage.save_cause(cause_id, data)
     return jsonify(data)
 
 
@@ -2199,15 +1906,7 @@ def api_cause(cause_id):
 @app.route("/api/allegations", methods=["GET", "POST"])
 def api_allegations():
     if request.method == "GET":
-        by_id = {}
-        for f in ALLEGATIONS_DIR.glob("*.json"):
-            data = load_json(f, default=None)
-            if not isinstance(data, dict):
-                continue
-            by_id[f.stem] = data
-        creation_order = sorted(by_id, key=lambda i: by_id[i].get("created_at", ""))
-        items = [{"id": i, **by_id[i]} for i in ordered_allegation_ids(creation_order)]
-        return jsonify(items)
+        return jsonify(storage.list_allegations())
 
     body = request.get_json(silent=True) or {}
     allegation_id = uuid.uuid4().hex[:12]
@@ -2225,23 +1924,22 @@ def api_allegations():
         "created_at": now,
         "updated_at": now,
     }
-    save_json(allegation_item_path(allegation_id), data)
+    storage.save_allegation(allegation_id, data)
     return jsonify({"id": allegation_id, **data})
 
 
 @app.route("/api/allegation/<allegation_id>", methods=["GET", "POST", "DELETE"])
 def api_allegation_item(allegation_id):
     check_report_id(allegation_id)
-    path = allegation_item_path(allegation_id)
-    existing = load_json(path, default=None)
+    existing = storage.get_allegation(allegation_id)
     if existing is None:
         raise DocumentError(f"No allegation with id {allegation_id!r}", 404)
 
     if request.method == "GET":
-        return jsonify({"id": allegation_id, **existing})
+        return jsonify(existing)
 
     if request.method == "DELETE":
-        path.unlink(missing_ok=True)
+        storage.delete_allegation(allegation_id)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -2258,7 +1956,7 @@ def api_allegation_item(allegation_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_json(path, data)
+    storage.save_allegation(allegation_id, data)
     return jsonify({"id": allegation_id, **data})
 
 
@@ -2268,22 +1966,21 @@ def api_allegations_order():
     raw_order = body.get("order")
     if not isinstance(raw_order, list):
         raise DocumentError("order must be a list of allegation ids", 400)
-    seen = []
-    for aid in raw_order[:2000]:
-        if isinstance(aid, str) and DOC_ID_RE.match(aid) and aid not in seen and allegation_item_path(aid).exists():
-            seen.append(aid)
-    save_json(ALLEGATION_ORDER_PATH, seen)
-    return jsonify({"order": seen})
+    candidates = [aid for aid in raw_order[:2000] if isinstance(aid, str) and DOC_ID_RE.match(aid)]
+    order = storage.set_allegation_order(candidates)
+    return jsonify({"order": order})
 
 
 @app.route("/media/snippets/<doc_id>/<path:filename>")
 def api_snippet_file(doc_id, filename):
     check_doc_id(doc_id)
-    norm_type = normalize_type(request.args.get("type", "pdf"))
-    directory = snippets_dir(doc_id, norm_type)
+    normalize_type(request.args.get("type", "pdf"))
     if "/" in filename or "\\" in filename:
         abort(400)
-    return send_from_directory(directory, filename)
+    data = storage.read_snippet_bytes(doc_id, filename)
+    if data is None:
+        abort(404)
+    return Response(data, mimetype="image/png")
 
 
 if __name__ == "__main__":

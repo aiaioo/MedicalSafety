@@ -87,7 +87,11 @@ CREATE INDEX snippets_document_id_idx ON snippets (document_id);
 CREATE TABLE reports (
     id                 TEXT PRIMARY KEY,          -- "<slugified-name>-<hex6>"
     name               TEXT NOT NULL,
-    doc                JSONB NOT NULL DEFAULT '{"type":"doc","content":[]}'::jsonb,
+    -- NULL means "predates the Tiptap/ProseMirror JSON format" (an old
+    -- report saved before the editor stored structured JSON) -- the report
+    -- editor/export routes detect this and tell the user to open and
+    -- re-save it, so NULL is preserved rather than coerced to an empty doc.
+    doc                JSONB,
     source_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
     -- Small, evolving editor-settings blobs (page-numbering options in
     -- particular have grown new keys over time) -- JSONB rather than columns
