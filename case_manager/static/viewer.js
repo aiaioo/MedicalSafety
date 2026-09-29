@@ -762,7 +762,21 @@
     }
   });
 
-  document.getElementById("downloadBtn").addEventListener("click", () => {
+  // Unsaved annotations are saved first so they appear in the download.
+  document.getElementById("downloadBtn").addEventListener("click", async () => {
+    const dirtyPages = Array.from(pageState.entries())
+      .filter(([, s]) => s.dirty)
+      .map(([p]) => p);
+    if (dirtyPages.length) {
+      try {
+        const results = await Promise.all(dirtyPages.map(saveOnePage));
+        if (results.some((n) => n > 0)) await loadAllSnippets();
+        setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
+      } catch (e) {
+        setStatus("Save failed, download cancelled: " + e.message, true);
+        return;
+      }
+    }
     window.location.href = downloadUrl;
   });
   document.getElementById("downloadOriginalBtn").addEventListener("click", () => {
