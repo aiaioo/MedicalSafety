@@ -35,6 +35,7 @@ sudo chown -R case-manager:case-manager /opt/case_manager
 
 # 6. Load the schema
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/schema.sql
+psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/001_users_and_access.sql
 
 # 7. The secrets file systemd will inject as this process's environment --
 #    see case-manager.env.example for the exact commands and template.

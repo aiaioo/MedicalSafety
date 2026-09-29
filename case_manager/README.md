@@ -24,12 +24,51 @@ Create the database once and point the app at it:
 ```
 createdb case_manager
 psql case_manager -f db/schema.sql
+psql case_manager -f db/migrations/001_users_and_access.sql
 export DATABASE_URL=postgresql:///case_manager   # defaults to this if unset
 ```
 
 If you're migrating an existing `storage/*.json` tree from before this app
 used a database, run `python3 db/migrate_json_to_postgres.py` once against
-the new (empty) database to import it.
+the new (empty) database to import it -- after `schema.sql` but *before*
+the migrations in `db/migrations/`, so the imported rows get an owner.
+
+## Users and access
+
+Every page and API route requires signing in (`/signin`; new users register
+at `/signup`). `db/migrations/001_users_and_access.sql` seeds one account,
+`cohan.sujay@gmail.com`, and makes it the owner of everything that existed
+before users did -- change its initial password on any shared deployment.
+Passwords are stored only as salted scrypt hashes; sessions are server-side
+rows keyed by the SHA-256 of a random, HttpOnly cookie token (see `auth.py`).
+
+Causes, cases, reports and sources (uploaded documents, including their
+annotations and snippets) are each visible only to users with a role on
+that specific object, in the `user_causes` / `user_cases` / `user_reports` /
+`user_sources` tables:
+
+- **viewer** -- can read it.
+- **editor** -- can also change it. On a cause, an editor can also create
+  cases under it. On a cause or case, an editor can also create reports and
+  upload sources associated with it.
+- **owner** -- can also delete it. Whoever creates something owns it.
+
+Reports and sources don't belong to a cause or case. They're associated
+with any number of causes and/or cases (`report_causes`, `report_cases`,
+`source_causes`, `source_cases`). A new one is associated with its
+creator's **default cause** (`users.default_cause_id`): the cause they last
+selected in the causes workspace (or last put a case under). If that's
+unset or no longer editable, it's the most recently updated cause they can
+edit, or failing that a new "General" cause. Further associations are added or removed
+with `POST` / `DELETE /api/report/<id>/links` or `/api/doc/<id>/links`
+(body `{"cause_id": ...}` or `{"case_id": ...}`), which needs edit access to
+both sides; the last association can't be removed.
+
+Roles aren't inherited (a cause's editor doesn't automatically see its
+cases), and there's no sharing UI yet: grant access with a row in the
+matching table, e.g.
+`INSERT INTO user_cases (user_id, case_id, role) VALUES (2, 'my-case-1a2b3c', 'viewer');`.
+Allegations aren't per-user yet -- any signed-in user can see them.
 
 Deploying to a server (e.g. a DigitalOcean droplet), including how
 `DATABASE_URL` is kept as a secret rather than committed or hardcoded, is

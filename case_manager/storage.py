@@ -9,9 +9,10 @@ module (a different database, a different blob store) later means editing
 this one file, not any of app.py's routes.
 
 Two things live here, both "persistence":
-  - structured data, in PostgreSQL (see db/schema.sql for the tables) --
-    documents' metadata, annotations, snippet metadata, reports, cases,
-    causes, allegations.
+  - structured data, in PostgreSQL (see db/schema.sql and db/migrations/
+    for the tables) -- documents' metadata, annotations, snippet metadata,
+    reports, cases, causes, allegations, and users with their sign-in
+    sessions and per-object access roles.
   - the binary bytes for uploaded documents and cropped snippets, via
     db/storage_backend.py's swappable backend (local disk today) -- this
     module is the only thing that ever touches that backend, keyed by a
@@ -38,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
@@ -122,6 +124,15 @@ def _exists(table: str, row_id: str) -> bool:
         return cur.fetchone() is not None
 
 
+# The causes/cases a report or source is associated with (the report_causes /
+# report_cases / source_causes / source_cases tables), as two id arrays --
+# spliced into a SELECT over reports (alias r) or documents (alias d).
+_LINKED_IDS_SQL = """
+    ARRAY(SELECT l.cause_id FROM {table_prefix}_causes l WHERE l.{key} = {alias}.id ORDER BY l.created_at) AS cause_ids,
+    ARRAY(SELECT l.case_id FROM {table_prefix}_cases l WHERE l.{key} = {alias}.id ORDER BY l.created_at) AS case_ids
+"""
+
+
 # ---------------------------------------------------------------------------
 # Documents (metadata) + their bytes + the docx->pdf render cache
 # ---------------------------------------------------------------------------
@@ -133,12 +144,24 @@ def _conversion_cache_path(document_id: str) -> Path:
     return _CONVERSION_CACHE_DIR / f"{document_id}.pdf"
 
 
-def list_documents() -> list[dict]:
-    """Every uploaded source document, id-sorted -- {"id", "type", "title"}."""
+def list_documents(user_id: int) -> list[dict]:
+    """Every uploaded source document this user has any role on, id-sorted
+    -- {"id", "type", "title", "role", "cause_ids", "case_ids"}."""
     with _cursor() as cur:
-        cur.execute("SELECT id, doc_type, title FROM documents ORDER BY id")
+        cur.execute(
+            """
+            SELECT d.id, d.doc_type, d.title, us.role, {links}
+            FROM documents d JOIN user_sources us ON us.document_id = d.id AND us.user_id = %s
+            ORDER BY d.id
+            """.format(links=_LINKED_IDS_SQL.format(table_prefix="source", key="document_id", alias="d")),
+            (user_id,),
+        )
         rows = cur.fetchall()
-    return [{"id": r["id"], "type": r["doc_type"], "title": r["title"]} for r in rows]
+    return [
+        {"id": r["id"], "type": r["doc_type"], "title": r["title"], "role": r["role"],
+         "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"])}
+        for r in rows
+    ]
 
 
 def document_exists(document_id: str) -> bool:
@@ -164,16 +187,19 @@ def set_document_title(document_id: str, title: str) -> None:
         cur.execute("UPDATE documents SET title = %s WHERE id = %s", (title, document_id))
 
 
-def create_document(document_id: str, doc_type: str, data: bytes) -> None:
+def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int, link: tuple[str, str]) -> None:
     """Registers a freshly uploaded document: writes its bytes via the
-    storage backend, then its row (title defaults to its own id, matching
-    the old doc_meta fallback)."""
+    storage backend, then -- in one transaction -- its row (title defaults
+    to its own id, matching the old doc_meta fallback), its uploader's
+    ownership, and its first association, `link` = ("cause" | "case", id)."""
     get_storage_backend().write_bytes(document_storage_key(document_id, doc_type), data)
     with _cursor() as cur:
         cur.execute(
             "INSERT INTO documents (id, doc_type, title) VALUES (%s, %s, %s)",
             (document_id, doc_type, document_id),
         )
+        _grant(cur, owner_id, "source", document_id, "owner")
+        _link(cur, "source", document_id, *link)
 
 
 def document_has_annotations(document_id: str) -> bool:
@@ -366,8 +392,8 @@ def read_snippet_bytes(document_id: str, filename: str) -> bytes | None:
 
 _REPORT_COLUMNS = """
     r.id, r.name, r.doc, r.source_document_id, d.doc_type AS source_doc_type,
-    r.margins, r.page_numbers, r.created_at, r.updated_at
-"""
+    r.margins, r.page_numbers, r.created_at, r.updated_at,
+""" + _LINKED_IDS_SQL.format(table_prefix="report", key="report_id", alias="r")
 
 
 def _report_row_to_dict(row: dict) -> dict:
@@ -378,6 +404,8 @@ def _report_row_to_dict(row: dict) -> dict:
         "doc": row["doc"],
         "source_doc": source_doc,
         "source_type": _doc_family(row["source_doc_type"]) if source_doc else "pdf",
+        "cause_ids": list(row["cause_ids"]),
+        "case_ids": list(row["case_ids"]),
         "margins": row["margins"],
         "pageNumbers": row["page_numbers"],
         "created_at": _iso(row["created_at"]),
@@ -385,17 +413,21 @@ def _report_row_to_dict(row: dict) -> dict:
     }
 
 
-def list_reports() -> list[dict]:
-    """The lightweight projection the reports list view needs -- callers
-    that need a report's full document tree use get_report instead, so
-    listing every report never has to ship every report's (potentially
-    large) content over the wire."""
+def list_reports(user_id: int) -> list[dict]:
+    """The lightweight projection the reports list view needs, for the
+    reports this user has any role on -- callers that need a report's full
+    document tree use get_report instead, so listing every report never has
+    to ship every report's (potentially large) content over the wire."""
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT r.id, r.name, r.source_document_id, d.doc_type AS source_doc_type, r.created_at, r.updated_at
-            FROM reports r LEFT JOIN documents d ON d.id = r.source_document_id
-            """
+            SELECT r.id, r.name, r.source_document_id, d.doc_type AS source_doc_type,
+                   r.created_at, r.updated_at, ur.role, {links}
+            FROM reports r
+            JOIN user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
+            LEFT JOIN documents d ON d.id = r.source_document_id
+            """.format(links=_LINKED_IDS_SQL.format(table_prefix="report", key="report_id", alias="r")),
+            (user_id,),
         )
         rows = cur.fetchall()
     items = []
@@ -406,6 +438,9 @@ def list_reports() -> list[dict]:
             "name": r["name"],
             "source_doc": source_doc,
             "source_type": _doc_family(r["source_doc_type"]) if source_doc else "pdf",
+            "cause_ids": list(r["cause_ids"]),
+            "case_ids": list(r["case_ids"]),
+            "role": r["role"],
             "created_at": _iso(r["created_at"]),
             "updated_at": _iso(r["updated_at"]),
         })
@@ -426,7 +461,12 @@ def get_report(report_id: str) -> dict | None:
     return _report_row_to_dict(row) if row else None
 
 
-def save_report(report_id: str, data: dict) -> None:
+def save_report(report_id: str, data: dict, owner_id: int | None = None,
+                link: tuple[str, str] | None = None) -> None:
+    """Creates or overwrites a report. When creating, pass `owner_id` and
+    `link` (its first association, ("cause" | "case", id)) to record both in
+    the same transaction. Associations are otherwise managed with
+    link_to/unlink_from, never by a save."""
     with _cursor() as cur:
         cur.execute(
             """
@@ -440,6 +480,10 @@ def save_report(report_id: str, data: dict) -> None:
              psycopg2.extras.Json(data["margins"]), psycopg2.extras.Json(data["pageNumbers"]),
              data["created_at"], data["updated_at"]),
         )
+        if owner_id is not None:
+            _grant(cur, owner_id, "report", report_id, "owner")
+        if link is not None:
+            _link(cur, "report", report_id, *link)
 
 
 def delete_report(report_id: str) -> None:
@@ -458,7 +502,7 @@ def _hearing_doc_dict(row: dict) -> dict:
     return {"id": row["id"], "doc_id": row["document_id"], "doc_type": _doc_family(row["doc_type"])}
 
 
-def _assemble_cases(case_rows, hearing_rows, doc_link_rows) -> list[dict]:
+def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[dict]:
     docs_by_hearing: dict[str, list] = {}
     for link in doc_link_rows:
         docs_by_hearing.setdefault(link["hearing_id"], []).append(link)
@@ -484,6 +528,7 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows) -> list[dict]:
             "case_number": c["case_number"],
             "summary": c["summary"],
             "hearings": hearings_by_case.get(c["id"], []),
+            **({"role": roles[c["id"]]} if roles else {}),
             "created_at": _iso(c["created_at"]),
             "updated_at": _iso(c["updated_at"]),
         }
@@ -498,15 +543,29 @@ _HEARING_DOC_JOIN = """
 """
 
 
-def list_cases() -> list[dict]:
+def list_cases(user_id: int) -> list[dict]:
+    """The cases this user has any role on, each carrying that "role"."""
     with _cursor() as cur:
-        cur.execute("SELECT id, name, cause_id, court, case_number, summary, created_at, updated_at FROM cases")
+        cur.execute(
+            """
+            SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.created_at, c.updated_at, uc.role
+            FROM cases c JOIN user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
+            """,
+            (user_id,),
+        )
         case_rows = cur.fetchall()
-        cur.execute("SELECT id, case_id, hearing_date, title, summary FROM hearings ORDER BY position")
+        case_ids = [c["id"] for c in case_rows]
+        cur.execute(
+            "SELECT id, case_id, hearing_date, title, summary FROM hearings WHERE case_id = ANY(%s) ORDER BY position",
+            (case_ids,),
+        )
         hearing_rows = cur.fetchall()
-        cur.execute(_HEARING_DOC_JOIN + " ORDER BY hd.position")
+        cur.execute(
+            _HEARING_DOC_JOIN + " JOIN hearings h ON h.id = hd.hearing_id WHERE h.case_id = ANY(%s) ORDER BY hd.position",
+            (case_ids,),
+        )
         doc_link_rows = cur.fetchall()
-    return _assemble_cases(case_rows, hearing_rows, doc_link_rows)
+    return _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles={c["id"]: c["role"] for c in case_rows})
 
 
 def case_exists(case_id: str) -> bool:
@@ -529,7 +588,9 @@ def get_case(case_id: str) -> dict | None:
     return _assemble_cases([case_row], hearing_rows, doc_link_rows)[0]
 
 
-def save_case(case_id: str, data: dict) -> None:
+def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
+    """Creates or overwrites a case. Pass `owner_id` when creating, to
+    record the creator's ownership in the same transaction."""
     with _cursor() as cur:
         cur.execute(
             """
@@ -557,6 +618,8 @@ def save_case(case_id: str, data: dict) -> None:
                         "INSERT INTO hearing_documents (id, hearing_id, direction, document_id, position) VALUES (%s, %s, %s, %s, %s)",
                         (doc_item["id"], hearing["id"], direction, doc_item["doc_id"], doc_position),
                     )
+        if owner_id is not None:
+            _grant(cur, owner_id, "case", case_id, "owner")
 
 
 def delete_case(case_id: str) -> None:
@@ -595,11 +658,18 @@ def _goal_dict(row: dict) -> dict:
     return {"id": row["id"], "title": row["title"], "description": row["description"], "case_ids": list(row["case_ids"])}
 
 
-def list_causes() -> list[dict]:
+def list_causes(user_id: int) -> list[dict]:
+    """The causes this user has any role on, each carrying that "role"."""
     with _cursor() as cur:
-        cur.execute("SELECT id, title, description, created_at, updated_at FROM causes")
+        cur.execute(
+            """
+            SELECT c.id, c.title, c.description, c.created_at, c.updated_at, uc.role
+            FROM causes c JOIN user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s
+            """,
+            (user_id,),
+        )
         cause_rows = cur.fetchall()
-        cur.execute(_GOAL_QUERY.format(where=""))
+        cur.execute(_GOAL_QUERY.format(where="WHERE g.cause_id = ANY(%s)"), ([c["id"] for c in cause_rows],))
         goal_rows = cur.fetchall()
     goals_by_cause: dict[str, list] = {}
     for g in goal_rows:
@@ -608,6 +678,7 @@ def list_causes() -> list[dict]:
         {
             "id": c["id"], "title": c["title"], "description": c["description"],
             "goals": goals_by_cause.get(c["id"], []),
+            "role": c["role"],
             "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"]),
         }
         for c in cause_rows
@@ -633,7 +704,9 @@ def get_cause(cause_id: str) -> dict | None:
     }
 
 
-def save_cause(cause_id: str, data: dict) -> None:
+def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
+    """Creates or overwrites a cause. Pass `owner_id` when creating, to
+    record the creator's ownership in the same transaction."""
     with _cursor() as cur:
         cur.execute(
             """
@@ -655,6 +728,8 @@ def save_cause(cause_id: str, data: dict) -> None:
                     "INSERT INTO goal_cases (goal_id, case_id, position) VALUES (%s, %s, %s)",
                     (goal["id"], case_id, case_position),
                 )
+        if owner_id is not None:
+            _grant(cur, owner_id, "cause", cause_id, "owner")
 
 
 def delete_cause(cause_id: str) -> None:
@@ -666,26 +741,33 @@ def delete_cause(cause_id: str) -> None:
         cur.execute("DELETE FROM causes WHERE id = %s", (cause_id,))
 
 
-def most_recently_updated_cause_id(exclude: str | None = None) -> str | None:
+def most_recently_updated_editable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
+    """The most recently updated cause this user can add cases to (editor
+    or owner), optionally skipping `exclude`."""
     with _cursor() as cur:
-        if exclude is None:
-            cur.execute("SELECT id FROM causes ORDER BY updated_at DESC LIMIT 1")
-        else:
-            cur.execute("SELECT id FROM causes WHERE id != %s ORDER BY updated_at DESC LIMIT 1", (exclude,))
+        cur.execute(
+            """
+            SELECT c.id FROM causes c
+            JOIN user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s AND uc.role IN ('owner', 'editor')
+            WHERE c.id IS DISTINCT FROM %s
+            ORDER BY c.updated_at DESC LIMIT 1
+            """,
+            (user_id, exclude),
+        )
         row = cur.fetchone()
         return row["id"] if row else None
 
 
-def get_last_used_cause() -> str | None:
+def get_default_cause(user_id: int) -> str | None:
     with _cursor() as cur:
-        cur.execute("SELECT last_used_cause_id FROM app_settings WHERE id = TRUE")
+        cur.execute("SELECT default_cause_id FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
-        return row["last_used_cause_id"] if row else None
+        return row["default_cause_id"] if row else None
 
 
-def set_last_used_cause(cause_id: str) -> None:
+def set_default_cause(user_id: int, cause_id: str) -> None:
     with _cursor() as cur:
-        cur.execute("UPDATE app_settings SET last_used_cause_id = %s WHERE id = TRUE", (cause_id,))
+        cur.execute("UPDATE users SET default_cause_id = %s WHERE id = %s", (cause_id, user_id))
 
 
 # ---------------------------------------------------------------------------
@@ -831,3 +913,157 @@ def set_allegation_order(order: list[str]) -> list[str]:
         for index, allegation_id in enumerate(seen):
             cur.execute("UPDATE allegations SET order_index = %s WHERE id = %s", (index, allegation_id))
     return seen
+
+
+# ---------------------------------------------------------------------------
+# Users and their sign-in sessions. Only a password *hash* ever reaches this
+# module (see auth.py's User class) -- never the password itself -- and only
+# a session token's SHA-256, never the token the browser holds.
+# ---------------------------------------------------------------------------
+
+def create_user(email: str, password_hash: str) -> dict | None:
+    """{"id", "email", "password_hash"} for the new user, or None if that
+    email (case-insensitively) is already registered."""
+    try:
+        with _cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id, email, password_hash",
+                (email, password_hash),
+            )
+            return dict(cur.fetchone())
+    except psycopg2.errors.UniqueViolation:
+        return None
+
+
+def get_user_by_email(email: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s)", (email,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def create_session(user_id: int, token_hash: str, expires_at: datetime) -> None:
+    """Records a new sign-in, clearing out any of this user's sessions that
+    have already expired while it's at it."""
+    with _cursor() as cur:
+        cur.execute("DELETE FROM user_sessions WHERE user_id = %s AND expires_at <= now()", (user_id,))
+        cur.execute(
+            "INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES (%s, %s, %s)",
+            (token_hash, user_id, expires_at),
+        )
+
+
+def get_session_user(token_hash: str) -> dict | None:
+    """{"id", "email", "password_hash"} of the user a still-unexpired
+    session belongs to, else None."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.email, u.password_hash FROM user_sessions s JOIN users u ON u.id = s.user_id
+            WHERE s.token_hash = %s AND s.expires_at > now()
+            """,
+            (token_hash,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def delete_session(token_hash: str) -> None:
+    with _cursor() as cur:
+        cur.execute("DELETE FROM user_sessions WHERE token_hash = %s", (token_hash,))
+
+
+# ---------------------------------------------------------------------------
+# Per-object access roles (owner / editor / viewer) -- one association table
+# per kind of object, see db/migrations/001_users_and_access.sql. A user with
+# no row for an object has no access to it at all.
+# ---------------------------------------------------------------------------
+
+_ACCESS_TABLES = {
+    "cause": ("user_causes", "cause_id"),
+    "case": ("user_cases", "case_id"),
+    "report": ("user_reports", "report_id"),
+    "source": ("user_sources", "document_id"),
+}
+
+
+def _grant(cur, user_id: int, kind: str, object_id: str, role: str) -> None:
+    table, column = _ACCESS_TABLES[kind]
+    cur.execute(
+        f"""
+        INSERT INTO {table} (user_id, {column}, role) VALUES (%s, %s, %s)
+        ON CONFLICT (user_id, {column}) DO UPDATE SET role = EXCLUDED.role
+        """,  # noqa: S608 (table/column come from _ACCESS_TABLES, never from input)
+        (user_id, object_id, role),
+    )
+
+
+def get_role(user_id: int, kind: str, object_id: str) -> str | None:
+    """"owner" / "editor" / "viewer", or None if this user has no access to
+    that object (including when it doesn't exist)."""
+    table, column = _ACCESS_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT role FROM {table} WHERE user_id = %s AND {column} = %s", (user_id, object_id))  # noqa: S608
+        row = cur.fetchone()
+    return row["role"] if row else None
+
+
+def accessible_ids(user_id: int, kind: str) -> set[str]:
+    """Ids of every object of this kind the user has any role on."""
+    table, column = _ACCESS_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT {column} AS id FROM {table} WHERE user_id = %s", (user_id,))  # noqa: S608
+        return {r["id"] for r in cur.fetchall()}
+
+
+def can_view_snippet_images(user_id: int, document_id: str) -> bool:
+    """Snippet PNGs get embedded in reports, so they're visible to anyone
+    who can view either their source document or a report drawing on that
+    document -- otherwise sharing a report would show its reader broken
+    images."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(SELECT 1 FROM user_sources WHERE user_id = %s AND document_id = %s)
+                OR EXISTS(SELECT 1 FROM reports r JOIN user_reports ur ON ur.report_id = r.id
+                          WHERE ur.user_id = %s AND r.source_document_id = %s) AS ok
+            """,
+            (user_id, document_id, user_id, document_id),
+        )
+        return cur.fetchone()["ok"]
+
+
+# ---------------------------------------------------------------------------
+# Associations between reports/sources and the causes/cases they relate to
+# (many-to-many -- see db/migrations/001_users_and_access.sql). Who may add
+# or remove one is app.py's decision; these just record it.
+# ---------------------------------------------------------------------------
+
+_LINK_TABLES = {
+    ("report", "cause"): ("report_causes", "report_id", "cause_id"),
+    ("report", "case"): ("report_cases", "report_id", "case_id"),
+    ("source", "cause"): ("source_causes", "document_id", "cause_id"),
+    ("source", "case"): ("source_cases", "document_id", "case_id"),
+}
+
+
+def _link(cur, kind: str, object_id: str, target_kind: str, target_id: str) -> None:
+    table, key, target_key = _LINK_TABLES[(kind, target_kind)]
+    cur.execute(
+        f"INSERT INTO {table} ({key}, {target_key}) VALUES (%s, %s) ON CONFLICT DO NOTHING",  # noqa: S608 (from _LINK_TABLES)
+        (object_id, target_id),
+    )
+
+
+def link_to(kind: str, object_id: str, target_kind: str, target_id: str) -> None:
+    """Associates a report or source (`kind`) with a cause or case."""
+    with _cursor() as cur:
+        _link(cur, kind, object_id, target_kind, target_id)
+
+
+def unlink_from(kind: str, object_id: str, target_kind: str, target_id: str) -> bool:
+    """Removes that association; False if there wasn't one."""
+    table, key, target_key = _LINK_TABLES[(kind, target_kind)]
+    with _cursor() as cur:
+        cur.execute(f"DELETE FROM {table} WHERE {key} = %s AND {target_key} = %s", (object_id, target_id))  # noqa: S608
+        return cur.rowcount > 0

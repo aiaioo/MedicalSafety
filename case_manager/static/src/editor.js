@@ -191,8 +191,8 @@ import { Pagination, repaginate } from "./pagination.js";
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, source_doc, source_type }),
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
       window.location.href = `/reports?report=${encodeURIComponent(data.id)}`;
     } catch (e) {
       newDocError.textContent = "Could not create document: " + e.message;

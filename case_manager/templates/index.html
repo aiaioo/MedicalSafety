@@ -9,6 +9,11 @@
 </head>
 <body>
 <div class="container">
+  <div class="account-bar">
+    <span>Signed in as {{ g.user.email }}</span>
+    <form method="post" action="{{ url_for('auth.signout') }}"><button type="submit" class="btn">Sign out</button></form>
+  </div>
+
   <h1>Causes</h1>
 
   <section class="index-section">

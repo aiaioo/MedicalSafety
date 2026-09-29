@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ 'Sign up' if mode == 'signup' else 'Sign in' }}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+  <form class="modal auth-card" method="post"
+        action="{{ url_for('auth.signup' if mode == 'signup' else 'auth.signin') }}">
+    <h3>{{ 'Create an account' if mode == 'signup' else 'Sign in' }}</h3>
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="modal-field">Email
+      <input type="email" name="email" value="{{ email }}" autocomplete="email" required autofocus>
+    </label>
+    <label class="modal-field">Password
+      <input type="password" name="password" required
+             autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
+             {% if mode == 'signup' %}minlength="8"{% endif %}>
+    </label>
+    {% if mode == 'signup' %}
+    <label class="modal-field">Confirm password
+      <input type="password" name="confirm" autocomplete="new-password" minlength="8" required>
+    </label>
+    {% endif %}
+    {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
+    <div class="modal-actions">
+      <button type="submit" class="btn">{{ 'Sign up' if mode == 'signup' else 'Sign in' }}</button>
+    </div>
+    <p class="modal-hint auth-switch">
+      {% if mode == 'signup' %}
+      Already have an account? <a href="{{ url_for('auth.signin', next=next) }}">Sign in</a>
+      {% else %}
+      New here? <a href="{{ url_for('auth.signup', next=next) }}">Create an account</a>
+      {% endif %}
+    </p>
+  </form>
+</div>
+</body>
+</html>

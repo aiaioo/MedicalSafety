@@ -724,3 +724,13 @@ a.tag:hover { background: #d7deec; }
 .to-prove-evidence-row.kind-inculpatory .to-prove-evidence-kind { color: #a02020; }
 .to-prove-evidence-row.kind-exculpatory .to-prove-evidence-kind { color: #1e7d3c; }
 .to-prove-evidence-popover .empty { margin: 0; font-size: 12px; }
+
+/* Sign in / sign up (templates/auth.html) and the signed-in bar on the home page. */
+.auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.auth-card { width: 380px; }
+.auth-switch { margin: 14px 0 0; }
+.account-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  font-size: 13px; color: #46536b; }
+.account-bar form { margin: 0; }
+.upload-case { font-size: 13px; color: #46536b; }
+.upload-case select { margin-left: 4px; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 4px; }

@@ -15,8 +15,9 @@ from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
-from flask import Flask, Response, abort, jsonify, render_template, request, url_for
+from flask import Flask, Response, abort, g, jsonify, render_template, request, url_for
 
+import auth
 import storage
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -106,6 +107,9 @@ def sanitize_page_numbers(raw, fallback=None):
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
+# Sign-up/sign-in/sign-out, plus a before-request gate that keeps every other
+# route behind a signed-in session and sets g.user -- see auth.py.
+app.register_blueprint(auth.bp)
 
 UPLOAD_EXTENSIONS = {".pdf": "pdf", ".docx": "docx", ".doc": "docx"}
 
@@ -122,6 +126,66 @@ def handle_document_error(err):
     if request.path.startswith("/api/"):
         return jsonify({"error": err.message}), err.status
     return render_template("error.html", message=err.message), err.status
+
+
+# ---------------------------------------------------------------------------
+# Per-object access (see db/migrations/001_users_and_access.sql). A viewer
+# can read an object, an editor can also change it -- and, for a cause,
+# create cases under it; for a cause or case, create reports / upload
+# sources associated with it --
+# and only its owner -- whoever created it -- can delete it. A user with no
+# role on an object gets the same 404 as for one that doesn't exist, so ids
+# can't be probed for.
+# ---------------------------------------------------------------------------
+ROLE_RANK = {"viewer": 1, "editor": 2, "owner": 3}
+ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source": "document"}
+
+
+def has_role(kind, object_id, min_role):
+    role = storage.get_role(g.user.id, kind, object_id)
+    return role is not None and ROLE_RANK[role] >= ROLE_RANK[min_role]
+
+
+def require_role(kind, object_id, min_role="viewer"):
+    label = ACCESS_LABELS[kind]
+    role = storage.get_role(g.user.id, kind, object_id)
+    if role is None:
+        raise DocumentError(f"No {label} with id {object_id!r}", 404)
+    if ROLE_RANK[role] < ROLE_RANK[min_role]:
+        action = "delete" if min_role == "owner" else "change"
+        raise DocumentError(f"You don't have permission to {action} this {label}", 403)
+    return role
+
+
+def require_link_target(fields, what):
+    """The one cause or case a report/source is being associated with,
+    from `fields` (a JSON body or form) carrying exactly one of cause_id /
+    case_id -- the user must be able to edit it. Returns ("cause" | "case",
+    id), the shape storage's link functions take."""
+    cause_id, case_id = fields.get("cause_id"), fields.get("case_id")
+    if bool(cause_id) == bool(case_id):
+        raise DocumentError(f"Choose one cause or case to associate {what} with", 400)
+    target_kind, target_id = ("cause", cause_id) if cause_id else ("case", case_id)
+    if not isinstance(target_id, str) or not DOC_ID_RE.match(target_id):
+        raise DocumentError(f"Invalid {target_kind} id: {target_id!r}", 400)
+    require_role(target_kind, target_id, "editor")
+    return target_kind, target_id
+
+
+def editable_cases():
+    """{"id", "name"} of every case the user can edit, most recently
+    updated first."""
+    cases = [c for c in storage.list_cases(g.user.id) if c["role"] in ("owner", "editor")]
+    cases.sort(key=lambda c: c["updated_at"], reverse=True)
+    return [{"id": c["id"], "name": c["name"] or c["id"]} for c in cases]
+
+
+def editable_causes():
+    """{"id", "title"} of every cause the user can edit, most recently
+    updated first."""
+    causes = [c for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor")]
+    causes.sort(key=lambda c: c["updated_at"], reverse=True)
+    return [{"id": c["id"], "title": c["title"] or c["id"]} for c in causes]
 
 
 # ---------------------------------------------------------------------------
@@ -151,20 +215,21 @@ def list_source_docs():
     """All uploaded source documents (pdf/docx/doc), as {"id", "type",
     "title"} dicts -- the same shape rendered into the annotations and
     reports pages' source pickers."""
-    docs = storage.list_documents()
+    docs = storage.list_documents(g.user.id)
     for d in docs:
         d["type"] = normalize_type(d["type"])
     return docs
 
 
-def _get_pdf_bytes(doc_id, raw_type):
-    """Validates doc_id/raw_type and returns (pdf_bytes, norm_type) --
-    storage.get_document_pdf_bytes handles fetching the right bytes and, for
-    a Word document, converting+caching a PDF rendering of it; this is just
-    the existence check and error translation for callers who don't already
-    know the document exists."""
+def _get_pdf_bytes(doc_id, raw_type, min_role="viewer"):
+    """Validates doc_id/raw_type and the user's access to that document, and
+    returns (pdf_bytes, norm_type) -- storage.get_document_pdf_bytes handles
+    fetching the right bytes and, for a Word document, converting+caching a
+    PDF rendering of it; this is just the existence/access check and error
+    translation for callers who don't already know the document exists."""
     check_doc_id(doc_id)
     norm_type = normalize_type(raw_type)
+    require_role("source", doc_id, min_role)
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
     try:
@@ -178,11 +243,13 @@ def slugify_report_name(name):
     return slug[:50] or "document"
 
 
-def sanitize_cause_id(raw):
-    """Keep a case's cause id only if it names a cause that actually exists,
-    so a case never points at something the causes workspace can't
-    resolve."""
-    return raw if isinstance(raw, str) and DOC_ID_RE.match(raw) and storage.cause_exists(raw) else ""
+def require_editable_cause(raw):
+    """A cause a case is being put under -- the user must be able to edit
+    it (a case is a child of its cause)."""
+    if not isinstance(raw, str) or not DOC_ID_RE.match(raw):
+        raise DocumentError(f"Invalid cause id: {raw!r}", 400)
+    require_role("cause", raw, "editor")
+    return raw
 
 
 def create_default_cause():
@@ -194,22 +261,41 @@ def create_default_cause():
         "goals": [],
         "created_at": now,
         "updated_at": now,
-    })
+    }, owner_id=g.user.id)
     return cause_id
 
 
-def resolve_default_cause_id(exclude_cause_id=None):
-    """The cause id to fall back to whenever a case doesn't already carry a
-    valid one: whichever cause was most recently used, else the most
-    recently updated cause, else a freshly created "General" cause if none
-    exist at all -- a case's cause is mandatory, so this never returns
-    empty. `exclude_cause_id` is passed when reassigning cases off a cause
-    that's about to be deleted, so that cause is never offered back as its
-    own replacement."""
-    last = storage.get_last_used_cause()
-    if last and last != exclude_cause_id and storage.cause_exists(last):
-        return last
-    return storage.most_recently_updated_cause_id(exclude=exclude_cause_id) or create_default_cause()
+def resolve_default_cause_id(exclude_cause_id=None, create=True):
+    """The user's default cause (see users.default_cause_id) -- the cause
+    they last selected, as long as they can still edit it; else the most
+    recently updated cause they can edit; else (when `create`) a freshly
+    created "General" cause they own, so a case or new report/source is
+    never left without one. `exclude_cause_id` is passed when reassigning
+    cases off a cause that's about to be deleted, so that cause is never
+    offered back as its own replacement."""
+    default = storage.get_default_cause(g.user.id)
+    if default and default != exclude_cause_id and has_role("cause", default, "editor"):
+        return default
+    fallback = storage.most_recently_updated_editable_cause_id(g.user.id, exclude=exclude_cause_id)
+    return fallback or (create_default_cause() if create else None)
+
+
+def default_cause_link():
+    """The association every newly created report or uploaded source gets:
+    the user's default cause. Whatever resolve_default_cause_id fell back to
+    is saved as the default, so it stays put from then on."""
+    cause_id = resolve_default_cause_id()
+    storage.set_default_cause(g.user.id, cause_id)
+    return "cause", cause_id
+
+
+def default_cause_for_display():
+    """{"id", "title"} of the cause new reports/uploads will be associated
+    with, for showing on the page -- None if one would have to be created
+    first (resolving it here, on a GET, never creates anything)."""
+    cause_id = resolve_default_cause_id(create=False)
+    cause = storage.get_cause(cause_id) if cause_id else None
+    return {"id": cause_id, "title": cause["title"] or cause_id} if cause else None
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +329,15 @@ def _sanitize_text(raw, max_chars):
     return raw.strip()[:max_chars] if isinstance(raw, str) else ""
 
 
-def sanitize_evidence_list(raw):
+def linkable_ids(kind, already_linked=()):
+    """Ids a save may link to: anything of that kind the user can view, plus
+    whatever the record already linked (possibly added by a collaborator
+    with wider access) -- so a user can never newly link something they
+    can't see, and saving never silently drops someone else's links."""
+    return storage.accessible_ids(g.user.id, kind) | set(already_linked)
+
+
+def sanitize_evidence_list(raw, allowed_report_ids):
     if not isinstance(raw, list):
         return []
     out = []
@@ -254,7 +348,8 @@ def sanitize_evidence_list(raw):
         # reports managed in reports.html) -- drop the link rather than
         # storing a dangling reference if that report no longer exists.
         report_id = item.get("report_id")
-        has_report = isinstance(report_id, str) and DOC_ID_RE.match(report_id) and storage.report_exists(report_id)
+        has_report = (isinstance(report_id, str) and report_id in allowed_report_ids
+                      and DOC_ID_RE.match(report_id) and storage.report_exists(report_id))
         out.append({
             "id": _sanitize_item_id(item.get("id")),
             "text": _sanitize_text(item.get("text"), ALLEGATION_MAX_TEXT_CHARS),
@@ -290,15 +385,16 @@ def sanitize_to_prove_list(raw, valid_evidence_ids):
     return out
 
 
-def sanitize_case_ids(raw):
-    """Keep only ids that look valid and name a case that actually exists,
-    so a link never points at something the cases workspace can't
-    resolve."""
+def sanitize_case_ids(raw, allowed_case_ids):
+    """Keep only ids that look valid, are in `allowed_case_ids` (see
+    linkable_ids), and name a case that actually exists, so a link never
+    points at something the cases workspace can't resolve."""
     if not isinstance(raw, list):
         return []
     out = []
     for cid in raw[:ALLEGATION_MAX_CASE_LINKS]:
-        if isinstance(cid, str) and DOC_ID_RE.match(cid) and cid not in out and storage.case_exists(cid):
+        if (isinstance(cid, str) and cid in allowed_case_ids and DOC_ID_RE.match(cid)
+                and cid not in out and storage.case_exists(cid)):
             out.append(cid)
     return out
 
@@ -313,10 +409,11 @@ def _source_doc_exists(doc_id, doc_type):
     return normalize_type(actual_type) == wanted_family
 
 
-def sanitize_hearing_doc_list(raw):
+def sanitize_hearing_doc_list(raw, allowed_doc_ids):
     """A hearing's submitted/received document list -- each entry links to an
     uploaded source document (documents/), not a report. Drop entries whose
-    document no longer exists rather than storing a dangling reference."""
+    document no longer exists (or isn't in `allowed_doc_ids`, see
+    linkable_ids) rather than storing a dangling reference."""
     if not isinstance(raw, list):
         return []
     out = []
@@ -325,7 +422,7 @@ def sanitize_hearing_doc_list(raw):
             continue
         doc_id = item.get("doc_id")
         doc_type = "docx" if item.get("doc_type") in ("docx", "doc", "word") else "pdf"
-        if not _source_doc_exists(doc_id, doc_type):
+        if doc_id not in allowed_doc_ids or not _source_doc_exists(doc_id, doc_type):
             continue
         out.append({
             "id": _sanitize_item_id(item.get("id")),
@@ -335,7 +432,7 @@ def sanitize_hearing_doc_list(raw):
     return out
 
 
-def sanitize_hearings(raw):
+def sanitize_hearings(raw, allowed_doc_ids):
     if not isinstance(raw, list):
         return []
     out = []
@@ -347,8 +444,8 @@ def sanitize_hearings(raw):
             "date": _sanitize_text(item.get("date"), CASE_MAX_DATE_CHARS),
             "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
             "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
-            "submitted_docs": sanitize_hearing_doc_list(item.get("submitted_docs")),
-            "received_docs": sanitize_hearing_doc_list(item.get("received_docs")),
+            "submitted_docs": sanitize_hearing_doc_list(item.get("submitted_docs"), allowed_doc_ids),
+            "received_docs": sanitize_hearing_doc_list(item.get("received_docs"), allowed_doc_ids),
         })
     return out
 
@@ -363,7 +460,7 @@ def sanitize_hearings(raw):
 CAUSE_MAX_GOAL_ITEMS = 300
 
 
-def sanitize_goals(raw):
+def sanitize_goals(raw, allowed_case_ids):
     if not isinstance(raw, list):
         return []
     out = []
@@ -374,7 +471,7 @@ def sanitize_goals(raw):
             "id": _sanitize_item_id(item.get("id")),
             "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
             "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
-            "case_ids": sanitize_case_ids(item.get("case_ids")),
+            "case_ids": sanitize_case_ids(item.get("case_ids"), allowed_case_ids),
         })
     return out
 
@@ -638,7 +735,8 @@ def inline_doc_images(node):
         parts = [p for p in parsed.path.split("/") if p]
         if parsed.path.startswith("/media/snippets/") and len(parts) >= 2:
             filename, url_doc_id = parts[-1], parts[-2]
-            if DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename:
+            if (DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename
+                    and storage.can_view_snippet_images(g.user.id, url_doc_id)):
                 data = storage.read_snippet_bytes(url_doc_id, filename)
                 if data is not None:
                     b64 = base64.b64encode(data).decode("ascii")
@@ -1261,7 +1359,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        return render_template("annotations.html", doc_id="", docs=list_source_docs())
+        return render_template("annotations.html", doc_id="", docs=list_source_docs(), default_cause=default_cause_for_display())
 
     try:
         page = int(request.args.get("page", 1))
@@ -1308,6 +1406,7 @@ def documents_view():
     report_id = request.args.get("report", "")
     if report_id:
         check_report_id(report_id)
+        require_role("report", report_id)
         if not storage.report_exists(report_id):
             raise DocumentError(f"No report with id {report_id!r}", 404)
 
@@ -1315,10 +1414,13 @@ def documents_view():
     preselect_type = request.args.get("type", "pdf")
     if preselect_source:
         check_doc_id(preselect_source)
+        if not any(d["id"] == preselect_source for d in source_docs):
+            preselect_source = ""
 
     return render_template(
         "reports.html",
         source_docs=source_docs,
+        default_cause=default_cause_for_display(),
         report_id=report_id,
         preselect_source=preselect_source,
         preselect_type=preselect_type,
@@ -1333,15 +1435,14 @@ def allegations_view():
     filter_case_id = request.args.get("case", "")
     if filter_case_id:
         check_report_id(filter_case_id)
-        if not storage.case_exists(filter_case_id):
-            raise DocumentError(f"No case with id {filter_case_id!r}", 404)
+        require_role("case", filter_case_id)
 
     return render_template("allegations.html", filter_case_id=filter_case_id)
 
 
 @app.route("/causes")
 def causes_view():
-    return render_template("causes.html")
+    return render_template("causes.html", default_cause_id=storage.get_default_cause(g.user.id) or "")
 
 
 @app.route("/cases")
@@ -1355,6 +1456,7 @@ def cases_view():
 
 @app.route("/api/documents/upload", methods=["POST"])
 def api_upload_document():
+
     f = request.files.get("file")
     if f is None or not f.filename:
         raise DocumentError("No file uploaded (expected multipart field 'file')", 400)
@@ -1388,7 +1490,7 @@ def api_upload_document():
     while storage.document_exists(doc_id):
         doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
 
-    storage.create_document(doc_id, ext.lstrip("."), data)
+    storage.create_document(doc_id, ext.lstrip("."), data, owner_id=g.user.id, link=default_cause_link())
 
     return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
 
@@ -1408,6 +1510,7 @@ def api_doc_info(doc_id):
 @app.route("/api/doc/<doc_id>/title", methods=["POST"])
 def api_doc_title(doc_id):
     check_doc_id(doc_id)
+    require_role("source", doc_id, "editor")
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
@@ -1420,6 +1523,7 @@ def api_doc_title(doc_id):
 @app.route("/api/document/<doc_id>", methods=["DELETE"])
 def api_delete_document(doc_id):
     check_doc_id(doc_id)
+    require_role("source", doc_id, "owner")
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
@@ -1466,6 +1570,7 @@ def api_all_annotations(doc_id):
     """
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
+    require_role("source", doc_id)
     return jsonify(storage.get_all_annotations(doc_id))
 
 
@@ -1473,6 +1578,7 @@ def api_all_annotations(doc_id):
 def api_annotations(doc_id, page):
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
+    require_role("source", doc_id, "viewer" if request.method == "GET" else "editor")
 
     if request.method == "GET":
         return jsonify(storage.get_page_annotations(doc_id, page))
@@ -1493,7 +1599,7 @@ def api_annotations(doc_id, page):
 @app.route("/api/doc/<doc_id>/snippet/<int:page>", methods=["POST"])
 def api_create_snippet(doc_id, page):
     raw_type = request.args.get("type", "pdf")
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="editor")
 
     body = request.get_json(silent=True) or {}
     try:
@@ -1566,6 +1672,7 @@ def api_download_annotated(doc_id):
 def api_list_snippets(doc_id):
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
+    require_role("source", doc_id)
     page = request.args.get("page", type=int)
 
     meta = storage.list_snippets(doc_id, page=page)
@@ -1579,6 +1686,7 @@ def api_list_snippets(doc_id):
 def api_delete_snippet(doc_id, snippet_id):
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
+    require_role("source", doc_id, "editor")
     if not storage.delete_snippet(doc_id, snippet_id):
         raise DocumentError(f"No snippet with id {snippet_id}", 404)
     return jsonify({"status": "ok"})
@@ -1587,7 +1695,7 @@ def api_delete_snippet(doc_id, snippet_id):
 @app.route("/api/reports", methods=["GET", "POST"])
 def api_reports():
     if request.method == "GET":
-        items = storage.list_reports()
+        items = storage.list_reports(g.user.id)
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return jsonify(items)
 
@@ -1601,7 +1709,7 @@ def api_reports():
     if source_doc:
         check_doc_id(source_doc)
         source_type = normalize_type(body.get("source_type", "pdf"))
-        if not storage.document_exists(source_doc):
+        if not storage.document_exists(source_doc) or not has_role("source", source_doc, "viewer"):
             source_doc, source_type = "", "pdf"
 
     report_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
@@ -1616,13 +1724,14 @@ def api_reports():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_report(report_id, data)
+    storage.save_report(report_id, data, owner_id=g.user.id, link=default_cause_link())
     return jsonify({"id": report_id, **data})
 
 
 @app.route("/api/report/<report_id>", methods=["GET", "POST", "DELETE"])
 def api_report(report_id):
     check_report_id(report_id)
+    require_role("report", report_id, {"GET": "viewer", "DELETE": "owner"}.get(request.method, "editor"))
     existing = storage.get_report(report_id)
     if existing is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
@@ -1647,7 +1756,8 @@ def api_report(report_id):
     if source_doc:
         check_doc_id(source_doc)
         source_type = normalize_type(body.get("source_type", existing.get("source_type", "pdf")))
-        if not storage.document_exists(source_doc):
+        linkable = source_doc == existing.get("source_doc") or has_role("source", source_doc, "viewer")
+        if not linkable or not storage.document_exists(source_doc):
             source_doc, source_type = "", "pdf"
 
     doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
@@ -1670,6 +1780,7 @@ def api_report(report_id):
 @app.route("/api/report/<report_id>/export")
 def api_report_export(report_id):
     check_report_id(report_id)
+    require_role("report", report_id)
     data = storage.get_report(report_id)
     if data is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
@@ -1693,6 +1804,7 @@ def api_report_export(report_id):
 @app.route("/api/report/<report_id>/export.docx")
 def api_report_export_docx(report_id):
     check_report_id(report_id)
+    require_role("report", report_id)
     data = storage.get_report(report_id)
     if data is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
@@ -1726,7 +1838,7 @@ def api_allegation_cases():
     if request.method == "GET":
         allegation_counts = storage.count_allegations_by_case()
         items = []
-        for case in storage.list_cases():
+        for case in storage.list_cases(g.user.id):
             items.append({
                 "id": case["id"],
                 "name": case["name"] or case["id"],
@@ -1736,6 +1848,7 @@ def api_allegation_cases():
                 "summary": case["summary"],
                 "allegation_count": allegation_counts.get(case["id"], 0),
                 "hearing_count": len(case["hearings"]),
+                "role": case["role"],
                 "created_at": case["created_at"],
                 "updated_at": case["updated_at"],
             })
@@ -1747,11 +1860,13 @@ def api_allegation_cases():
     if not name:
         raise DocumentError("A case name is required", 400)
 
-    # A case's cause is mandatory: an explicit (valid) cause_id wins, else
-    # fall back to whichever cause was most recently used -- see
-    # resolve_default_cause_id, which is guaranteed to return a real id.
-    cause_id = sanitize_cause_id(body.get("cause_id")) or resolve_default_cause_id()
-    storage.set_last_used_cause(cause_id)
+    # A case's cause is mandatory: an explicit cause_id wins (the user must
+    # be able to edit that cause), else fall back to whichever cause they
+    # most recently used -- see resolve_default_cause_id, which is
+    # guaranteed to return a real, editable id.
+    raw_cause_id = body.get("cause_id")
+    cause_id = require_editable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
+    storage.set_default_cause(g.user.id, cause_id)
 
     case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
@@ -1765,19 +1880,20 @@ def api_allegation_cases():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_case(case_id, data)
+    storage.save_case(case_id, data, owner_id=g.user.id)
     return jsonify({"id": case_id, **data})
 
 
 @app.route("/api/allegation-case/<case_id>", methods=["GET", "POST", "DELETE"])
 def api_allegation_case(case_id):
     check_report_id(case_id)
+    role = require_role("case", case_id, {"GET": "viewer", "DELETE": "owner"}.get(request.method, "editor"))
     existing = storage.get_case(case_id)
     if existing is None:
         raise DocumentError(f"No case with id {case_id!r}", 404)
 
     if request.method == "GET":
-        return jsonify(existing)
+        return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
         if existing.get("hearings"):
@@ -1790,12 +1906,17 @@ def api_allegation_case(case_id):
     if not name:
         raise DocumentError("A case name is required", 400)
 
-    # A case's cause is mandatory -- an invalid or missing cause_id (e.g. its
-    # cause was deleted) falls back to the most recently used cause rather
-    # than ever being left empty.
-    cause_id = sanitize_cause_id(body.get("cause_id", existing.get("cause_id", ""))) or resolve_default_cause_id()
-    if cause_id != existing.get("cause_id"):
-        storage.set_last_used_cause(cause_id)
+    # A case's cause is mandatory. Keeping its current cause needs no
+    # further check; moving it under a different one needs edit access to
+    # that cause, just like creating a case there would.
+    cause_id = body.get("cause_id", existing["cause_id"]) or existing["cause_id"]
+    if cause_id != existing["cause_id"]:
+        require_editable_cause(cause_id)
+        storage.set_default_cause(g.user.id, cause_id)
+
+    existing_doc_ids = {
+        d["doc_id"] for h in existing.get("hearings", []) for d in h["submitted_docs"] + h["received_docs"]
+    }
 
     # Each caller (the allegations editor, the cases workspace) only ever
     # sends the fields it owns -- falling back to the value already saved
@@ -1807,7 +1928,8 @@ def api_allegation_case(case_id):
         "court": _sanitize_text(body.get("court", existing.get("court", "")), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
-        "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", []))),
+        "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", [])),
+                                      linkable_ids("source", existing_doc_ids)),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1826,12 +1948,13 @@ def api_allegation_case(case_id):
 def api_causes():
     if request.method == "GET":
         items = []
-        for cause in storage.list_causes():
+        for cause in storage.list_causes(g.user.id):
             items.append({
                 "id": cause["id"],
                 "title": cause["title"] or cause["id"],
                 "description": cause["description"],
                 "goal_count": len(cause["goals"]),
+                "role": cause["role"],
                 "created_at": cause["created_at"],
                 "updated_at": cause["updated_at"],
             })
@@ -1852,19 +1975,20 @@ def api_causes():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_cause(cause_id, data)
+    storage.save_cause(cause_id, data, owner_id=g.user.id)
     return jsonify({"id": cause_id, **data})
 
 
 @app.route("/api/cause/<cause_id>", methods=["GET", "POST", "DELETE"])
 def api_cause(cause_id):
     check_report_id(cause_id)
+    role = require_role("cause", cause_id, {"GET": "viewer", "DELETE": "owner"}.get(request.method, "editor"))
     existing = storage.get_cause(cause_id)
     if existing is None:
         raise DocumentError(f"No cause with id {cause_id!r}", 404)
 
     if request.method == "GET":
-        return jsonify(existing)
+        return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
         if existing.get("goals"):
@@ -1891,7 +2015,10 @@ def api_cause(cause_id):
     data = {
         "title": title,
         "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
-        "goals": sanitize_goals(body.get("goals", existing.get("goals", []))),
+        "goals": sanitize_goals(
+            body.get("goals", existing.get("goals", [])),
+            linkable_ids("case", (cid for goal in existing.get("goals", []) for cid in goal["case_ids"])),
+        ),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1911,8 +2038,9 @@ def api_allegations():
     body = request.get_json(silent=True) or {}
     allegation_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
-    inculpatory = sanitize_evidence_list(body.get("inculpatory"))
-    exculpatory = sanitize_evidence_list(body.get("exculpatory"))
+    allowed_report_ids = linkable_ids("report")
+    inculpatory = sanitize_evidence_list(body.get("inculpatory"), allowed_report_ids)
+    exculpatory = sanitize_evidence_list(body.get("exculpatory"), allowed_report_ids)
     valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
     data = {
         "title": _sanitize_text(body.get("title"), ALLEGATION_MAX_TITLE_CHARS),
@@ -1920,7 +2048,7 @@ def api_allegations():
         "to_prove": sanitize_to_prove_list(body.get("to_prove"), valid_evidence_ids),
         "inculpatory": inculpatory,
         "exculpatory": exculpatory,
-        "case_ids": sanitize_case_ids(body.get("case_ids")),
+        "case_ids": sanitize_case_ids(body.get("case_ids"), linkable_ids("case")),
         "created_at": now,
         "updated_at": now,
     }
@@ -1943,8 +2071,11 @@ def api_allegation_item(allegation_id):
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
-    inculpatory = sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", [])))
-    exculpatory = sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", [])))
+    allowed_report_ids = linkable_ids(
+        "report", (e["report_id"] for e in existing.get("inculpatory", []) + existing.get("exculpatory", []))
+    )
+    inculpatory = sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", [])), allowed_report_ids)
+    exculpatory = sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", [])), allowed_report_ids)
     valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
     data = {
         "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
@@ -1952,7 +2083,8 @@ def api_allegation_item(allegation_id):
         "to_prove": sanitize_to_prove_list(body.get("to_prove", existing.get("to_prove", [])), valid_evidence_ids),
         "inculpatory": inculpatory,
         "exculpatory": exculpatory,
-        "case_ids": sanitize_case_ids(body.get("case_ids", existing.get("case_ids", []))),
+        "case_ids": sanitize_case_ids(body.get("case_ids", existing.get("case_ids", [])),
+                                      linkable_ids("case", existing.get("case_ids", []))),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1971,12 +2103,62 @@ def api_allegations_order():
     return jsonify({"order": order})
 
 
+@app.route("/api/me/default-cause", methods=["POST"])
+def api_default_cause():
+    """Selecting a cause (in the causes workspace) makes it the user's
+    default -- the cause every report/source they create is associated
+    with, so it has to be one they can edit."""
+    body = request.get_json(silent=True) or {}
+    cause_id = require_editable_cause(body.get("cause_id"))
+    storage.set_default_cause(g.user.id, cause_id)
+    return jsonify({"default_cause_id": cause_id})
+
+
+# ---------------------------------------------------------------------------
+# API: associating a report or source with further causes/cases (it gets
+# its first association -- the creator's default cause -- when it's created). Adding or removing one needs
+# edit access to both sides. The last association can't be removed, so a
+# report/source always stays associated with at least one cause or case.
+# ---------------------------------------------------------------------------
+
+def _update_links(kind, object_id):
+    check_report_id(object_id) if kind == "report" else check_doc_id(object_id)
+    require_role(kind, object_id, "editor")
+    body = request.get_json(silent=True) or {}
+    target_kind, target_id = require_link_target(body, f"this {ACCESS_LABELS[kind]}")
+
+    if request.method == "POST":
+        storage.link_to(kind, object_id, target_kind, target_id)
+    else:
+        item = storage.get_report(object_id) if kind == "report" else next(
+            (d for d in storage.list_documents(g.user.id) if d["id"] == object_id), None)
+        links = item["cause_ids"] + item["case_ids"]
+        if target_id not in item[f"{target_kind}_ids"]:
+            raise DocumentError(f"This {ACCESS_LABELS[kind]} isn't associated with that {target_kind}", 404)
+        if len(links) <= 1:
+            raise DocumentError(f"A {ACCESS_LABELS[kind]} must stay associated with at least one cause or case", 400)
+        storage.unlink_from(kind, object_id, target_kind, target_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/report/<report_id>/links", methods=["POST", "DELETE"])
+def api_report_links(report_id):
+    return _update_links("report", report_id)
+
+
+@app.route("/api/doc/<doc_id>/links", methods=["POST", "DELETE"])
+def api_doc_links(doc_id):
+    return _update_links("source", doc_id)
+
+
 @app.route("/media/snippets/<doc_id>/<path:filename>")
 def api_snippet_file(doc_id, filename):
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
     if "/" in filename or "\\" in filename:
         abort(400)
+    if not storage.can_view_snippet_images(g.user.id, doc_id):
+        abort(404)
     data = storage.read_snippet_bytes(doc_id, filename)
     if data is None:
         abort(404)
