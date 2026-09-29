@@ -347,7 +347,7 @@
 
   async function loadCases() {
     try {
-      const [casesRes] = await Promise.all([fetch(casesUrl), loadSourceDocs(), loadCauses()]);
+      const [casesRes] = await Promise.all([fetch(casesUrl + "?default_cause=1"), loadSourceDocs(), loadCauses()]);
       cases = await casesRes.json();
       renderCaseList();
     } catch (e) {

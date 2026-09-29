@@ -298,6 +298,20 @@ def default_cause_for_display():
     return {"id": cause_id, "title": cause["title"] or cause_id} if cause else None
 
 
+@app.context_processor
+def inject_cause_picker():
+    """The title bar's cause picker (templates/_cause_picker.html): the
+    causes this user can edit -- only those can be a default -- and which
+    one is the default now."""
+    if not getattr(g, "user", None):
+        return {}
+    causes = [
+        {"id": c["id"], "title": c["title"] or c["id"]}
+        for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor")
+    ]
+    return {"picker_causes": causes, "picker_current": resolve_default_cause_id(create=False) or ""}
+
+
 # ---------------------------------------------------------------------------
 # Allegations workspace: allegations are standalone records (see
 # templates/allegations.html, static/allegations.js), each carrying its own
@@ -1837,8 +1851,14 @@ def api_source_documents():
 def api_allegation_cases():
     if request.method == "GET":
         allegation_counts = storage.count_allegations_by_case()
+        # ?default_cause=1: only the cases under the user's default cause
+        # (the one picked in the title bar), which is what the cases and
+        # allegations workspaces show.
+        only_cause = resolve_default_cause_id(create=False) if request.args.get("default_cause") else None
         items = []
         for case in storage.list_cases(g.user.id):
+            if only_cause and case["cause_id"] != only_cause:
+                continue
             items.append({
                 "id": case["id"],
                 "name": case["name"] or case["id"],

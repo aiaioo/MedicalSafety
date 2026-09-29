@@ -940,7 +940,7 @@
     try {
       const [allegationsRes, casesRes, reportsRes] = await Promise.all([
         fetch(allegationsUrl),
-        fetch(casesUrl),
+        fetch(casesUrl + "?default_cause=1"),
         fetch(reportsUrl),
       ]);
       if (!allegationsRes.ok) throw new Error(await allegationsRes.text());

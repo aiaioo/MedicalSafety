@@ -734,3 +734,9 @@ a.tag:hover { background: #d7deec; }
 .account-bar form { margin: 0; }
 .upload-case { font-size: 13px; color: #46536b; }
 .upload-case select { margin-left: 4px; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 4px; }
+
+.docbar-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 12px; }
+.docbar-center .docbar-title { position: static; transform: none; }
+.cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
+  background: #f7f8fa; color: #46536b; max-width: 200px; }

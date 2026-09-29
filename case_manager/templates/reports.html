@@ -27,7 +27,8 @@
     {% else %}
     <a class="btn" href="{{ url_for('allegations_view') }}">Allegations</a>
     {% endif %}
-    <span class="docbar-title">Reports</span>
+    {% set picker_reload = not report_id %}
+    <div class="docbar-center"><span class="docbar-title">Reports</span>{% include "_cause_picker.html" %}</div>
 
     <span id="uploadSourceStatus" class="upload-status"></span>
 

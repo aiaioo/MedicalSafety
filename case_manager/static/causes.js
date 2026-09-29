@@ -571,6 +571,8 @@
     const cause = causes.find((c) => c.id === id);
     if (id === defaultCauseId || !cause || !["owner", "editor"].includes(cause.role)) return;
     defaultCauseId = id;
+    const picker = document.getElementById("causePicker");
+    if (picker) picker.value = id;
     fetch(defaultCauseUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

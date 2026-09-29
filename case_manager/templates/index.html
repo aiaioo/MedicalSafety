@@ -10,7 +10,7 @@
 <body>
 <header class="docbar" style="position: relative;">
   <span class="account-bar">Signed in as {{ g.user.email }}</span>
-  <span class="doc-name doc-name-static" style="position: absolute; left: 50%; transform: translateX(-50%);">Case Plan</span>
+  <div class="docbar-center"><span class="doc-name doc-name-static">Case Plan</span>{% include "_cause_picker.html" %}</div>
   <form method="post" action="{{ url_for('auth.signout') }}" style="margin-left: auto; margin-bottom: 0;"><button type="submit" class="btn">Sign out</button></form>
 </header>
 
