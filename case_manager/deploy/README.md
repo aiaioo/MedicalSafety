@@ -39,6 +39,7 @@ psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/mig
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/002_allegation_cause.sql
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/003_default_cause_for_every_user.sql
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/004_signup_captchas.sql
+psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/005_signup_attempts.sql
 
 # 7. The secrets file systemd will inject as this process's environment --
 #    see case-manager.env.example for the exact commands and template.

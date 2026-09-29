@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import os
 import re
 import secrets
@@ -44,6 +45,12 @@ PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "static"}
 CAPTCHA_LIFETIME = timedelta(minutes=10)
 CAPTCHA_LENGTH = 5
 CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I -- easy to confuse
+
+# At most this many sign-up attempts (successful or not) per client IP per
+# window. Behind a reverse proxy, set TRUSTED_PROXY_HOPS so the client's real
+# address is used -- see app.py.
+SIGNUP_ATTEMPT_LIMIT = 10
+SIGNUP_ATTEMPT_WINDOW_SECONDS = 3600
 
 bp = Blueprint("auth", __name__)
 _captcha_image = ImageCaptcha(width=200, height=70)
@@ -114,6 +121,20 @@ def captcha_passed(captcha_id: str, attempt: str) -> bool:
     return hmac.compare_digest(answer, (attempt or "").strip().upper())
 
 
+def _client_key() -> str:
+    """The rate-limit key for this request: the client IP, with IPv6
+    addresses collapsed to their /64 (one subscriber typically owns a whole
+    /64, so per-address limits would be trivial to dodge)."""
+    addr = request.remote_addr or "unknown"
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
 def _render_signup(email: str, error: str, next_url: str, status: int = 200):
     return render_template(
         "auth.html", mode="signup", email=email, error=error, next=next_url, captcha=new_captcha(),
@@ -181,6 +202,10 @@ def signup():
         if g.user is not None:
             return redirect(next_url)
         return _render_signup("", "", next_url)
+
+    if not storage.record_signup_attempt(_client_key(), SIGNUP_ATTEMPT_LIMIT, SIGNUP_ATTEMPT_WINDOW_SECONDS):
+        error = "Too many sign-up attempts from your network. Please try again later."
+        return _render_signup(normalize_email(request.form.get("email")), error, next_url, 429)
 
     email = normalize_email(request.form.get("email"))
     password = request.form.get("password") or ""

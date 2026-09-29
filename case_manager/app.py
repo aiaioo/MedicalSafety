@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 from flask import Flask, Response, abort, g, jsonify, render_template, request, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import storage
@@ -108,6 +110,13 @@ def sanitize_page_numbers(raw, fallback=None):
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
+# Behind a reverse proxy every request arrives from the proxy's address, so
+# take the client's from X-Forwarded-For -- but only as many proxies' worth as
+# TRUSTED_PROXY_HOPS says (0 = none, e.g. local development), since a client
+# can put anything it likes in that header.
+_proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
+if _proxy_hops:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops)
 # Sign-up/sign-in/sign-out, plus a before-request gate that keeps every other
 # route behind a signed-in session and sets g.user -- see auth.py.
 app.register_blueprint(auth.bp)

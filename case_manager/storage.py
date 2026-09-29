@@ -1074,6 +1074,21 @@ def delete_session(token_hash: str) -> None:
         cur.execute("DELETE FROM user_sessions WHERE token_hash = %s", (token_hash,))
 
 
+def record_signup_attempt(ip: str, limit: int, window_seconds: int) -> bool:
+    """Counts a sign-up attempt from `ip` unless it already made `limit`
+    within the last `window_seconds`; returns whether it was allowed.
+    Refused attempts aren't recorded, so the window slides rather than
+    extending itself."""
+    with _cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (ip,))  # serialize this IP's checks across workers
+        cur.execute("DELETE FROM signup_attempts WHERE attempted_at <= now() - make_interval(secs => %s)", (window_seconds,))
+        cur.execute("SELECT count(*) AS n FROM signup_attempts WHERE ip = %s", (ip,))
+        if cur.fetchone()["n"] >= limit:
+            return False
+        cur.execute("INSERT INTO signup_attempts (ip) VALUES (%s)", (ip,))
+    return True
+
+
 def create_signup_captcha(captcha_id: str, answer: str, expires_at: datetime) -> None:
     """Records a captcha challenge, sweeping out expired ones while it's at it."""
     with _cursor() as cur:
