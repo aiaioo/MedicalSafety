@@ -168,17 +168,20 @@
     ctx.setLineDash([7, 5]);
     ctx.lineWidth = 2;
     const pad = 6;
+    let rect = null;
     if (a.kind === "rect") {
       const rx = a.x * canvas.width;
       const ry = a.y * canvas.height;
-      ctx.strokeRect(rx - pad, ry - pad, a.w * canvas.width + pad * 2, a.h * canvas.height + pad * 2);
+      rect = [rx - pad, ry - pad, a.w * canvas.width + pad * 2, a.h * canvas.height + pad * 2];
     } else if (a.kind === "freehand") {
       const b = freehandBoundsFrac(a);
       const rx = b.x0 * canvas.width;
       const ry = b.y0 * canvas.height;
-      ctx.strokeRect(rx - pad, ry - pad, (b.x1 - b.x0) * canvas.width + pad * 2, (b.y1 - b.y0) * canvas.height + pad * 2);
+      rect = [rx - pad, ry - pad, (b.x1 - b.x0) * canvas.width + pad * 2, (b.y1 - b.y0) * canvas.height + pad * 2];
     }
+    if (rect) ctx.strokeRect(...rect);
     ctx.restore();
+    return rect;
   }
 
   function drawRect(ctx, canvas, a) {
@@ -258,11 +261,25 @@
 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
+
+    const deleteIcon = document.createElement("button");
+    deleteIcon.type = "button";
+    deleteIcon.className = "annotation-delete-icon";
+    deleteIcon.title = "Delete annotation";
+    deleteIcon.setAttribute("aria-label", "Delete annotation");
+    deleteIcon.innerHTML = "&#10005;";
+    deleteIcon.style.display = "none";
+    deleteIcon.addEventListener("pointerdown", (e) => e.stopPropagation());
+    deleteIcon.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSelected();
+    });
     canvas.style.cursor = mode === null ? "default" : "crosshair";
 
     wrap.appendChild(label);
     wrap.appendChild(img);
     wrap.appendChild(canvas);
+    wrap.appendChild(deleteIcon);
 
     const controller = {
       pageNum,
@@ -283,8 +300,21 @@
         if (a.kind === "rect") drawRect(ctx, canvas, a);
         else if (a.kind === "freehand") drawFreehand(ctx, canvas, a);
       }
+      let selRect = null;
       if (selected && selected.controller === controller && state.annotations[selected.index]) {
-        drawSelectionHighlight(ctx, canvas, state.annotations[selected.index]);
+        selRect = drawSelectionHighlight(ctx, canvas, state.annotations[selected.index]);
+      }
+      if (selRect) {
+        // Floating delete icon at the dotted box's top-right corner (CSS px, not canvas px).
+        const k = canvas.clientWidth / canvas.width || 1;
+        const size = 22;
+        const left = Math.min(Math.max((selRect[0] + selRect[2]) * k - size / 2, 0), canvas.clientWidth - size);
+        const top = Math.max((selRect[1]) * k - size - 2, 0);
+        deleteIcon.style.left = left + "px";
+        deleteIcon.style.top = top + "px";
+        deleteIcon.style.display = "block";
+      } else {
+        deleteIcon.style.display = "none";
       }
       if (controller.liveRect) drawRect(ctx, canvas, controller.liveRect);
       if (controller.currentStroke) drawFreehand(ctx, canvas, controller.currentStroke);

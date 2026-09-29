@@ -772,3 +772,10 @@ a.tag:hover { background: #d7deec; }
 .cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f7f8fa; color: #46536b; max-width: 200px; }
 .cause-static { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+
+.annotation-delete-icon {
+  position: absolute; z-index: 5; width: 22px; height: 22px; padding: 0;
+  border: 1px solid #b42318; border-radius: 50%; background: #fff; color: #b42318;
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+.annotation-delete-icon:hover { background: #b42318; color: #fff; }
