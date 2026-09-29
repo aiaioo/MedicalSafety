@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if report_id %}Report editor{% else %}Reports{% endif %}</title>
+<title>{% if report_id %}Report{% else %}Reports{% endif %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -27,7 +27,7 @@
     {% else %}
     <a class="btn docbar-lead" href="{{ url_for('allegations_view') }}">Allegations</a>
     {% endif %}
-    <div class="docbar-center"><span class="docbar-title">Reports</span>
+    <div class="docbar-center"><span class="docbar-title">{{ "Report" if report_id else "Reports" }}</span>
       {%- if report_id %}<span class="cause-picker cause-static" title="{{ report_cause_titles | join(", ") or "No cause" }}">{{ report_cause_titles | join(", ") or "No cause" }}</span>
       {%- else %}{% include "_cause_picker.html" %}{% endif %}</div>
 
@@ -39,7 +39,7 @@
     {% endif %}
     <span id="saveStatus" class="save-status"></span>
 
-    <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Annotations</a>
+    <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Documents</a>
     <a class="btn disabled" id="lastSourceLink" aria-disabled="true" title="No source document viewed yet">Last source document &raquo;</a>
   </header>
 
