@@ -882,7 +882,7 @@
   async function deleteSnippet(id) {
     try {
       const res = await fetch(snippetDeleteBase.replace("__ID__", encodeURIComponent(id)), { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
       setStatus("Snippet deleted");
     } catch (e) {
       setStatus("Delete failed: " + e.message, true);

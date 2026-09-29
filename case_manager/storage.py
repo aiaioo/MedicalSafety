@@ -100,6 +100,26 @@ def _cursor() -> _Cursor:
     return _Cursor()
 
 
+class DeleteBlocked(Exception):
+    """A delete refused because something still depends on the object; the
+    message says what. Every delete_* below checks this inside the same
+    transaction as the delete, after locking the object's row (FOR UPDATE):
+    a concurrent insert that references the row takes a conflicting lock via
+    its foreign key, so the check and the delete can't be interleaved with
+    a new dependent."""
+
+
+def _lock(cur, table: str, object_id: str) -> bool:
+    cur.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR UPDATE", (object_id,))  # noqa: S608 (fixed table names)
+    return cur.fetchone() is not None
+
+
+def _refuse_if_any(cur, sql: str, params: tuple, message: str) -> None:
+    cur.execute(sql, params)
+    if cur.fetchone() is not None:
+        raise DeleteBlocked(message)
+
+
 def _iso(value) -> str:
     """A stored TIMESTAMPTZ comes back from psycopg2 as a datetime -- render
     it the same way app.py's own datetime.now(timezone.utc).isoformat()
@@ -202,38 +222,30 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
         _link(cur, "source", document_id, *link)
 
 
-def document_has_annotations(document_id: str) -> bool:
-    with _cursor() as cur:
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM document_annotations WHERE document_id = %s AND jsonb_array_length(shapes) > 0)",
-            (document_id,),
-        )
-        return cur.fetchone()["exists"]
-
-
-def document_has_snippets(document_id: str) -> bool:
-    with _cursor() as cur:
-        cur.execute("SELECT EXISTS(SELECT 1 FROM snippets WHERE document_id = %s)", (document_id,))
-        return cur.fetchone()["exists"]
-
-
 def delete_document(document_id: str) -> None:
-    """Removes a document's row (cascading to its annotations, snippet
-    rows, and hearing links -- see schema.sql) plus every blob it owns: its
-    own bytes, every snippet's PNG, and any docx->pdf render cache entry."""
+    """Removes a document's row plus its file (and any docx->pdf render
+    cache entry). Refused while it has annotations or snippets, is linked
+    to a hearing, or is the source of a report -- deleting it would
+    silently cut those references."""
     doc_type = get_document_type(document_id)
     if doc_type is None:
         return
-    backend = get_storage_backend()
-    keys = [snippet_storage_key(document_id, doc_type, s["filename"]) for s in list_snippets(document_id)]
-    keys.append(document_storage_key(document_id, doc_type))
-    # The row goes first: if that fails nothing is lost, and if a blob delete
-    # fails afterwards the worst case is a stray file, never a row whose file
-    # is missing.
     with _cursor() as cur:
+        if not _lock(cur, "documents", document_id):
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM document_annotations WHERE document_id = %s AND jsonb_array_length(shapes) > 0 LIMIT 1",
+                       (document_id,), "Cannot delete a document that has annotations. Remove them first.")
+        _refuse_if_any(cur, "SELECT 1 FROM snippets WHERE document_id = %s LIMIT 1", (document_id,),
+                       "Cannot delete a document that has snippets. Remove them first.")
+        _refuse_if_any(cur, "SELECT 1 FROM hearing_documents WHERE document_id = %s LIMIT 1", (document_id,),
+                       "Cannot delete a document that is linked to a hearing")
+        _refuse_if_any(cur, "SELECT 1 FROM reports WHERE source_document_id = %s LIMIT 1", (document_id,),
+                       "Cannot delete a document that is the source of a report")
         cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
-    for key in keys:
-        backend.delete(key)
+    # The row goes first: if that fails nothing is lost, and if the file
+    # delete fails afterwards the worst case is a stray file, never a row
+    # whose file is missing.
+    get_storage_backend().delete(document_storage_key(document_id, doc_type))
     _conversion_cache_path(document_id).unlink(missing_ok=True)
 
 
@@ -366,11 +378,18 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
 
 
 def delete_snippet(document_id: str, snippet_id: str) -> bool:
+    """Refused while a report's content embeds the snippet's image (reports
+    reference it by URL, so there's no foreign key to stop a broken image)."""
     with _cursor() as cur:
         cur.execute("SELECT filename FROM snippets WHERE id = %s AND document_id = %s", (snippet_id, document_id))
         row = cur.fetchone()
         if row is None:
             return False
+        _refuse_if_any(
+            cur, "SELECT 1 FROM reports WHERE position(%s in doc::text) > 0 LIMIT 1",
+            (f"/media/snippets/{document_id}/{row['filename']}",),
+            "Cannot delete a snippet that is used in a report",
+        )
         cur.execute("DELETE FROM snippets WHERE id = %s", (snippet_id,))
 
     doc_type = get_document_type(document_id)
@@ -491,10 +510,13 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
 
 
 def delete_report(report_id: str) -> None:
-    # allegation_evidence.report_id is ON DELETE SET NULL, so every evidence
-    # card that linked to this report is automatically unlinked -- no manual
-    # sweep over allegations needed.
+    """Refused while an allegation's evidence cites the report (the foreign
+    key would otherwise just null the citation)."""
     with _cursor() as cur:
+        if not _lock(cur, "reports", report_id):
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM allegation_evidence WHERE report_id = %s LIMIT 1", (report_id,),
+                       "Cannot delete a report that is cited in an allegation's evidence")
         cur.execute("DELETE FROM reports WHERE id = %s", (report_id,))
 
 
@@ -627,12 +649,17 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
 
 
 def delete_case(case_id: str) -> None:
-    """Reports/sources associated only with this case move to its cause."""
+    """Refused while the case has hearings or allegations. Reports/sources
+    associated only with this case move to its cause."""
     with _cursor() as cur:
-        cur.execute("SELECT cause_id FROM cases WHERE id = %s", (case_id,))
+        cur.execute("SELECT cause_id FROM cases WHERE id = %s FOR UPDATE", (case_id,))
         row = cur.fetchone()
         if row is None:
             return
+        _refuse_if_any(cur, "SELECT 1 FROM hearings WHERE case_id = %s LIMIT 1", (case_id,),
+                       "Cannot delete a case that still has hearings")
+        _refuse_if_any(cur, "SELECT 1 FROM allegation_cases WHERE case_id = %s LIMIT 1", (case_id,),
+                       "Cannot delete a case that still has allegations")
         _relink_orphans(cur, "case", case_id, row["cause_id"])
         cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
 
@@ -766,13 +793,23 @@ def _relink_orphans(cur, gone_kind: str, gone_id: str, new_cause_id: str) -> Non
 
 
 def delete_cause(cause_id: str, fallback_cause_id: str, user_id: int) -> None:
-    """Deletes a cause in one transaction: reports/sources associated only
-    with it move to `fallback_cause_id`, and so does `user_id`'s default if
-    it was this cause. Raises psycopg2.errors.RestrictViolation (rolling
-    everything back) if a case or allegation still points at it -- both
-    causes are mandatory there, so callers refuse those deletes up front
-    (see list_case_ids_by_cause, list_allegation_ids_by_cause)."""
+    """Refused while the cause has goals, cases or allegations, or is
+    `user_id`'s last cause they can edit. Otherwise, in one transaction:
+    reports/sources associated only with it move to `fallback_cause_id`,
+    and so does `user_id`'s default if it was this cause."""
     with _cursor() as cur:
+        cur.execute("SELECT 1 FROM users WHERE id = %s FOR UPDATE", (user_id,))  # serializes this user's cause deletes
+        if not _lock(cur, "causes", cause_id):
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM goals WHERE cause_id = %s LIMIT 1", (cause_id,),
+                       "Cannot delete a cause that still has goals")
+        _refuse_if_any(cur, "SELECT 1 FROM cases WHERE cause_id = %s LIMIT 1", (cause_id,),
+                       "Cannot delete a cause that still has cases")
+        _refuse_if_any(cur, "SELECT 1 FROM allegations WHERE cause_id = %s LIMIT 1", (cause_id,),
+                       "Cannot delete a cause that still has allegations")
+        cur.execute("SELECT COUNT(*) AS n FROM user_causes WHERE user_id = %s AND role IN ('owner', 'editor')", (user_id,))
+        if cur.fetchone()["n"] <= 1:
+            raise DeleteBlocked("Cannot delete your last remaining cause")
         _relink_orphans(cur, "cause", cause_id, fallback_cause_id)
         cur.execute(
             "UPDATE users SET default_cause_id = %s WHERE id = %s AND default_cause_id = %s",
@@ -791,18 +828,6 @@ def create_general_cause(user_id: int) -> str:
                           "created_at": now, "updated_at": now}, owner_id=user_id)
     set_default_cause(user_id, cause_id)
     return cause_id
-
-
-def count_editable_causes(user_id: int) -> int:
-    with _cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM user_causes WHERE user_id = %s AND role IN ('owner', 'editor')", (user_id,))
-        return cur.fetchone()["n"]
-
-
-def list_allegation_ids_by_cause(cause_id: str) -> list[str]:
-    with _cursor() as cur:
-        cur.execute("SELECT id FROM allegations WHERE cause_id = %s", (cause_id,))
-        return [r["id"] for r in cur.fetchall()]
 
 
 def most_recently_updated_editable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
@@ -961,7 +986,12 @@ def save_allegation(allegation_id: str, data: dict) -> None:
 
 
 def delete_allegation(allegation_id: str) -> None:
+    """Refused while any of its evidence has a report linked."""
     with _cursor() as cur:
+        if not _lock(cur, "allegations", allegation_id):
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM allegation_evidence WHERE allegation_id = %s AND report_id IS NOT NULL LIMIT 1",
+                       (allegation_id,), "Cannot delete an allegation that still has reports linked to its evidence")
         cur.execute("DELETE FROM allegations WHERE id = %s", (allegation_id,))
 
 

@@ -239,7 +239,7 @@ import { Pagination, repaginate } from "./pagination.js";
     wireConfirmDelete(card.querySelector(".report-card-delete"), async () => {
       try {
         const res = await fetch(`/api/report/${encodeURIComponent(r.id)}`, { method: "DELETE" });
-        if (!res.ok) throw new Error(await res.text());
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
         card.remove();
         if (onDeleted) onDeleted();
       } catch (err) {

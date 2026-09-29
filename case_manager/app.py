@@ -122,6 +122,11 @@ class DocumentError(Exception):
         self.status = status
 
 
+@app.errorhandler(storage.DeleteBlocked)
+def handle_delete_blocked(err):
+    return handle_document_error(DocumentError(str(err), 400))
+
+
 @app.errorhandler(DocumentError)
 def handle_document_error(err):
     if request.path.startswith("/api/"):
@@ -1540,11 +1545,6 @@ def api_delete_document(doc_id):
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
-    if storage.document_has_annotations(doc_id):
-        raise DocumentError("Cannot delete a document that has annotations. Remove them first.", 400)
-    if storage.document_has_snippets(doc_id):
-        raise DocumentError("Cannot delete a document that has snippets. Remove them first.", 400)
-
     storage.delete_document(doc_id)
     return jsonify({"ok": True})
 
@@ -1915,10 +1915,6 @@ def api_allegation_case(case_id):
         return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
-        if existing.get("hearings"):
-            raise DocumentError("Cannot delete a case that still has hearings", 400)
-        if storage.count_allegations_by_case().get(case_id):
-            raise DocumentError("Cannot delete a case that still has allegations", 400)
         storage.delete_case(case_id)
         return jsonify({"ok": True})
 
@@ -2012,25 +2008,15 @@ def api_cause(cause_id):
         return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
-        if existing.get("goals"):
-            raise DocumentError("Cannot delete a cause that still has goals", 400)
-        if storage.count_editable_causes(g.user.id) <= 1:
-            raise DocumentError("Cannot delete your last remaining cause", 400)
-        if storage.list_case_ids_by_cause(cause_id):
-            raise DocumentError("Cannot delete a cause that still has cases", 400)
-        # An allegation's cause is mandatory and allegations aren't tied to a
-        # user, so they can't be quietly handed to a cause other users may
-        # not see: delete or re-cause them first.
-        if storage.list_allegation_ids_by_cause(cause_id):
-            raise DocumentError("Cannot delete a cause that still has allegations", 400)
         # Another cause takes over as the default (if this was it) and as the
         # home of any report/source whose only association was this cause.
-        fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
+        fallback_cause_id = resolve_default_cause_id(create=False, exclude_cause_id=cause_id)
+        if not fallback_cause_id:
+            raise DocumentError("Cannot delete your last remaining cause", 400)
         try:
             storage.delete_cause(cause_id, fallback_cause_id, g.user.id)
-        except (psycopg2.errors.RestrictViolation, psycopg2.errors.ForeignKeyViolation):
-            # A case or allegation was added under it in the meantime.
-            raise DocumentError("That cause just gained cases or allegations; try again", 409)
+        except psycopg2.errors.ForeignKeyViolation:
+            raise DocumentError("The replacement cause was just deleted; try again", 409)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -2103,8 +2089,6 @@ def api_allegation_item(allegation_id):
         return jsonify(existing)
 
     if request.method == "DELETE":
-        if any(e.get("report_id") for e in existing.get("inculpatory", []) + existing.get("exculpatory", [])):
-            raise DocumentError("Cannot delete an allegation that still has reports linked to its evidence", 400)
         storage.delete_allegation(allegation_id)
         return jsonify({"ok": True})
 
