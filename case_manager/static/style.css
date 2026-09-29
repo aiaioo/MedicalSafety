@@ -742,6 +742,24 @@ a.tag:hover { background: #d7deec; }
   display: flex; align-items: center; gap: 12px; max-width: 45%; }
 .docbar-center .docbar-title { position: static; transform: none; flex-shrink: 0; }
 .docbar-center .cause-picker { min-width: 0; text-overflow: ellipsis; }
+
+/* Narrow screens: the centered title can't float over the bar any more.
+   Row 1 keeps the home link, the left nav link (.docbar-lead) and the title;
+   everything else (cause picker, status, right-hand links) wraps below.
+   .docbar-center dissolves so its title and picker order independently, and
+   the ::after is a full-width break between the two groups. */
+@media (max-width: 720px) {
+  .docbar { flex-wrap: wrap; gap: 8px 12px; }
+  .docbar-center { display: contents; }
+  .docbar > *, .docbar-center > * { order: 2; }
+  .docbar > .docbar-lead { order: 0; }
+  .docbar > .docbar-center > .docbar-title, .docbar > .docbar-center > .doc-name-static { order: 1; }
+  .docbar::after { content: ""; order: 1; flex-basis: 100%; height: 0; }
+  .docbar .doc-name { min-width: 0; flex: 1 1 140px; }
+  .topbar { flex-wrap: wrap; gap: 8px 14px; }
+  .topbar .doc-title { flex: 1 1 100%; min-width: 0; }
+  .topbar .doc-title .doc-name { flex: 1 1 100px; min-width: 0; max-width: none; }
+}
 .cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f7f8fa; color: #46536b; max-width: 200px; }
 .cause-static { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
