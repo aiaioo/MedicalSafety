@@ -409,7 +409,7 @@
   function deleteAllegation(id) {
     fetch(allegationUrl(id), { method: "DELETE" })
       .then((res) => {
-        if (!res.ok) throw new Error(res.statusText);
+        if (!res.ok) return res.json().then((d) => { throw new Error(d.error || res.statusText); });
         allegations = allegations.filter((a) => a.id !== id);
         if (selectedId === id) selectedId = null;
         renderAllegationList();

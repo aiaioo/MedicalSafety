@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import fitz  # PyMuPDF
+import psycopg2.errors
 from docx import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.image.image import Image as DocxImage
@@ -1916,6 +1917,8 @@ def api_allegation_case(case_id):
     if request.method == "DELETE":
         if existing.get("hearings"):
             raise DocumentError("Cannot delete a case that still has hearings", 400)
+        if storage.count_allegations_by_case().get(case_id):
+            raise DocumentError("Cannot delete a case that still has allegations", 400)
         storage.delete_case(case_id)
         return jsonify({"ok": True})
 
@@ -2015,13 +2018,19 @@ def api_cause(cause_id):
             raise DocumentError("Cannot delete your last remaining cause", 400)
         if storage.list_case_ids_by_cause(cause_id):
             raise DocumentError("Cannot delete a cause that still has cases", 400)
-        # Another cause takes over as the default (if this was it) and
-        # inherits the allegations, since an allegation's cause is mandatory.
+        # An allegation's cause is mandatory and allegations aren't tied to a
+        # user, so they can't be quietly handed to a cause other users may
+        # not see: delete or re-cause them first.
+        if storage.list_allegation_ids_by_cause(cause_id):
+            raise DocumentError("Cannot delete a cause that still has allegations", 400)
+        # Another cause takes over as the default (if this was it) and as the
+        # home of any report/source whose only association was this cause.
         fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
-        storage.move_allegations_to_cause(cause_id, fallback_cause_id)
-        if storage.get_default_cause(g.user.id) == cause_id:
-            storage.set_default_cause(g.user.id, fallback_cause_id)
-        storage.delete_cause(cause_id)
+        try:
+            storage.delete_cause(cause_id, fallback_cause_id, g.user.id)
+        except (psycopg2.errors.RestrictViolation, psycopg2.errors.ForeignKeyViolation):
+            # A case or allegation was added under it in the meantime.
+            raise DocumentError("That cause just gained cases or allegations; try again", 409)
         return jsonify({"ok": True})
 
     body = request.get_json(silent=True) or {}
@@ -2094,6 +2103,8 @@ def api_allegation_item(allegation_id):
         return jsonify(existing)
 
     if request.method == "DELETE":
+        if any(e.get("report_id") for e in existing.get("inculpatory", []) + existing.get("exculpatory", [])):
+            raise DocumentError("Cannot delete an allegation that still has reports linked to its evidence", 400)
         storage.delete_allegation(allegation_id)
         return jsonify({"ok": True})
 

@@ -225,12 +225,16 @@ def delete_document(document_id: str) -> None:
     if doc_type is None:
         return
     backend = get_storage_backend()
-    for snippet in list_snippets(document_id):
-        backend.delete(snippet_storage_key(document_id, doc_type, snippet["filename"]))
-    backend.delete(document_storage_key(document_id, doc_type))
-    _conversion_cache_path(document_id).unlink(missing_ok=True)
+    keys = [snippet_storage_key(document_id, doc_type, s["filename"]) for s in list_snippets(document_id)]
+    keys.append(document_storage_key(document_id, doc_type))
+    # The row goes first: if that fails nothing is lost, and if a blob delete
+    # fails afterwards the worst case is a stray file, never a row whose file
+    # is missing.
     with _cursor() as cur:
         cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+    for key in keys:
+        backend.delete(key)
+    _conversion_cache_path(document_id).unlink(missing_ok=True)
 
 
 def get_document_pdf_bytes(document_id: str) -> bytes:
@@ -623,7 +627,13 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
 
 
 def delete_case(case_id: str) -> None:
+    """Reports/sources associated only with this case move to its cause."""
     with _cursor() as cur:
+        cur.execute("SELECT cause_id FROM cases WHERE id = %s", (case_id,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        _relink_orphans(cur, "case", case_id, row["cause_id"])
         cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
 
 
@@ -732,12 +742,42 @@ def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
             _grant(cur, owner_id, "cause", cause_id, "owner")
 
 
-def delete_cause(cause_id: str) -> None:
-    """Fails (a database FK error) if any case still points at this cause --
-    a case's cause is mandatory, so callers must reassign those cases first
-    (see list_case_ids_by_cause) rather than this module inventing a
-    fallback cause on their behalf."""
+
+def _relink_orphans(cur, gone_kind: str, gone_id: str, new_cause_id: str) -> None:
+    """Called just before a cause or case (`gone_kind`) is deleted: every
+    report and source whose *only* association is that cause/case gets
+    `new_cause_id` instead, so none is left associated with nothing (the
+    ON DELETE CASCADE on the link tables would otherwise drop the link
+    silently)."""
+    for table_prefix, key in (("report", "report_id"), ("source", "document_id")):
+        own = f"{table_prefix}_{gone_kind}s"
+        other = f"{table_prefix}_{'case' if gone_kind == 'cause' else 'cause'}s"
+        cur.execute(
+            f"""
+            INSERT INTO {table_prefix}_causes ({key}, cause_id)
+            SELECT o.{key}, %s FROM {own} o
+            WHERE o.{gone_kind}_id = %s
+              AND NOT EXISTS (SELECT 1 FROM {own} x WHERE x.{key} = o.{key} AND x.{gone_kind}_id <> %s)
+              AND NOT EXISTS (SELECT 1 FROM {other} y WHERE y.{key} = o.{key})
+            ON CONFLICT DO NOTHING
+            """,  # noqa: S608 (table/column names are fixed above)
+            (new_cause_id, gone_id, gone_id),
+        )
+
+
+def delete_cause(cause_id: str, fallback_cause_id: str, user_id: int) -> None:
+    """Deletes a cause in one transaction: reports/sources associated only
+    with it move to `fallback_cause_id`, and so does `user_id`'s default if
+    it was this cause. Raises psycopg2.errors.RestrictViolation (rolling
+    everything back) if a case or allegation still points at it -- both
+    causes are mandatory there, so callers refuse those deletes up front
+    (see list_case_ids_by_cause, list_allegation_ids_by_cause)."""
     with _cursor() as cur:
+        _relink_orphans(cur, "cause", cause_id, fallback_cause_id)
+        cur.execute(
+            "UPDATE users SET default_cause_id = %s WHERE id = %s AND default_cause_id = %s",
+            (fallback_cause_id, user_id, cause_id),
+        )
         cur.execute("DELETE FROM causes WHERE id = %s", (cause_id,))
 
 
@@ -763,11 +803,6 @@ def list_allegation_ids_by_cause(cause_id: str) -> list[str]:
     with _cursor() as cur:
         cur.execute("SELECT id FROM allegations WHERE cause_id = %s", (cause_id,))
         return [r["id"] for r in cur.fetchall()]
-
-
-def move_allegations_to_cause(from_cause_id: str, to_cause_id: str) -> None:
-    with _cursor() as cur:
-        cur.execute("UPDATE allegations SET cause_id = %s WHERE cause_id = %s", (to_cause_id, from_cause_id))
 
 
 def most_recently_updated_editable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
