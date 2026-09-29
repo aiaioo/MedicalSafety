@@ -526,7 +526,7 @@ a.tag:hover { background: #d7deec; }
 .allegation-detail-head h2 { margin: 0 0 18px; font-size: 20px; word-break: break-word; }
 
 .evidence-columns { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
-.evidence-column { flex: 1 1 320px; min-width: 280px; }
+.evidence-column { flex: 1 1 320px; min-width: min(280px, 100%); }
 .evidence-column-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .evidence-column-head h3 { margin: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .evidence-inculpatory .evidence-column-head h3 { color: #a02020; }
@@ -587,6 +587,10 @@ a.tag:hover { background: #d7deec; }
   .allegations-workspace { flex-direction: column; height: auto; }
   .allegations-column { width: 100%; height: auto; max-height: 42vh; border-right: none; border-bottom: 1px solid #e0e2e8; }
   .allegation-detail { height: auto; width: 100%; }
+}
+@media (max-width: 480px) {
+  .allegation-detail { padding: 16px 12px; }
+  .evidence-columns { gap: 16px; }
 }
 
 /* ---- cases workspace (reuses the allegations-workspace layout/classes above;
@@ -734,7 +738,7 @@ a.tag:hover { background: #d7deec; }
 
 /* Sign in / sign up (templates/auth.html) and the signed-in bar on the home page. */
 .auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.auth-card { width: 380px; }
+.auth-card { width: 380px; max-width: 100%; box-sizing: border-box; }
 .auth-captcha { display: block; max-width: 100%; height: auto; margin: 4px 0; border-radius: 4px; }
 .auth-switch { margin: 14px 0 0; }
 .account-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
