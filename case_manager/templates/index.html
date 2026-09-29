@@ -8,11 +8,13 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+<header class="docbar" style="position: relative;">
+  <span class="account-bar">Signed in as {{ g.user.email }}</span>
+  <span class="doc-name doc-name-static" style="position: absolute; left: 50%; transform: translateX(-50%);">Case Plan</span>
+  <form method="post" action="{{ url_for('auth.signout') }}" style="margin-left: auto; margin-bottom: 0;"><button type="submit" class="btn">Sign out</button></form>
+</header>
+
 <div class="container">
-  <div class="account-bar">
-    <span>Signed in as {{ g.user.email }}</span>
-    <form method="post" action="{{ url_for('auth.signout') }}"><button type="submit" class="btn">Sign out</button></form>
-  </div>
 
   <h1>Causes</h1>
 
