@@ -59,6 +59,7 @@
      data-snippets-all-url="{{ url_for('api_list_snippets', doc_id=doc_id) }}?type={{ doc_type }}"
      data-snippet-delete-base="{{ url_for('api_delete_snippet', doc_id=doc_id, snippet_id='__ID__') }}?type={{ doc_type }}"
      data-download-url="{{ url_for('api_download_annotated', doc_id=doc_id) }}?type={{ doc_type }}"
+     data-download-original-url="{{ url_for('api_download_original', doc_id=doc_id) }}?type={{ doc_type }}"
      data-title-url="{{ title_url }}"
 >
   <header class="topbar">
@@ -92,6 +93,7 @@
     <button type="button" id="undoBtn">Undo</button>
     <button type="button" id="clearBtn">Clear</button>
     <button type="button" id="downloadBtn">Download annotated PDF</button>
+    <button type="button" id="downloadOriginalBtn">Download original PDF</button>
     <span id="modeHint" class="hint"></span>
     <span id="statusMsg" class="status-msg"></span>
   </div>

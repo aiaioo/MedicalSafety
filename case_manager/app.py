@@ -1762,6 +1762,15 @@ def api_download_annotated(doc_id):
     return resp
 
 
+@app.route("/api/doc/<doc_id>/download-original")
+def api_download_original(doc_id):
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    resp = Response(pdf_bytes, mimetype="application/pdf")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}.pdf"'
+    return resp
+
+
 @app.route("/api/doc/<doc_id>/snippets")
 def api_list_snippets(doc_id):
     check_doc_id(doc_id)

@@ -12,6 +12,7 @@
   const snippetsAllUrl = appEl.dataset.snippetsAllUrl;
   const snippetDeleteBase = appEl.dataset.snippetDeleteBase; // contains literal "__ID__"
   const downloadUrl = appEl.dataset.downloadUrl;
+  const downloadOriginalUrl = appEl.dataset.downloadOriginalUrl;
   const titleUrl = appEl.dataset.titleUrl;
 
   const container = document.getElementById("viewerContainer");
@@ -763,6 +764,9 @@
 
   document.getElementById("downloadBtn").addEventListener("click", () => {
     window.location.href = downloadUrl;
+  });
+  document.getElementById("downloadOriginalBtn").addEventListener("click", () => {
+    window.location.href = downloadOriginalUrl;
   });
 
   document.getElementById("undoBtn").addEventListener("click", () => {
