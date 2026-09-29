@@ -663,9 +663,10 @@
   window.addEventListener("blur", hideContextMenu);
   window.addEventListener("resize", hideContextMenu);
 
-  // "Download annotated pages only" is only meaningful when some page has annotations.
+  // "Download annotated pages only" is only meaningful when some page has
+  // annotations or snippets.
   function updateAnnotatedPagesBtn() {
-    const any = Array.from(pageState.values()).some((s) => s.annotations.length > 0);
+    const any = allSnippets.length > 0 || Array.from(pageState.values()).some((s) => s.annotations.length > 0);
     document.getElementById("downloadPagesBtn").disabled = !any;
   }
 
@@ -964,6 +965,7 @@
       const bust = Date.now();
       for (const s of allSnippets) s.url += (s.url.includes("?") ? "&" : "?") + "v=" + bust;
       renderSnippetSidebar();
+      updateAnnotatedPagesBtn();
     } catch (e) {
       console.error(e);
       setStatus("Failed to load snippets: " + e.message, true);

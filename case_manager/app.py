@@ -1740,7 +1740,7 @@ def _annotated_pdf_response(doc_id, annotated_only):
     data = storage.get_all_annotations(doc_id)
 
     with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        annotated_pages = []
+        annotated_pages = set()
         for page_key, raw_anns in data.items():
             try:
                 page_num = int(page_key)
@@ -1753,10 +1753,14 @@ def _annotated_pdf_response(doc_id, annotated_only):
                 continue
             p = d[page_num - 1]
             draw_annotations_on_page(p, annotations, p.rect)
-            annotated_pages.append(page_num - 1)
+            annotated_pages.add(page_num - 1)
         if annotated_only:
+            # Pages a snippet was taken from count as annotated too.
+            for snip in storage.list_snippets(doc_id):
+                if 1 <= snip["page"] <= d.page_count:
+                    annotated_pages.add(snip["page"] - 1)
             if not annotated_pages:
-                raise DocumentError("This document has no annotated pages.", 400)
+                raise DocumentError("This document has no annotated or snippet pages.", 400)
             d.select(sorted(annotated_pages))
         annotated_pdf_bytes = d.tobytes(deflate=True)
 
