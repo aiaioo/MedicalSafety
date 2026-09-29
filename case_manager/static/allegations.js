@@ -6,6 +6,7 @@
   const allegationsOrderUrl = appEl.dataset.allegationsOrderUrl;
   const casesUrl = appEl.dataset.casesUrl;
   const casesPageUrl = appEl.dataset.casesPageUrl;
+  const causesUrl = appEl.dataset.causesUrl;
   const reportsUrl = appEl.dataset.reportsUrl;
   const documentsPageUrl = appEl.dataset.documentsPageUrl;
   const filterCaseId = appEl.dataset.filterCase || "";
@@ -262,6 +263,13 @@
     return `${inc} inculpatory · ${exc} exculpatory`;
   }
 
+  let causes = [];
+
+  function causeLabel(allegation) {
+    const cause = causes.find((c) => c.id === allegation.cause_id);
+    return (cause && cause.title) || allegation.cause_id || "None";
+  }
+
   function linkedCasesLabel(allegation) {
     const links = allegation.case_ids || [];
     return links.length ? links.map(caseName).join(", ") : "None";
@@ -290,7 +298,8 @@
       </div>
       <textarea class="allegation-summary-input" rows="2" placeholder="Brief description of the allegation…" maxlength="10000"></textarea>
       <div class="allegation-card-meta"></div>
-      <div class="case-links-inline"></div>`;
+      <div class="case-links-inline"></div>
+      <div class="allegation-cause">Cause: <span class="allegation-cause-name"></span></div>`;
 
     const titleEl = card.querySelector(".allegation-title-input");
     titleEl.value = allegation.title;
@@ -315,6 +324,7 @@
     flushSaveOnEnter(summaryEl, allegation.id);
 
     card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
+    card.querySelector(".allegation-cause-name").textContent = causeLabel(allegation);
     card.querySelector(".case-links-inline").appendChild(buildCaseLinksInline(allegation));
 
     card.addEventListener("click", (e) => {
@@ -664,7 +674,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Linked cases picker — a small popover anchored to the "Linked cases"
+  // Linked cases picker — a small popover anchored to the "Cases"
   // toggle inside each allegation card, so linking/unlinking a case never
   // requires opening the detail pane.
   // ---------------------------------------------------------------------
@@ -680,7 +690,7 @@
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "case-links-toggle";
-    toggle.innerHTML = `Linked cases: <span class="case-links-summary">${escapeHtml(linkedCasesLabel(allegation))}</span>`;
+    toggle.innerHTML = `Cases: <span class="case-links-summary">${escapeHtml(linkedCasesLabel(allegation))}</span>`;
 
     const popover = document.createElement("div");
     popover.className = "case-links-popover";
@@ -938,15 +948,17 @@
   // ---------------------------------------------------------------------
   (async function init() {
     try {
-      const [allegationsRes, casesRes, reportsRes] = await Promise.all([
+      const [allegationsRes, casesRes, reportsRes, causesRes] = await Promise.all([
         fetch(allegationsUrl + "?default_cause=1"),
         fetch(casesUrl + "?default_cause=1"),
         fetch(reportsUrl),
+        fetch(causesUrl),
       ]);
       if (!allegationsRes.ok) throw new Error(await allegationsRes.text());
       allegations = await allegationsRes.json();
       cases = casesRes.ok ? await casesRes.json() : [];
       reports = reportsRes.ok ? await reportsRes.json() : [];
+      causes = causesRes.ok ? await causesRes.json() : [];
       renderFilterBar();
       renderAllegationList();
       renderDetail();

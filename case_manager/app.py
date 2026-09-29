@@ -226,6 +226,18 @@ def check_report_id(report_id):
         raise DocumentError(f"Invalid report id: {report_id!r}", 400)
 
 
+def add_cause_titles(items):
+    """Sets item["cause_titles"] on each report/document dict: the titles of
+    the causes it is associated with directly (cause_ids) or through a
+    linked case (case_ids), sorted, for display on its card."""
+    titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id)}
+    case_cause = {c["id"]: c["cause_id"] for c in storage.list_cases(g.user.id)}
+    for item in items:
+        ids = set(item.get("cause_ids", ())) | {case_cause[i] for i in item.get("case_ids", ()) if i in case_cause}
+        item["cause_titles"] = sorted(titles[i] for i in ids if i in titles)
+    return items
+
+
 def list_source_docs():
     """All uploaded source documents (pdf/docx/doc), as {"id", "type",
     "title"} dicts -- the same shape rendered into the annotations and
@@ -233,7 +245,7 @@ def list_source_docs():
     docs = storage.list_documents(g.user.id)
     for d in docs:
         d["type"] = normalize_type(d["type"])
-    return docs
+    return add_cause_titles(docs)
 
 
 def _get_pdf_bytes(doc_id, raw_type, min_role="viewer"):
@@ -1719,7 +1731,7 @@ def api_reports():
     if request.method == "GET":
         items = storage.list_reports(g.user.id)
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(items)
+        return jsonify(add_cause_titles(items))
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()[:200]
