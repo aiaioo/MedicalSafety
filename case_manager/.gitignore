@@ -28,3 +28,4 @@ storage/doc_meta/*
 !storage/causes/.gitkeep
 !storage/allegations/.gitkeep
 !storage/doc_meta/.gitkeep
+.playwright-mcp/
