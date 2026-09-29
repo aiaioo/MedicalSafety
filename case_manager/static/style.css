@@ -423,7 +423,7 @@ a.tag:hover { background: #d7deec; }
 }
 .report-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.14); border-color: #cfd4e0; }
 .report-card-name { font-weight: 600; margin-bottom: 4px; margin-right: 22px; word-break: break-word; }
-.report-card-meta { font-size: 12px; color: #8a92a5; }
+.report-card-meta { font-size: 12px; color: #8a92a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-card-delete { position: absolute; top: 8px; right: 8px; }
 .report-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
 .report-list .report-card { padding: 10px 14px; }
@@ -605,7 +605,7 @@ a.tag:hover { background: #d7deec; }
 .case-cause-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #8a92a5; }
 .case-cause-select {
   border: 1px solid transparent; background: transparent; border-radius: 4px;
-  padding: 3px 4px; font-family: inherit; font-size: 12px; color: #46536b; max-width: 100%;
+  padding: 3px 4px; font-family: inherit; font-size: 12px; color: #46536b; max-width: 100%; min-width: 0; flex: 1; text-overflow: ellipsis;
 }
 .case-cause-select:hover { background: #f7f8fa; }
 .case-cause-select:focus { outline: none; background: white; border-color: #cfd4e0; }
@@ -652,14 +652,14 @@ a.tag:hover { background: #d7deec; }
 /* ---- allegations: linked-cases popover inside each allegation card
    (an allegation can link to zero or more cases) ---- */
 .case-links-inline { margin-top: 6px; padding: 0 6px; position: relative; }
-.allegation-cause { margin-top: 2px; padding: 2px 6px; font-size: 11px; color: #8a92a5; }
+.allegation-cause { margin-top: 2px; padding: 2px 6px; font-size: 11px; color: #8a92a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .allegation-cause .allegation-cause-name { color: #46536b; font-weight: 500; }
 .case-links-toggle {
-  display: inline-flex; align-items: center; gap: 4px; border: none; background: none;
+  display: flex; max-width: 100%; min-width: 0; white-space: nowrap; align-items: center; gap: 4px; border: none; background: none;
   color: #8a92a5; font-size: 11px; cursor: pointer; padding: 2px 0; font-family: inherit;
 }
 .case-links-toggle:hover { color: #2266dd; }
-.case-links-toggle .case-links-summary { color: #46536b; font-weight: 500; }
+.case-links-toggle .case-links-summary { color: #46536b; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .case-links-toggle:hover .case-links-summary { color: #2266dd; text-decoration: underline; }
 .case-links-popover {
   position: absolute; top: 100%; left: 6px; right: 6px; z-index: 20; margin-top: 4px;
@@ -667,7 +667,7 @@ a.tag:hover { background: #d7deec; }
   box-shadow: 0 6px 18px rgba(0,0,0,0.14); padding: 10px 12px; box-sizing: border-box;
   cursor: default;
 }
-.case-links-popover .case-link-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; padding: 3px 0; }
+.case-links-popover .case-link-row { overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1c1c1c; cursor: pointer; padding: 3px 0; }
 .case-links-popover .case-link-row input { margin: 0; }
 .case-links-popover .empty { margin: 0; font-size: 12px; }
 
@@ -739,8 +739,9 @@ a.tag:hover { background: #d7deec; }
 .upload-case select { margin-left: 4px; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 4px; }
 
 .docbar-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: flex; align-items: center; gap: 12px; }
-.docbar-center .docbar-title { position: static; transform: none; }
+  display: flex; align-items: center; gap: 12px; max-width: 45%; }
+.docbar-center .docbar-title { position: static; transform: none; flex-shrink: 0; }
+.docbar-center .cause-picker { min-width: 0; text-overflow: ellipsis; }
 .cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f7f8fa; color: #46536b; max-width: 200px; }
-.cause-static { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.cause-static { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }

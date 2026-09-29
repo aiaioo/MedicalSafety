@@ -325,6 +325,7 @@
 
     card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
     card.querySelector(".allegation-cause-name").textContent = causeLabel(allegation);
+    card.querySelector(".allegation-cause").title = causeLabel(allegation);
     card.querySelector(".case-links-inline").appendChild(buildCaseLinksInline(allegation));
 
     card.addEventListener("click", (e) => {
@@ -691,6 +692,7 @@
     toggle.type = "button";
     toggle.className = "case-links-toggle";
     toggle.innerHTML = `Cases: <span class="case-links-summary">${escapeHtml(linkedCasesLabel(allegation))}</span>`;
+    toggle.title = linkedCasesLabel(allegation);
 
     const popover = document.createElement("div");
     popover.className = "case-links-popover";
@@ -719,6 +721,7 @@
           else set.delete(cb.value);
           allegation.case_ids = [...set];
           toggle.querySelector(".case-links-summary").textContent = linkedCasesLabel(allegation);
+          toggle.title = linkedCasesLabel(allegation);
           scheduleSave(allegation.id);
         });
       });
