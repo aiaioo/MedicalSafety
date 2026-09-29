@@ -66,6 +66,7 @@
   <header class="topbar">
     <div class="doc-title">
       <a href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+      <a class="btn disabled" id="lastReportLink" aria-disabled="true" title="No report viewed yet">&laquo; Last Report</a>
       <a class="btn" href="{{ url_for('page_view') }}">Documents</a>
       <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" value="{{ doc_title }}">
       <span class="tag">{{ doc_type }}</span>
@@ -108,6 +109,19 @@
     </aside>
   </main>
 </div>
+<script>
+(function () {
+  var a = document.getElementById("lastReportLink");
+  var url = null;
+  try { url = localStorage.getItem("lastReportUrl"); } catch (e) {}
+  if (a && url) {
+    a.href = url;
+    a.classList.remove("disabled");
+    a.removeAttribute("aria-disabled");
+    a.title = "Back to the last viewed report";
+  }
+})();
+</script>
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>
 {% endif %}

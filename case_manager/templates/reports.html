@@ -281,6 +281,9 @@
     </div>
   </div>
 </div>
+{% if report_id %}<script>
+try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); } catch (e) {}
+</script>{% endif %}
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='dist/editor.bundle.js') }}"></script>
 </body>
