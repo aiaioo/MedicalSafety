@@ -109,6 +109,9 @@
     </aside>
   </main>
 </div>
+{% if doc_id %}<script>
+try { localStorage.setItem("lastSourceUrl", location.pathname + location.search); } catch (e) {}
+</script>{% endif %}
 <script>
 (function () {
   var a = document.getElementById("lastReportLink");

@@ -40,6 +40,7 @@
     <span id="saveStatus" class="save-status"></span>
 
     <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Annotations</a>
+    <a class="btn disabled" id="lastSourceLink" aria-disabled="true" title="No source document viewed yet">Last source document &raquo;</a>
   </header>
 
   <div class="toolbar doc-toolbar" id="formatToolbar">
@@ -281,6 +282,19 @@
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var a = document.getElementById("lastSourceLink");
+  var url = null;
+  try { url = localStorage.getItem("lastSourceUrl"); } catch (e) {}
+  if (a && url) {
+    a.href = url;
+    a.classList.remove("disabled");
+    a.removeAttribute("aria-disabled");
+    a.title = "Back to the last viewed source document";
+  }
+})();
+</script>
 {% if report_id %}<script>
 try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); } catch (e) {}
 </script>{% endif %}

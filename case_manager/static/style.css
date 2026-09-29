@@ -163,6 +163,7 @@ a.tag:hover { background: #d7deec; }
   display: flex; align-items: center; gap: 14px; padding: 10px 16px;
   background: white; border-bottom: 1px solid #e0e2e8; flex-shrink: 0;
 }
+.docbar a.btn.disabled { background: transparent; border: 1px dashed #c4c9d4; color: #a0a6b4; opacity: 0.7; }
 .docbar .home-link { color: #5f6368; font-size: 16px; text-decoration: none; }
 .docbar-title {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
