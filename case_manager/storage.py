@@ -741,6 +741,35 @@ def delete_cause(cause_id: str) -> None:
         cur.execute("DELETE FROM causes WHERE id = %s", (cause_id,))
 
 
+def create_general_cause(user_id: int) -> str:
+    """Creates a "General" cause owned by this user and makes it their
+    default -- every user starts with one, so they always have a default
+    cause. Returns its id."""
+    now = datetime.now(timezone.utc).isoformat()
+    cause_id = f"general-{uuid.uuid4().hex[:6]}"
+    save_cause(cause_id, {"title": "General", "description": "", "goals": [],
+                          "created_at": now, "updated_at": now}, owner_id=user_id)
+    set_default_cause(user_id, cause_id)
+    return cause_id
+
+
+def count_editable_causes(user_id: int) -> int:
+    with _cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM user_causes WHERE user_id = %s AND role IN ('owner', 'editor')", (user_id,))
+        return cur.fetchone()["n"]
+
+
+def list_allegation_ids_by_cause(cause_id: str) -> list[str]:
+    with _cursor() as cur:
+        cur.execute("SELECT id FROM allegations WHERE cause_id = %s", (cause_id,))
+        return [r["id"] for r in cur.fetchall()]
+
+
+def move_allegations_to_cause(from_cause_id: str, to_cause_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE allegations SET cause_id = %s WHERE cause_id = %s", (to_cause_id, from_cause_id))
+
+
 def most_recently_updated_editable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
     """The most recently updated cause this user can add cases to (editor
     or owner), optionally skipping `exclude`."""
@@ -812,6 +841,7 @@ def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_ro
             "id": a["id"],
             "title": a["title"],
             "description": a["description"],
+            "cause_id": a["cause_id"],
             "to_prove": [_to_prove_dict(t) for t in to_prove_by_allegation.get(a["id"], [])],
             "inculpatory": [_evidence_dict(r) for r in evidence if r["kind"] == "inculpatory"],
             "exculpatory": [_evidence_dict(r) for r in evidence if r["kind"] == "exculpatory"],
@@ -822,11 +852,16 @@ def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_ro
     return items
 
 
-def list_allegations() -> list[dict]:
+def list_allegations(cause_id: str | None = None) -> list[dict]:
     """In display order (allegations/allegation_order.json's old job is now
-    just ORDER BY order_index -- see set_allegation_order)."""
+    just ORDER BY order_index -- see set_allegation_order). `cause_id`
+    limits it to that cause's allegations."""
     with _cursor() as cur:
-        cur.execute("SELECT id, title, description, created_at, updated_at FROM allegations ORDER BY order_index")
+        cur.execute(
+            "SELECT id, title, description, cause_id, created_at, updated_at FROM allegations "
+            "WHERE (%s::text IS NULL OR cause_id = %s) ORDER BY order_index",
+            (cause_id, cause_id),
+        )
         allegation_rows = cur.fetchall()
         cur.execute("SELECT allegation_id, id, kind, text, report_id FROM allegation_evidence ORDER BY position")
         evidence_rows = cur.fetchall()
@@ -839,7 +874,7 @@ def list_allegations() -> list[dict]:
 
 def get_allegation(allegation_id: str) -> dict | None:
     with _cursor() as cur:
-        cur.execute("SELECT id, title, description, created_at, updated_at FROM allegations WHERE id = %s", (allegation_id,))
+        cur.execute("SELECT id, title, description, cause_id, created_at, updated_at FROM allegations WHERE id = %s", (allegation_id,))
         allegation_row = cur.fetchone()
         if allegation_row is None:
             return None
@@ -856,12 +891,13 @@ def save_allegation(allegation_id: str, data: dict) -> None:
     with _cursor() as cur:
         cur.execute(
             """
-            INSERT INTO allegations (id, title, description, order_index, created_at, updated_at)
-            VALUES (%s, %s, %s, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM allegations), %s, %s)
+            INSERT INTO allegations (id, cause_id, title, description, order_index, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM allegations), %s, %s)
             ON CONFLICT (id) DO UPDATE SET
-                title = EXCLUDED.title, description = EXCLUDED.description, updated_at = EXCLUDED.updated_at
+                cause_id = EXCLUDED.cause_id, title = EXCLUDED.title, description = EXCLUDED.description,
+                updated_at = EXCLUDED.updated_at
             """,
-            (allegation_id, data["title"], data["description"], data["created_at"], data["updated_at"]),
+            (allegation_id, data["cause_id"], data["title"], data["description"], data["created_at"], data["updated_at"]),
         )
         cur.execute("DELETE FROM allegation_evidence WHERE allegation_id = %s", (allegation_id,))  # cascades to allegation_to_prove_evidence
         for kind in ("inculpatory", "exculpatory"):

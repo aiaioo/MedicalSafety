@@ -939,18 +939,13 @@
   (async function init() {
     try {
       const [allegationsRes, casesRes, reportsRes] = await Promise.all([
-        fetch(allegationsUrl),
+        fetch(allegationsUrl + "?default_cause=1"),
         fetch(casesUrl + "?default_cause=1"),
         fetch(reportsUrl),
       ]);
       if (!allegationsRes.ok) throw new Error(await allegationsRes.text());
       allegations = await allegationsRes.json();
       cases = casesRes.ok ? await casesRes.json() : [];
-      // `cases` is only the selected cause's cases, so keep the allegations
-      // linked to at least one of them. (Ones added since load stay listed
-      // even while unlinked -- they have no cause until linked to a case.)
-      const causeCaseIds = new Set(cases.map((c) => c.id));
-      allegations = allegations.filter((a) => (a.case_ids || []).some((id) => causeCaseIds.has(id)));
       reports = reportsRes.ok ? await reportsRes.json() : [];
       renderFilterBar();
       renderAllegationList();

@@ -25,6 +25,8 @@ Create the database once and point the app at it:
 createdb case_manager
 psql case_manager -f db/schema.sql
 psql case_manager -f db/migrations/001_users_and_access.sql
+psql case_manager -f db/migrations/002_allegation_cause.sql
+psql case_manager -f db/migrations/003_default_cause_for_every_user.sql
 export DATABASE_URL=postgresql:///case_manager   # defaults to this if unset
 ```
 

@@ -253,16 +253,7 @@ def require_editable_cause(raw):
 
 
 def create_default_cause():
-    now = datetime.now(timezone.utc).isoformat()
-    cause_id = f"general-{uuid.uuid4().hex[:6]}"
-    storage.save_cause(cause_id, {
-        "title": "General",
-        "description": "",
-        "goals": [],
-        "created_at": now,
-        "updated_at": now,
-    }, owner_id=g.user.id)
-    return cause_id
+    return storage.create_general_cause(g.user.id)
 
 
 def resolve_default_cause_id(exclude_cause_id=None, create=True):
@@ -309,7 +300,14 @@ def inject_cause_picker():
         {"id": c["id"], "title": c["title"] or c["id"]}
         for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor")
     ]
-    return {"picker_causes": causes, "picker_current": resolve_default_cause_id(create=False) or ""}
+    # Every user has a default cause: if theirs is gone (e.g. it was deleted
+    # from under them by a collaborator), pick or create one and keep it.
+    current = resolve_default_cause_id()
+    if current != storage.get_default_cause(g.user.id):
+        storage.set_default_cause(g.user.id, current)
+    if current not in {c["id"] for c in causes}:
+        causes = [{"id": current, "title": (storage.get_cause(current) or {}).get("title") or current}, *causes]
+    return {"picker_causes": causes, "picker_current": current}
 
 
 # ---------------------------------------------------------------------------
@@ -2013,11 +2011,16 @@ def api_cause(cause_id):
     if request.method == "DELETE":
         if existing.get("goals"):
             raise DocumentError("Cannot delete a cause that still has goals", 400)
-        # A case's cause is mandatory (NOT NULL), so any case still pointing
-        # at this cause has to be reassigned before the cause itself can go.
+        if storage.count_editable_causes(g.user.id) <= 1:
+            raise DocumentError("Cannot delete your last remaining cause", 400)
+        # A case's or allegation's cause is mandatory (NOT NULL), so any still
+        # pointing at this cause have to be reassigned before it can go.
         affected_case_ids = storage.list_case_ids_by_cause(cause_id)
+        fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
+        storage.move_allegations_to_cause(cause_id, fallback_cause_id)
+        if storage.get_default_cause(g.user.id) == cause_id:
+            storage.set_default_cause(g.user.id, fallback_cause_id)
         if affected_case_ids:
-            fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
             now = datetime.now(timezone.utc).isoformat()
             for affected_case_id in affected_case_ids:
                 case = storage.get_case(affected_case_id)
@@ -2053,9 +2056,18 @@ def api_cause(cause_id):
 @app.route("/api/allegations", methods=["GET", "POST"])
 def api_allegations():
     if request.method == "GET":
-        return jsonify(storage.list_allegations())
+        # ?default_cause=1: only the allegations under the user's default
+        # cause (the one picked in the title bar).
+        only_cause = resolve_default_cause_id(create=False) if request.args.get("default_cause") else None
+        if request.args.get("default_cause") and not only_cause:
+            return jsonify([])
+        return jsonify(storage.list_allegations(only_cause))
 
     body = request.get_json(silent=True) or {}
+    # An allegation's cause is mandatory: an explicit cause_id wins (the user
+    # must be able to edit that cause), else their default cause.
+    raw_cause_id = body.get("cause_id")
+    cause_id = require_editable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
     allegation_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
     allowed_report_ids = linkable_ids("report")
@@ -2063,6 +2075,7 @@ def api_allegations():
     exculpatory = sanitize_evidence_list(body.get("exculpatory"), allowed_report_ids)
     valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
     data = {
+        "cause_id": cause_id,
         "title": _sanitize_text(body.get("title"), ALLEGATION_MAX_TITLE_CHARS),
         "description": _sanitize_text(body.get("description"), ALLEGATION_MAX_TEXT_CHARS),
         "to_prove": sanitize_to_prove_list(body.get("to_prove"), valid_evidence_ids),
@@ -2097,7 +2110,13 @@ def api_allegation_item(allegation_id):
     inculpatory = sanitize_evidence_list(body.get("inculpatory", existing.get("inculpatory", [])), allowed_report_ids)
     exculpatory = sanitize_evidence_list(body.get("exculpatory", existing.get("exculpatory", [])), allowed_report_ids)
     valid_evidence_ids = {e["id"] for e in inculpatory} | {e["id"] for e in exculpatory}
+    # Keeping its current cause needs no check; moving it needs edit access
+    # to the new one.
+    cause_id = body.get("cause_id", existing["cause_id"]) or existing["cause_id"]
+    if cause_id != existing["cause_id"]:
+        require_editable_cause(cause_id)
     data = {
+        "cause_id": cause_id,
         "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
         "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
         "to_prove": sanitize_to_prove_list(body.get("to_prove", existing.get("to_prove", [])), valid_evidence_ids),

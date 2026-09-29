@@ -65,7 +65,10 @@ class User:
         """Creates and returns a new user, or None if that email is already
         registered."""
         row = storage.create_user(normalize_email(email), cls.hash_password(password))
-        return cls.from_row(row) if row else None
+        if row is None:
+            return None
+        storage.create_general_cause(row["id"])  # every user starts with a default cause
+        return cls.from_row(row)
 
     @classmethod
     def authenticate(cls, email: str, password: str) -> User | None:
