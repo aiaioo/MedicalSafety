@@ -1734,14 +1734,13 @@ def api_create_snippet(doc_id, page):
     return jsonify(result)
 
 
-@app.route("/api/doc/<doc_id>/download")
-def api_download_annotated(doc_id):
-    raw_type = request.args.get("type", "pdf")
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
+def _annotated_pdf_response(doc_id, annotated_only):
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
 
     data = storage.get_all_annotations(doc_id)
 
     with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        annotated_pages = []
         for page_key, raw_anns in data.items():
             try:
                 page_num = int(page_key)
@@ -1754,12 +1753,28 @@ def api_download_annotated(doc_id):
                 continue
             p = d[page_num - 1]
             draw_annotations_on_page(p, annotations, p.rect)
+            annotated_pages.append(page_num - 1)
+        if annotated_only:
+            if not annotated_pages:
+                raise DocumentError("This document has no annotated pages.", 400)
+            d.select(sorted(annotated_pages))
         annotated_pdf_bytes = d.tobytes(deflate=True)
 
+    suffix = "annotated-pages" if annotated_only else "annotated"
     resp = Response(annotated_pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}-annotated.pdf"'
+    resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}-{suffix}.pdf"'
     return resp
+
+
+@app.route("/api/doc/<doc_id>/download")
+def api_download_annotated(doc_id):
+    return _annotated_pdf_response(doc_id, annotated_only=False)
+
+
+@app.route("/api/doc/<doc_id>/download-annotated-pages")
+def api_download_annotated_pages(doc_id):
+    return _annotated_pdf_response(doc_id, annotated_only=True)
 
 
 @app.route("/api/doc/<doc_id>/download-original")

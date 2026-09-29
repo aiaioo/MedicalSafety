@@ -12,6 +12,7 @@
   const snippetsAllUrl = appEl.dataset.snippetsAllUrl;
   const snippetDeleteBase = appEl.dataset.snippetDeleteBase; // contains literal "__ID__"
   const downloadUrl = appEl.dataset.downloadUrl;
+  const downloadPagesUrl = appEl.dataset.downloadPagesUrl;
   const downloadOriginalUrl = appEl.dataset.downloadOriginalUrl;
   const titleUrl = appEl.dataset.titleUrl;
 
@@ -763,22 +764,26 @@
   });
 
   // Unsaved annotations are saved first so they appear in the download.
-  document.getElementById("downloadBtn").addEventListener("click", async () => {
-    const dirtyPages = Array.from(pageState.entries())
-      .filter(([, s]) => s.dirty)
-      .map(([p]) => p);
-    if (dirtyPages.length) {
-      try {
-        const results = await Promise.all(dirtyPages.map(saveOnePage));
-        if (results.some((n) => n > 0)) await loadAllSnippets();
-        setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
-      } catch (e) {
-        setStatus("Save failed, download cancelled: " + e.message, true);
-        return;
+  function bindAnnotatedDownload(btnId, url) {
+    document.getElementById(btnId).addEventListener("click", async () => {
+      const dirtyPages = Array.from(pageState.entries())
+        .filter(([, s]) => s.dirty)
+        .map(([p]) => p);
+      if (dirtyPages.length) {
+        try {
+          const results = await Promise.all(dirtyPages.map(saveOnePage));
+          if (results.some((n) => n > 0)) await loadAllSnippets();
+          setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
+        } catch (e) {
+          setStatus("Save failed, download cancelled: " + e.message, true);
+          return;
+        }
       }
-    }
-    window.location.href = downloadUrl;
-  });
+      window.location.href = url;
+    });
+  }
+  bindAnnotatedDownload("downloadBtn", downloadUrl);
+  bindAnnotatedDownload("downloadPagesBtn", downloadPagesUrl);
   document.getElementById("downloadOriginalBtn").addEventListener("click", () => {
     window.location.href = downloadOriginalUrl;
   });
