@@ -261,9 +261,11 @@
       if (cause.id === c.cause_id) opt.selected = true;
       select.appendChild(opt);
     }
+    select.title = causeName(c.cause_id);
     select.addEventListener("click", (e) => e.stopPropagation());
     select.addEventListener("change", () => {
       c.cause_id = select.value;
+      select.title = causeName(c.cause_id);
       scheduleSave("card:" + c.id, c.id, { name: c.name, summary: c.summary, cause_id: c.cause_id });
     });
     return select;
