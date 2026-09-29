@@ -235,6 +235,7 @@ import { Pagination, repaginate } from "./pagination.js";
       <button type="button" class="report-card-delete card-delete-btn" title="Delete report">✕</button>
       <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>
       <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
+      <div class="report-card-meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
       <div class="report-card-meta" title="${escapeHtml((r.cause_titles || []).join(", "))}">Cause: ${escapeHtml((r.cause_titles || []).join(", ") || "None")}</div>
       <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
     wireConfirmDelete(card.querySelector(".report-card-delete"), async () => {

@@ -443,7 +443,8 @@ def list_reports(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT r.id, r.name, r.source_document_id, d.doc_type AS source_doc_type,
-                   r.created_at, r.updated_at, ur.role, {links}
+                   r.created_at, r.updated_at, ur.role, {links},
+                   (SELECT count(*) FROM report_snippets rs WHERE rs.report_id = r.id) AS snippet_count
             FROM reports r
             JOIN user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
             LEFT JOIN documents d ON d.id = r.source_document_id
@@ -462,6 +463,7 @@ def list_reports(user_id: int) -> list[dict]:
             "cause_ids": list(r["cause_ids"]),
             "case_ids": list(r["case_ids"]),
             "role": r["role"],
+            "snippet_count": r["snippet_count"],
             "created_at": _iso(r["created_at"]),
             "updated_at": _iso(r["updated_at"]),
         })
