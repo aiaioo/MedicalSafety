@@ -66,7 +66,7 @@
   function setMode(newMode) {
     mode = newMode;
     document.querySelectorAll(".mode-btn").forEach((b) => {
-      b.classList.toggle("active", b.dataset.mode === newMode);
+      b.classList.toggle("active", b.dataset.mode === (newMode === null ? "select" : newMode));
     });
     const cursor = newMode === null ? "default" : "crosshair";
     for (const controller of mounted.values()) {
@@ -82,7 +82,8 @@
   document.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const isActive = btn.classList.contains("active");
-      setMode(isActive ? null : btn.dataset.mode);
+      // The Select (hand) tool is the idle mode, so it is what "no tool" means.
+      setMode(isActive || btn.dataset.mode === "select" ? null : btn.dataset.mode);
     });
   });
 
