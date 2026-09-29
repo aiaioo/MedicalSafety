@@ -1639,7 +1639,8 @@ def api_all_annotations(doc_id):
 @app.route("/api/doc/<doc_id>/annotations/<int:page>", methods=["GET", "POST"])
 def api_annotations(doc_id, page):
     check_doc_id(doc_id)
-    normalize_type(request.args.get("type", "pdf"))
+    raw_type = request.args.get("type", "pdf")
+    normalize_type(raw_type)
     require_role("source", doc_id, "viewer" if request.method == "GET" else "editor")
 
     if request.method == "GET":
@@ -1651,7 +1652,44 @@ def api_annotations(doc_id, page):
         raise DocumentError("Body must contain an 'annotations' list", 400)
 
     storage.set_page_annotations(doc_id, page, anns)
-    return jsonify({"status": "ok", "count": len(anns)})
+    refreshed = refresh_page_snippets(doc_id, page, raw_type, anns)
+    return jsonify({"status": "ok", "count": len(anns), "snippets_refreshed": refreshed})
+
+
+def refresh_page_snippets(doc_id, page, raw_type, raw_annotations):
+    """Re-renders every snippet on this page against the page's current
+    annotations, so the stored PNGs never show stale (edited or deleted)
+    markup. Each keeps its crop rectangle and its existing resolution."""
+    snippets = storage.list_snippets(doc_id, page=page)
+    if not snippets:
+        return 0
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="editor")
+    annotations = sanitize_annotations(raw_annotations)
+    refreshed = 0
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        if not (1 <= page <= d.page_count):
+            return 0
+        p = d[page - 1]
+        pr = p.rect
+        draw_annotations_on_page(p, annotations, pr)
+        for s in snippets:
+            r = s["rect"]
+            clip = fitz.Rect(
+                pr.x0 + r["x"] * pr.width,
+                pr.y0 + r["y"] * pr.height,
+                pr.x0 + min(r["x"] + r["w"], 1.0) * pr.width,
+                pr.y0 + min(r["y"] + r["h"], 1.0) * pr.height,
+            ) & pr
+            dpi = 300
+            old = storage.read_snippet_bytes(doc_id, s["filename"])
+            if old and clip.width > 0:
+                # Keep the resolution the snippet was originally extracted at.
+                dpi = max(72, min(round(fitz.Pixmap(old).width / clip.width * 72), 900))
+            zoom = dpi / 72
+            png_bytes = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip).tobytes("png")
+            storage.replace_snippet_image(doc_id, s, bool(annotations), png_bytes)
+            refreshed += 1
+    return refreshed
 
 
 # ---------------------------------------------------------------------------
@@ -2239,7 +2277,10 @@ def api_snippet_file(doc_id, filename):
     data = storage.read_snippet_bytes(doc_id, filename)
     if data is None:
         abort(404)
-    return Response(data, mimetype="image/png")
+    resp = Response(data, mimetype="image/png")
+    # Snippet PNGs are rewritten in place when the page's annotations change.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 if __name__ == "__main__":

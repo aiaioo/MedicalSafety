@@ -644,6 +644,7 @@
     });
     if (!res.ok) throw new Error(await res.text());
     state.dirty = false;
+    return (await res.json()).snippets_refreshed || 0;
   }
 
   let titleDirty = false;
@@ -701,7 +702,9 @@
     try {
       const tasks = dirtyPages.map(saveOnePage);
       if (titleDirty) tasks.push(saveTitle());
-      await Promise.all(tasks);
+      const results = await Promise.all(tasks);
+      // Snippet PNGs on the saved pages were re-rendered server-side.
+      if (results.some((n) => n > 0)) await loadAllSnippets();
       setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
@@ -872,6 +875,9 @@
     try {
       const res = await fetch(snippetsAllUrl);
       allSnippets = await res.json();
+      // Cache-buster: a snippet's PNG is rewritten in place when its page's annotations change.
+      const bust = Date.now();
+      for (const s of allSnippets) s.url += (s.url.includes("?") ? "&" : "?") + "v=" + bust;
       renderSnippetSidebar();
     } catch (e) {
       console.error(e);

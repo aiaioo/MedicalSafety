@@ -380,6 +380,17 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
             "created_at": created_at}
 
 
+def replace_snippet_image(document_id: str, snippet: dict, annotated: bool, png_bytes: bytes) -> None:
+    """Overwrites an existing snippet's PNG in place (same filename, so the
+    URLs reports embed keep working) and refreshes its annotated flag."""
+    doc_type = get_document_type(document_id)
+    if doc_type is None:
+        raise StorageError(f"No document with id {document_id!r}")
+    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, snippet["filename"]), png_bytes)
+    with _cursor() as cur:
+        cur.execute("UPDATE snippets SET annotated = %s WHERE id = %s", (annotated, snippet["id"]))
+
+
 def delete_snippet(document_id: str, snippet_id: str) -> bool:
     """Refused while a report's content embeds the snippet's image (reports
     reference it by URL; save_report mirrors those URLs into report_snippets)."""
