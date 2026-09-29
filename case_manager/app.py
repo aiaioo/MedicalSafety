@@ -2013,20 +2013,14 @@ def api_cause(cause_id):
             raise DocumentError("Cannot delete a cause that still has goals", 400)
         if storage.count_editable_causes(g.user.id) <= 1:
             raise DocumentError("Cannot delete your last remaining cause", 400)
-        # A case's or allegation's cause is mandatory (NOT NULL), so any still
-        # pointing at this cause have to be reassigned before it can go.
-        affected_case_ids = storage.list_case_ids_by_cause(cause_id)
+        if storage.list_case_ids_by_cause(cause_id):
+            raise DocumentError("Cannot delete a cause that still has cases", 400)
+        # Another cause takes over as the default (if this was it) and
+        # inherits the allegations, since an allegation's cause is mandatory.
         fallback_cause_id = resolve_default_cause_id(exclude_cause_id=cause_id)
         storage.move_allegations_to_cause(cause_id, fallback_cause_id)
         if storage.get_default_cause(g.user.id) == cause_id:
             storage.set_default_cause(g.user.id, fallback_cause_id)
-        if affected_case_ids:
-            now = datetime.now(timezone.utc).isoformat()
-            for affected_case_id in affected_case_ids:
-                case = storage.get_case(affected_case_id)
-                case["cause_id"] = fallback_cause_id
-                case["updated_at"] = now
-                storage.save_case(affected_case_id, case)
         storage.delete_cause(cause_id)
         return jsonify({"ok": True})
 

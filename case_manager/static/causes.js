@@ -258,6 +258,9 @@
     fetch(causeUrl(id), { method: "DELETE" })
       .then((res) => {
         if (!res.ok) return res.json().then((d) => { throw new Error(d.error || res.statusText); });
+        // The server made another cause the default; reload to pick it up
+        // (title-bar picker, selected cause).
+        if (id === defaultCauseId) { location.reload(); return; }
         causes = causes.filter((c) => c.id !== id);
         if (selectedId === id) {
           selectedId = null;
