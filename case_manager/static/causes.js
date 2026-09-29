@@ -5,9 +5,9 @@
   const causeUrlBase = appEl.dataset.causeUrlBase;
   const casesUrl = appEl.dataset.casesUrl;
   const casesPageUrl = appEl.dataset.casesPageUrl;
-  const defaultCauseUrl = appEl.dataset.defaultCauseUrl;
-  // The user's default cause -- the one they last selected here. New
-  // reports/uploads get associated with it, and the page reopens on it.
+  // The user's default cause -- changed only by the title-bar picker, not by
+  // selecting a card here. New reports/uploads get associated with it, and
+  // the page opens on it.
   let defaultCauseId = appEl.dataset.defaultCause;
 
   function causeUrl(id) {
@@ -568,24 +568,8 @@
     enableDragReorder(causeDetailEl.querySelector(".goal-list"), ".goal-card", reorderGoalsFromDom);
   }
 
-  function rememberAsDefault(id) {
-    // Only a cause the user can edit can be their default (new reports and
-    // uploads are created under it).
-    const cause = causes.find((c) => c.id === id);
-    if (id === defaultCauseId || !cause || !["owner", "editor"].includes(cause.role)) return;
-    defaultCauseId = id;
-    const picker = document.getElementById("causePicker");
-    if (picker) picker.value = id;
-    fetch(defaultCauseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cause_id: id }),
-    }).catch((e) => console.error(e));
-  }
-
   async function selectCause(id) {
     selectedId = id;
-    rememberAsDefault(id);
     renderCauseList();
     causeDetailEl.innerHTML = '<p class="empty">Loading&hellip;</p>';
     try {

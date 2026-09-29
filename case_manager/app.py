@@ -2182,9 +2182,9 @@ def api_allegations_order():
 
 @app.route("/api/me/default-cause", methods=["POST"])
 def api_default_cause():
-    """Selecting a cause (in the causes workspace) makes it the user's
-    default -- the cause every report/source they create is associated
-    with, so it has to be one they can edit."""
+    """Picking a cause in the title-bar picker makes it the user's default
+    -- the cause every report/source they create is associated with, so it
+    has to be one they can edit."""
     body = request.get_json(silent=True) or {}
     cause_id = require_editable_cause(body.get("cause_id"))
     storage.set_default_cause(g.user.id, cause_id)
