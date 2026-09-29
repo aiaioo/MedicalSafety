@@ -12,7 +12,9 @@ require_role there), against the user_* association tables.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
+from captcha.image import ImageCaptcha
 from flask import Blueprint, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -36,7 +39,14 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 # the sign-in page (or, for /api/ routes, answers 401).
 PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "static"}
 
+# The "are you human?" image on the sign-up form. Each challenge's answer is
+# kept server-side (storage.create_signup_captcha), single-use, and expires.
+CAPTCHA_LIFETIME = timedelta(minutes=10)
+CAPTCHA_LENGTH = 5
+CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I -- easy to confuse
+
 bp = Blueprint("auth", __name__)
+_captcha_image = ImageCaptcha(width=200, height=70)
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,31 @@ class User:
 
 
 _DUMMY_PASSWORD_HASH = User.hash_password(secrets.token_urlsafe(16))
+
+
+def new_captcha() -> dict:
+    """Creates a fresh challenge: {"id", "image"} where image is a data: URI
+    of a PNG showing the (case-insensitive) answer."""
+    answer = "".join(secrets.choice(CAPTCHA_ALPHABET) for _ in range(CAPTCHA_LENGTH))
+    captcha_id = secrets.token_urlsafe(16)
+    storage.create_signup_captcha(captcha_id, answer, datetime.now(timezone.utc) + CAPTCHA_LIFETIME)
+    png = _captcha_image.generate(answer).getvalue()
+    return {"id": captcha_id, "image": "data:image/png;base64," + base64.b64encode(png).decode("ascii")}
+
+
+def captcha_passed(captcha_id: str, attempt: str) -> bool:
+    """Checks (and uses up) a challenge. Wrong, expired and already-used
+    all come back False."""
+    answer = storage.take_signup_captcha_answer(captcha_id)
+    if answer is None:
+        return False
+    return hmac.compare_digest(answer, (attempt or "").strip().upper())
+
+
+def _render_signup(email: str, error: str, next_url: str, status: int = 200):
+    return render_template(
+        "auth.html", mode="signup", email=email, error=error, next=next_url, captcha=new_captcha(),
+    ), status
 
 
 def normalize_email(email: str) -> str:
@@ -145,11 +180,12 @@ def signup():
     if request.method == "GET":
         if g.user is not None:
             return redirect(next_url)
-        return render_template("auth.html", mode="signup", email="", error="", next=next_url)
+        return _render_signup("", "", next_url)
 
     email = normalize_email(request.form.get("email"))
     password = request.form.get("password") or ""
     confirm = request.form.get("confirm") or ""
+    captcha_ok = captcha_passed(request.form.get("captcha_id") or "", request.form.get("captcha_answer") or "")
 
     error = ""
     if not EMAIL_RE.match(email) or len(email) > EMAIL_MAX_CHARS:
@@ -160,13 +196,15 @@ def signup():
         error = "That password is too long."
     elif password != confirm:
         error = "The two passwords don't match."
+    elif not captcha_ok:
+        error = "The characters you typed didn't match the image. Please try the new one."
     if error:
-        return render_template("auth.html", mode="signup", email=email, error=error, next=next_url), 400
+        return _render_signup(email, error, next_url, 400)
 
     user = User.register(email, password)
     if user is None:
         error = "An account with that email already exists. Sign in instead."
-        return render_template("auth.html", mode="signup", email=email, error=error, next=next_url), 409
+        return _render_signup(email, error, next_url, 409)
     return _start_session(user, next_url)
 
 

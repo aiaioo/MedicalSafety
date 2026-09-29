@@ -728,6 +728,7 @@ a.tag:hover { background: #d7deec; }
 /* Sign in / sign up (templates/auth.html) and the signed-in bar on the home page. */
 .auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .auth-card { width: 380px; }
+.auth-captcha { display: block; max-width: 100%; height: auto; margin: 4px 0; border-radius: 4px; }
 .auth-switch { margin: 14px 0 0; }
 .account-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
   font-size: 13px; color: #46536b; }

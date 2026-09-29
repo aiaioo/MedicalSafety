@@ -25,6 +25,12 @@
     <label class="modal-field">Confirm password
       <input type="password" name="confirm" autocomplete="new-password" minlength="8" required>
     </label>
+    <label class="modal-field">Type the characters you see
+      <img class="auth-captcha" src="{{ captcha.image }}" alt="Captcha: distorted letters and digits" width="200" height="70">
+      <input type="hidden" name="captcha_id" value="{{ captcha.id }}">
+      <input type="text" name="captcha_answer" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" maxlength="10" required>
+    </label>
     {% endif %}
     {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
     <div class="modal-actions">

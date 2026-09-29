@@ -1074,6 +1074,29 @@ def delete_session(token_hash: str) -> None:
         cur.execute("DELETE FROM user_sessions WHERE token_hash = %s", (token_hash,))
 
 
+def create_signup_captcha(captcha_id: str, answer: str, expires_at: datetime) -> None:
+    """Records a captcha challenge, sweeping out expired ones while it's at it."""
+    with _cursor() as cur:
+        cur.execute("DELETE FROM signup_captchas WHERE expires_at <= now()")
+        cur.execute(
+            "INSERT INTO signup_captchas (id, answer, expires_at) VALUES (%s, %s, %s)",
+            (captcha_id, answer, expires_at),
+        )
+
+
+def take_signup_captcha_answer(captcha_id: str) -> str | None:
+    """Removes a still-unexpired captcha challenge and returns its answer
+    (None if it doesn't exist, was already used, or has expired), so each
+    challenge can be answered only once."""
+    with _cursor() as cur:
+        cur.execute(
+            "DELETE FROM signup_captchas WHERE id = %s AND expires_at > now() RETURNING answer",
+            (captcha_id,),
+        )
+        row = cur.fetchone()
+    return row["answer"] if row else None
+
+
 # ---------------------------------------------------------------------------
 # Per-object access roles (owner / editor / viewer) -- one association table
 # per kind of object, see db/migrations/001_users_and_access.sql. A user with
