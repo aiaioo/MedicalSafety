@@ -97,7 +97,7 @@ a.tag:hover { background: #d7deec; }
 
 .sidebar { width: 260px; flex-shrink: 0; background: white; border-left: 1px solid #e0e2e8;
   padding: 12px; overflow-y: auto; }
-.sidebar-grip { display: none; }
+.sidebar-grip, .sidebar-close { display: none; }
 
 /* Below this width the sidebar can't coexist with the document/source view,
    so it docks off-screen and slides in over the content on a swipe instead
@@ -131,6 +131,11 @@ a.tag:hover { background: #d7deec; }
   }
   .viewer-layout:has(.sidebar.is-open) .sidebar-grip { display: none; }
   .sidebar.is-open { transform: translateX(0); }
+  .sidebar-close {
+    display: block; position: sticky; top: 0; z-index: 3; margin: -4px 0 4px auto;
+    width: 32px; height: 32px; padding: 0; border: 1px solid #e0e2e8; border-radius: 50%;
+    background: white; color: #46536b; font-size: 14px; line-height: 1; cursor: pointer;
+  }
 }
 .sidebar h3 { margin-top: 0; font-size: 14px; }
 .snippet-list { display: flex; flex-direction: column; gap: 10px; }

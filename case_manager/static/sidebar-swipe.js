@@ -1,7 +1,7 @@
 // On narrow screens the annotations/snippets sidebar (see .sidebar in
 // style.css) docks off-screen and slides in over the document/source view
 // instead of sharing the row with it. Swipe left from the right edge to
-// open it, swipe right anywhere inside it to close it. Wide screens are
+// open it, swipe right anywhere inside it, tap its ✕ button, or tap outside it to close it. Wide screens are
 // untouched -- the media query in style.css only applies the slide-in
 // layout below 780px, so this never fights the normal flex sidebar there.
 (function () {
@@ -23,6 +23,30 @@
   grip.textContent = "⋮";
   grip.addEventListener("click", () => sidebar.classList.add("is-open"));
   layout.appendChild(grip);
+
+  // Explicit close control (hidden on wide screens by CSS), pinned to the
+  // top of the panel so it stays reachable while the snippet list scrolls.
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "sidebar-close";
+  closeBtn.setAttribute("aria-label", "Hide annotations panel");
+  closeBtn.textContent = "✕";
+  closeBtn.addEventListener("click", () => sidebar.classList.remove("is-open"));
+  sidebar.insertBefore(closeBtn, sidebar.firstChild);
+
+  // Tapping the visible part of the page behind the open panel closes it.
+  // Capture phase + stopPropagation so that tap only dismisses the panel
+  // rather than also acting on whatever is underneath.
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (!MOBILE_QUERY.matches || !isOpen() || sidebar.contains(e.target) || grip.contains(e.target)) return;
+      sidebar.classList.remove("is-open");
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    true
+  );
 
   let startX = null;
   let startY = null;
