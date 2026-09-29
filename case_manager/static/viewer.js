@@ -430,7 +430,10 @@
       if (selected && selected.controller === controller) selected = null;
       state.dirty = true;
       redraw();
-      if (snippetId) deleteSnippet(snippetId);
+      (async () => {
+        if (snippetId) await deleteSnippet(snippetId);
+        await saveAfterRemoval(controller);
+      })();
     };
 
     controller.clearAll = async function () {
@@ -444,6 +447,7 @@
       for (const id of idsToDelete) {
         await deleteSnippet(id);
       }
+      await saveAfterRemoval(controller);
     };
 
     return controller;
@@ -569,8 +573,23 @@
     selected = null;
     controller.state.dirty = true;
     controller.redraw();
-    setStatus("Annotation deleted (click Save to persist)");
-    if (snippetId) deleteSnippet(snippetId);
+    (async () => {
+      if (snippetId) await deleteSnippet(snippetId);
+      await saveAfterRemoval(controller);
+    })();
+  }
+
+  // Removing an annotation saves its page right away (not just on the Save
+  // button), because that is what re-renders the page's other snippets --
+  // otherwise a larger snippet would keep showing the deleted annotation.
+  async function saveAfterRemoval(controller) {
+    try {
+      const refreshed = await saveOnePage(controller.pageNum);
+      if (refreshed > 0) await loadAllSnippets();
+      setStatus("Annotation removed and page saved");
+    } catch (e) {
+      setStatus("Save failed: " + e.message, true);
+    }
   }
 
   window.addEventListener("keydown", (e) => {
