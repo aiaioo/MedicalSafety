@@ -743,3 +743,4 @@ a.tag:hover { background: #d7deec; }
 .docbar-center .docbar-title { position: static; transform: none; }
 .cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f7f8fa; color: #46536b; max-width: 200px; }
+.cause-static { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }

@@ -251,7 +251,7 @@ import { Pagination, repaginate } from "./pagination.js";
   }
 
   async function fetchReports() {
-    const res = await fetch(reportsUrl);
+    const res = await fetch(reportsUrl + "?default_cause=1");
     return res.json();
   }
 

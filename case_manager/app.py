@@ -226,26 +226,37 @@ def check_report_id(report_id):
         raise DocumentError(f"Invalid report id: {report_id!r}", 400)
 
 
-def add_cause_titles(items):
+def add_cause_titles(items, only_cause=None):
     """Sets item["cause_titles"] on each report/document dict: the titles of
     the causes it is associated with directly (cause_ids) or through a
-    linked case (case_ids), sorted, for display on its card."""
+    linked case (case_ids), sorted, for display on its card. With
+    `only_cause`, returns just the items associated with that cause."""
     titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id)}
     case_cause = {c["id"]: c["cause_id"] for c in storage.list_cases(g.user.id)}
+    kept = []
     for item in items:
         ids = set(item.get("cause_ids", ())) | {case_cause[i] for i in item.get("case_ids", ()) if i in case_cause}
+        if only_cause and only_cause not in ids:
+            continue
         item["cause_titles"] = sorted(titles[i] for i in ids if i in titles)
-    return items
+        kept.append(item)
+    return kept
 
 
-def list_source_docs():
+def default_cause_only(create=False):
+    """The id to filter the reports/documents lists by when the request
+    carries ?default_cause=1 (the cause picked in the title bar), else None."""
+    return resolve_default_cause_id(create=create) if request.args.get("default_cause") else None
+
+
+def list_source_docs(only_cause=None):
     """All uploaded source documents (pdf/docx/doc), as {"id", "type",
     "title"} dicts -- the same shape rendered into the annotations and
     reports pages' source pickers."""
     docs = storage.list_documents(g.user.id)
     for d in docs:
         d["type"] = normalize_type(d["type"])
-    return add_cause_titles(docs)
+    return add_cause_titles(docs, only_cause)
 
 
 def _get_pdf_bytes(doc_id, raw_type, min_role="viewer"):
@@ -1398,7 +1409,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        return render_template("annotations.html", doc_id="", docs=list_source_docs(), default_cause=default_cause_for_display())
+        return render_template("annotations.html", doc_id="", docs=list_source_docs(resolve_default_cause_id(create=False)), default_cause=default_cause_for_display())
 
     try:
         page = int(request.args.get("page", 1))
@@ -1449,6 +1460,11 @@ def documents_view():
         if not storage.report_exists(report_id):
             raise DocumentError(f"No report with id {report_id!r}", 404)
 
+    report_cause_titles = []
+    if report_id:
+        listed = add_cause_titles([r for r in storage.list_reports(g.user.id) if r["id"] == report_id])
+        report_cause_titles = listed[0]["cause_titles"] if listed else []
+
     preselect_source = request.args.get("source", "")
     preselect_type = request.args.get("type", "pdf")
     if preselect_source:
@@ -1461,6 +1477,7 @@ def documents_view():
         source_docs=source_docs,
         default_cause=default_cause_for_display(),
         report_id=report_id,
+        report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
         preselect_type=preselect_type,
     )
@@ -1731,7 +1748,7 @@ def api_reports():
     if request.method == "GET":
         items = storage.list_reports(g.user.id)
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(add_cause_titles(items))
+        return jsonify(add_cause_titles(items, default_cause_only()))
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()[:200]

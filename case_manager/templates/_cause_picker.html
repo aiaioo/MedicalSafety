@@ -1,11 +1,10 @@
 {#- Title-bar picker for the user's default cause (app.py's inject_cause_picker).
-    Choosing one makes it the default and reloads, unless the including page
-    sets picker_reload to false (an open report, whose editor state a reload
-    would lose). -#}
+    Choosing one makes it the default and reloads. (An open report doesn't
+    include this: its cause is fixed, so reports.html shows it as text.) -#}
 {% if picker_causes %}
 <select id="causePicker" class="cause-picker" title="Default cause"
         data-url="{{ url_for('api_default_cause') }}"
-        data-reload="{{ 0 if picker_reload is defined and not picker_reload else 1 }}">
+        data-reload="1">
   {% if not picker_current %}<option value="" selected disabled>Select a cause</option>{% endif %}
   {% for c in picker_causes %}
   <option value="{{ c.id }}"{% if c.id == picker_current %} selected{% endif %}>{{ c.title }}</option>
