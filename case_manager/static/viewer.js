@@ -355,6 +355,7 @@
         state.annotations.push(r);
         const idx = state.annotationSnippetIds.push(null) - 1;
         state.dirty = true;
+        updateAnnotatedPagesBtn();
         redraw();
         const snippet = await createSnippet(controller, boundsToPaddedRect(canvas, r.x, r.y, r.x + r.w, r.y + r.h, 5));
         if (snippet && state.annotationSnippetIds.length > idx) state.annotationSnippetIds[idx] = snippet.id;
@@ -376,6 +377,7 @@
       state.annotations.push(s);
       const idx = state.annotationSnippetIds.push(null) - 1;
       state.dirty = true;
+      updateAnnotatedPagesBtn();
       redraw();
       const b = freehandBoundsFrac(s);
       const snippet = await createSnippet(controller, boundsToPaddedRect(canvas, b.x0, b.y0, b.x1, b.y1, 5));
@@ -461,6 +463,7 @@
       const snippetId = state.annotationSnippetIds.pop();
       if (selected && selected.controller === controller) selected = null;
       state.dirty = true;
+      updateAnnotatedPagesBtn();
       redraw();
       (async () => {
         if (snippetId) await deleteSnippet(snippetId);
@@ -475,6 +478,7 @@
       state.annotationSnippetIds = [];
       if (selected && selected.controller === controller) selected = null;
       state.dirty = true;
+      updateAnnotatedPagesBtn();
       redraw();
       for (const id of idsToDelete) {
         await deleteSnippet(id);
@@ -604,6 +608,7 @@
     const [snippetId] = controller.state.annotationSnippetIds.splice(index, 1);
     selected = null;
     controller.state.dirty = true;
+    updateAnnotatedPagesBtn();
     controller.redraw();
     (async () => {
       if (snippetId) await deleteSnippet(snippetId);
@@ -658,6 +663,12 @@
   window.addEventListener("blur", hideContextMenu);
   window.addEventListener("resize", hideContextMenu);
 
+  // "Download annotated pages only" is only meaningful when some page has annotations.
+  function updateAnnotatedPagesBtn() {
+    const any = Array.from(pageState.values()).some((s) => s.annotations.length > 0);
+    document.getElementById("downloadPagesBtn").disabled = !any;
+  }
+
   // ---- annotations load/save ----
   async function loadAllAnnotations() {
     try {
@@ -674,6 +685,7 @@
     } catch (e) {
       console.error(e);
     }
+    updateAnnotatedPagesBtn();
   }
 
   async function loadInfo() {
