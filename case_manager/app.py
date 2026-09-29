@@ -121,7 +121,7 @@ if _proxy_hops:
 # route behind a signed-in session and sets g.user -- see auth.py.
 app.register_blueprint(auth.bp)
 
-UPLOAD_EXTENSIONS = {".pdf": "pdf", ".docx": "docx", ".doc": "docx"}
+UPLOAD_EXTENSIONS = {".pdf": "pdf"}
 
 
 class DocumentError(Exception):
@@ -1531,26 +1531,20 @@ def api_upload_document():
     ext = Path(f.filename).suffix.lower()
     norm_type = UPLOAD_EXTENSIONS.get(ext)
     if norm_type is None:
-        raise DocumentError(f"Unsupported file type {ext!r}. Upload a .pdf, .docx, or .doc file.", 400)
+        raise DocumentError(f"Unsupported file type {ext!r}. Upload a .pdf file.", 400)
 
     data = f.read()
     if not data:
         raise DocumentError("Uploaded file is empty", 400)
 
-    if norm_type == "pdf":
-        try:
-            with fitz.open(stream=data, filetype="pdf") as d:
-                if d.page_count == 0:
-                    raise DocumentError("PDF has no pages", 400)
-        except DocumentError:
-            raise
-        except Exception as exc:
-            raise DocumentError(f"File is not a valid PDF: {exc}", 400) from exc
-    else:
-        try:
-            DocxDocument(io.BytesIO(data))
-        except Exception as exc:
-            raise DocumentError(f"File is not a valid Word document: {exc}", 400) from exc
+    try:
+        with fitz.open(stream=data, filetype="pdf") as d:
+            if d.page_count == 0:
+                raise DocumentError("PDF has no pages", 400)
+    except DocumentError:
+        raise
+    except Exception as exc:
+        raise DocumentError(f"File is not a valid PDF: {exc}", 400) from exc
 
     stem = slugify_report_name(Path(f.filename).stem)
     doc_id = stem

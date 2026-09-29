@@ -115,16 +115,14 @@ page 2 = image-only, simulating a scanned page).
 
 Easiest: in the document editor (`/document`), use **File → Upload source…**, or
 `POST /api/documents/upload` (multipart `file` field) directly — either way the file is
-validated (must actually open as a PDF/Word doc) and saved into `documents/` under a
+validated (must actually open as a PDF; other types are rejected) and saved into `documents/` under a
 slugified id, de-duplicated automatically if that id is already taken.
 
 You can also drop files into `documents/` directly:
 - `<doc_id>.pdf` — used directly.
-- `<doc_id>.docx` / `<doc_id>.doc` — converted to PDF on first request via
-  LibreOffice (`soffice --headless --convert-to pdf`), then cached in
-  `storage/cache/<doc_id>.pdf`. **LibreOffice is not currently installed** —
-  install with `brew install --cask libreoffice`, or convert the file
-  yourself and drop the resulting `<doc_id>.pdf` into `documents/`.
+- Only PDFs are supported as source documents. Word files (`.docx`/`.doc`) are not
+  accepted: converting them needs LibreOffice, which isn't installed. Convert to PDF
+  first.
 
 `doc_id` may only contain letters, numbers, `_` and `-` (no extension, no
 slashes) — it's the file's base name.

@@ -30,7 +30,7 @@ annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives
 | `/api/report/<id>` | POST | Save/update a report. Body: `{name, html, source_doc, source_type, margins}`. Server re-sanitizes `html` and re-validates `margins` before persisting (§ Sanitization, § Page margins). |
 | `/api/report/<id>/export` | GET | Renders the saved `html` to a PDF (`render_report_pdf`) using the report's saved `margins`, and returns it as a download. |
 | `/api/report/<id>/export.docx` | GET | Renders the saved `html` to a `.docx` (`render_report_docx`) and returns it as a download. |
-| `/api/documents/upload` | POST | Multipart `file` field (`.pdf`/`.docx`/`.doc`). Validates the file actually opens (PyMuPDF for PDF, python-docx for Word), saves it into `documents/` under a slugified doc id, and returns `{id, type, filename}`. See § Uploading a source document. |
+| `/api/documents/upload` | POST | Multipart `file` field (`.pdf` only). Validates the file actually opens (PyMuPDF), saves it into `documents/` under a slugified doc id, and returns `{id, type, filename}`. See § Uploading a source document. |
 
 Report records are stored one-per-file as `storage/reports/<id>.json`:
 
