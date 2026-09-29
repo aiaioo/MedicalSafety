@@ -37,6 +37,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg2
 import psycopg2.errors
@@ -379,17 +380,14 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
 
 def delete_snippet(document_id: str, snippet_id: str) -> bool:
     """Refused while a report's content embeds the snippet's image (reports
-    reference it by URL, so there's no foreign key to stop a broken image)."""
+    reference it by URL; save_report mirrors those URLs into report_snippets)."""
     with _cursor() as cur:
         cur.execute("SELECT filename FROM snippets WHERE id = %s AND document_id = %s", (snippet_id, document_id))
         row = cur.fetchone()
         if row is None:
             return False
-        _refuse_if_any(
-            cur, "SELECT 1 FROM reports WHERE position(%s in doc::text) > 0 LIMIT 1",
-            (f"/media/snippets/{document_id}/{row['filename']}",),
-            "Cannot delete a snippet that is used in a report",
-        )
+        _refuse_if_any(cur, "SELECT 1 FROM report_snippets WHERE snippet_id = %s LIMIT 1", (snippet_id,),
+                       "Cannot delete a snippet that is used in a report")
         cur.execute("DELETE FROM snippets WHERE id = %s", (snippet_id,))
 
     doc_type = get_document_type(document_id)
@@ -484,6 +482,19 @@ def get_report(report_id: str) -> dict | None:
     return _report_row_to_dict(row) if row else None
 
 
+def _snippet_refs(node, found: set | None = None) -> set[tuple[str, str]]:
+    """(document_id, filename) of every snippet image a Tiptap doc embeds."""
+    found = set() if found is None else found
+    if isinstance(node, dict):
+        if node.get("type") == "image":
+            parts = [p for p in urlsplit((node.get("attrs") or {}).get("src", "")).path.split("/") if p]
+            if len(parts) >= 4 and parts[-3:-2] == ["snippets"] and parts[-4] == "media":
+                found.add((parts[-2], parts[-1]))
+        for child in node.get("content") or []:
+            _snippet_refs(child, found)
+    return found
+
+
 def save_report(report_id: str, data: dict, owner_id: int | None = None,
                 link: tuple[str, str] | None = None) -> None:
     """Creates or overwrites a report. When creating, pass `owner_id` and
@@ -503,6 +514,19 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
              psycopg2.extras.Json(data["margins"]), psycopg2.extras.Json(data["pageNumbers"]),
              data["created_at"], data["updated_at"]),
         )
+        # Refs to snippets that no longer exist (a broken image) are dropped by the join.
+        refs = sorted(_snippet_refs(data["doc"]))
+        cur.execute("DELETE FROM report_snippets WHERE report_id = %s", (report_id,))
+        if refs:
+            cur.execute(
+                """
+                INSERT INTO report_snippets (report_id, snippet_id)
+                SELECT %s, s.id FROM snippets s
+                JOIN unnest(%s::text[], %s::text[]) AS ref(document_id, filename)
+                  ON s.document_id = ref.document_id AND s.filename = ref.filename
+                """,
+                (report_id, [r[0] for r in refs], [r[1] for r in refs]),
+            )
         if owner_id is not None:
             _grant(cur, owner_id, "report", report_id, "owner")
         if link is not None:
