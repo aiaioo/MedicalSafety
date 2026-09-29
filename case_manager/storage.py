@@ -167,11 +167,12 @@ def _conversion_cache_path(document_id: str) -> Path:
 
 def list_documents(user_id: int) -> list[dict]:
     """Every uploaded source document this user has any role on, id-sorted
-    -- {"id", "type", "title", "role", "cause_ids", "case_ids"}."""
+    -- {"id", "type", "title", "role", "cause_ids", "case_ids", "snippet_count"}."""
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.doc_type, d.title, us.role, {links}
+            SELECT d.id, d.doc_type, d.title, us.role, {links},
+                   (SELECT count(*) FROM snippets s WHERE s.document_id = d.id) AS snippet_count
             FROM documents d JOIN user_sources us ON us.document_id = d.id AND us.user_id = %s
             ORDER BY d.id
             """.format(links=_LINKED_IDS_SQL.format(table_prefix="source", key="document_id", alias="d")),
@@ -180,7 +181,8 @@ def list_documents(user_id: int) -> list[dict]:
         rows = cur.fetchall()
     return [
         {"id": r["id"], "type": r["doc_type"], "title": r["title"], "role": r["role"],
-         "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"])}
+         "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"]),
+         "snippet_count": r["snippet_count"]}
         for r in rows
     ]
 
