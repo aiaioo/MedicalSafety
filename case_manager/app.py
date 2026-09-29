@@ -230,14 +230,17 @@ def add_cause_titles(items, only_cause=None):
     """Sets item["cause_titles"] on each report/document dict: the titles of
     the causes it is associated with directly (cause_ids) or through a
     linked case (case_ids), sorted, for display on its card. With
-    `only_cause`, returns just the items associated with that cause."""
+    `only_cause` (a cause id, or a collection of them), returns just the
+    items associated with any of those causes. Also sets item["all_cause_ids"]."""
+    only = {only_cause} if isinstance(only_cause, str) else set(only_cause or ())
     titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id)}
     case_cause = {c["id"]: c["cause_id"] for c in storage.list_cases(g.user.id)}
     kept = []
     for item in items:
         ids = set(item.get("cause_ids", ())) | {case_cause[i] for i in item.get("case_ids", ()) if i in case_cause}
-        if only_cause and only_cause not in ids:
+        if only and not only & ids:
             continue
+        item["all_cause_ids"] = sorted(ids)
         item["cause_titles"] = sorted(titles[i] for i in ids if i in titles)
         kept.append(item)
     return kept
@@ -1462,8 +1465,16 @@ def documents_view():
 
     report_cause_titles = []
     if report_id:
-        listed = add_cause_titles([r for r in storage.list_reports(g.user.id) if r["id"] == report_id])
-        report_cause_titles = listed[0]["cause_titles"] if listed else []
+        this_report = add_cause_titles([r for r in storage.list_reports(g.user.id) if r["id"] == report_id])
+        if this_report:
+            report_cause_titles = this_report[0]["cause_titles"]
+            # "Insert from": only documents in the report's cause(s) -- plus
+            # the report's own source document, so it stays selectable.
+            report_causes = set(this_report[0]["all_cause_ids"])
+            source_docs = [
+                d for d in source_docs
+                if d["id"] == this_report[0]["source_doc"] or report_causes & set(d["all_cause_ids"])
+            ]
 
     preselect_source = request.args.get("source", "")
     preselect_type = request.args.get("type", "pdf")
