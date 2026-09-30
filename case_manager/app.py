@@ -926,8 +926,8 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
 
 
 def inline_doc_images(node):
-    """Replaces image nodes' `/media/snippets/...` src with a base64 data URI
-    read directly from disk, so the exported PDF/DOCX is self-contained --
+    """Replaces image nodes' `/media/snippets/...` (or `/media/report-images/...`)
+    src with a base64 data URI read directly from storage, so the exported PDF/DOCX is self-contained --
     Story (PDF) has no network access, and python-docx needs raw bytes
     either way. Returns a new tree; `node` itself is left untouched."""
     if not isinstance(node, dict):
@@ -945,6 +945,12 @@ def inline_doc_images(node):
                 if data is not None:
                     b64 = base64.b64encode(data).decode("ascii")
                     attrs["src"] = f"data:image/png;base64,{b64}"
+        elif parsed.path.startswith("/media/report-images/") and len(parts) >= 3:
+            url_report_id, image_id = parts[-2], parts[-1]
+            image = storage.get_report_image(image_id) if DOC_ID_RE.match(image_id) else None
+            if image is not None and image["report_id"] == url_report_id and has_role("report", url_report_id, "viewer"):
+                b64 = base64.b64encode(image["data"]).decode("ascii")
+                attrs["src"] = f"data:{image['content_type']};base64,{b64}"
         return {**node, "attrs": attrs}
     if "content" in node:
         return {**node, "content": [inline_doc_images(c) for c in node["content"]]}
@@ -3137,10 +3143,10 @@ def _compress_jpeg_under(img, max_bytes):
             quality = 70
 
 
-@app.route("/api/article/<article_id>/image", methods=["POST"])
-def api_article_image_upload(article_id):
-    require_content_creator()
-    require_article(article_id)
+def compress_uploaded_image():
+    """The JPEG bytes (at most ARTICLE_IMAGE_MAX_PIXELS a side and
+    ARTICLE_IMAGE_MAX_BYTES long) for the "image" file in this request --
+    shared by the webpage and report editors' Image buttons."""
     upload = request.files.get("image")
     if upload is None:
         raise DocumentError("Please choose an image.", 400)
@@ -3150,10 +3156,42 @@ def api_article_image_upload(article_id):
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         raise DocumentError("That file isn't an image we can read. Please choose a JPEG, PNG or GIF image.", 400)
     img.thumbnail((ARTICLE_IMAGE_MAX_PIXELS, ARTICLE_IMAGE_MAX_PIXELS))
-    data = _compress_jpeg_under(img, ARTICLE_IMAGE_MAX_BYTES)  # re-encoding also drops any metadata or embedded payload
+    return _compress_jpeg_under(img, ARTICLE_IMAGE_MAX_BYTES)  # re-encoding also drops any metadata or embedded payload
+
+
+@app.route("/api/article/<article_id>/image", methods=["POST"])
+def api_article_image_upload(article_id):
+    require_content_creator()
+    require_article(article_id)
+    data = compress_uploaded_image()
     image_id = uuid.uuid4().hex[:24]
     storage.create_article_image(article_id, image_id, "image/jpeg", data)
     return jsonify({"id": image_id, "url": url_for("api_article_image", article_id=article_id, image_id=image_id)})
+
+
+@app.route("/api/report/<report_id>/image", methods=["POST"])
+def api_report_image_upload(report_id):
+    check_report_id(report_id)
+    require_role("report", report_id, "editor")
+    if not storage.report_exists(report_id):
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    data = compress_uploaded_image()
+    image_id = uuid.uuid4().hex[:24]
+    storage.create_report_image(report_id, image_id, "image/jpeg", data)
+    return jsonify({"id": image_id, "url": url_for("api_report_image", report_id=report_id, image_id=image_id)})
+
+
+@app.route("/media/report-images/<report_id>/<image_id>")
+def api_report_image(report_id, image_id):
+    check_report_id(report_id)
+    if not has_role("report", report_id, "viewer"):
+        abort(404)
+    image = storage.get_report_image(image_id) if DOC_ID_RE.match(image_id) else None
+    if image is None or image["report_id"] != report_id:
+        abort(404)
+    resp = Response(image["data"], mimetype=image["content_type"])
+    resp.headers["Cache-Control"] = "private, max-age=31536000"  # an image's bytes never change
+    return resp
 
 
 def _shrink_to_thumbnail(data):

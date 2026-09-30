@@ -8,6 +8,7 @@ import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { Link } from "@tiptap/extension-link";
+import { setupLinkAndImage } from "./linkImage.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
 
 (function () {
@@ -309,36 +310,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
   // ---------------------------------------------------------------------
   // Link + image
   // ---------------------------------------------------------------------
-  document.getElementById("linkBtn").addEventListener("click", () => {
-    const prev = editor.getAttributes("link").href || "";
-    const url = window.prompt("Link URL (leave blank to remove the link):", prev);
-    if (url === null) return;
-    const trimmed = url.trim();
-    if (!trimmed) editor.chain().focus().unsetLink().run();
-    else editor.chain().focus().extendMarkRange("link").setLink({ href: trimmed }).run();
-    markDirty();
-  });
-
-  const imageFileInput = document.getElementById("imageFileInput");
-  document.getElementById("insertImageBtn").addEventListener("click", () => imageFileInput.click());
-  imageFileInput.addEventListener("change", async () => {
-    const file = imageFileInput.files[0];
-    imageFileInput.value = "";
-    if (!file) return;
-    setStatus("Uploading image…");
-    try {
-      const body = new FormData();
-      body.append("image", file);
-      const res = await fetch(imageUploadUrl, { method: "POST", body });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      editor.chain().focus().setImage({ src: data.url, alt: file.name }).run();
-      setStatus("");
-      await loadThumbnailChoices();
-    } catch (e) {
-      setStatus("Image upload failed: " + e.message, true);
-    }
-    markDirty();
+  setupLinkAndImage({
+    editor, imageUploadUrl, setStatus, onChange: markDirty, onImageUploaded: loadThumbnailChoices,
   });
 
   // ---------------------------------------------------------------------

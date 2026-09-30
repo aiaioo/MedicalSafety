@@ -12,6 +12,8 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { Link } from "@tiptap/extension-link";
+import { setupLinkAndImage } from "./linkImage.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
 import {
   OrderedList,
@@ -566,6 +568,7 @@ import { Pagination, repaginate } from "./pagination.js";
       TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
+      Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
     ],
@@ -978,9 +981,15 @@ import { Pagination, repaginate } from "./pagination.js";
       else return;
       btn.classList.toggle("active", active);
     });
+    document.getElementById("linkBtn").classList.toggle("active", editor.isActive("link"));
   }
   editor.on("transaction", syncToolbarToSelection);
   syncToolbarToSelection();
+
+  setupLinkAndImage({
+    editor, canEdit, setStatus, onChange: markDirty,
+    imageUploadUrl: appEl.dataset.imageUploadUrl,
+  });
 
   // ---------------------------------------------------------------------
   // Autosave / save / export

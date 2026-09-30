@@ -2087,6 +2087,21 @@ def get_article_image(image_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def create_report_image(report_id: str, image_id: str, content_type: str, data: bytes) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO report_images (id, report_id, content_type, data) VALUES (%s, %s, %s, %s)",
+            (image_id, report_id, content_type, data),
+        )
+
+
+def get_report_image(image_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT report_id, content_type, data FROM report_images WHERE id = %s", (image_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def list_article_images(article_id: str) -> list[dict]:
     """{"id"} of every image uploaded into this article, oldest first --
     for the editor's thumbnail picker (see app.py's api_article_images)."""

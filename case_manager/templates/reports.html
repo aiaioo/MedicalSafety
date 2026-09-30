@@ -18,6 +18,7 @@
      data-preselect-type="{{ preselect_type }}"
      {% if report_id %}
      data-report-url="{{ url_for('api_report', report_id=report_id) }}"
+     data-image-upload-url="{{ url_for('api_report_image_upload', report_id=report_id) }}"
      data-export-url="{{ url_for('api_report_export', report_id=report_id) }}"
      data-export-docx-url="{{ url_for('api_report_export_docx', report_id=report_id) }}"
      {% endif %}
@@ -144,6 +145,10 @@
         <button type="button" id="customLevelsBtn">Custom levels&hellip;</button>
       </div>
     </span>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" id="linkBtn" title="Insert or edit link">&#128279; Link</button>
+    <button type="button" class="fmt-btn" id="insertImageBtn" title="Insert image">&#128247; Image</button>
+    <input type="file" id="imageFileInput" accept="image/*" hidden>
     <span class="toolbar-sep"></span>
     <a class="toolbar-link" id="annexureLink" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Create annexure</a>
     </div>
