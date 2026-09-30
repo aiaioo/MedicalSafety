@@ -10,6 +10,8 @@
   .collapsible { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden;
     transition: grid-template-rows 0.3s ease, opacity 0.3s ease, visibility 0s linear 0.3s; }
   .collapsible.open { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+  .advanced-box { background: #e7ebf3; border-radius: 12px; padding: 4px 20px 0; margin: 16px 0 32px; }
+  .advanced-box h1:first-child { margin-top: 16px; }
   .collapsible-inner { overflow: hidden; min-height: 0; }
   @media (prefers-reduced-motion: reduce) { .collapsible { transition: none; } }
 </style>
@@ -25,6 +27,7 @@
 
   <div id="advanced-sections" class="collapsible{% if g.user.show_advanced %} open{% endif %}"{% if not g.user.show_advanced %} inert{% endif %}>
   <div class="collapsible-inner">
+  <div class="advanced-box">
 
   <h1>Causes</h1>
 
@@ -47,6 +50,7 @@
     <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
   </section>
 
+  </div>
   </div>
   </div>
 
