@@ -3001,6 +3001,7 @@ def api_admin_section(section_id):
 
 ARTICLE_IMAGE_MAX_PIXELS = 1600
 ARTICLE_IMAGE_MAX_BYTES = 200 * 1024  # a webpage's images should be quick to download
+ARTICLE_THUMBNAIL_MAX_SIZE = (400, 300)  # width, height -- wherever an image is shown as a thumbnail
 ARTICLE_SUMMARY_MAX_CHARS = 300
 ARTICLE_MAX_SECTIONS = 50  # generous; just a sanity cap on the client's list
 
@@ -3112,7 +3113,7 @@ def api_article_images(article_id):
     require_article(article_id)
     images = storage.list_article_images(article_id)
     for image in images:
-        image["url"] = url_for("api_article_image", article_id=article_id, image_id=image["id"])
+        image["url"] = url_for("api_article_image", article_id=article_id, image_id=image["id"], thumb=1)
     return jsonify(images)
 
 
@@ -3155,11 +3156,33 @@ def api_article_image_upload(article_id):
     return jsonify({"id": image_id, "url": url_for("api_article_image", article_id=article_id, image_id=image_id)})
 
 
+def _shrink_to_thumbnail(data):
+    """Re-encodes `data` (a JPEG) so it's no larger than
+    ARTICLE_THUMBNAIL_MAX_SIZE -- wherever an image is shown as a
+    thumbnail (a card, the thumbnail picker) rather than in the article's
+    own body, it doesn't need to ship at full article-image size. Falls
+    back to the original bytes if they turn out not to be a real image."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = img.convert("RGB")
+    except (UnidentifiedImageError, OSError):
+        return data
+    if img.width <= ARTICLE_THUMBNAIL_MAX_SIZE[0] and img.height <= ARTICLE_THUMBNAIL_MAX_SIZE[1]:
+        return data
+    img.thumbnail(ARTICLE_THUMBNAIL_MAX_SIZE)
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
 @app.route("/media/article-images/<article_id>/<image_id>")
 def api_article_image(article_id, image_id):
     """Serves one of an article's embedded images -- reachable by anyone
     once the article is published (see auth.PUBLIC_ENDPOINTS), else only its
-    author, so a draft's images can still be previewed while writing it."""
+    author, so a draft's images can still be previewed while writing it.
+    With ?thumb=1, shrinks it to thumbnail size first (see
+    _shrink_to_thumbnail) -- used everywhere the image is shown as a
+    thumbnail rather than inline in the article's own body."""
     check_report_id(article_id)
     article = storage.get_article(article_id)
     if article is None:
@@ -3171,7 +3194,8 @@ def api_article_image(article_id, image_id):
     image = storage.get_article_image(image_id)
     if image is None or image["article_id"] != article_id:
         abort(404)
-    resp = Response(image["data"], mimetype=image["content_type"])
+    data = _shrink_to_thumbnail(image["data"]) if request.args.get("thumb") else image["data"]
+    resp = Response(data, mimetype=image["content_type"])
     resp.headers["Cache-Control"] = "public, max-age=31536000" if article["published"] else "private, no-cache"
     return resp
 

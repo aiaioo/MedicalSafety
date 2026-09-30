@@ -178,7 +178,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
     if (withThumbnail) {
       card.className = "article-card";
       const thumbnail = a.thumbnail_image_id
-        ? `<img class="thumbnail" src="/media/article-images/${encodeURIComponent(a.id)}/${encodeURIComponent(a.thumbnail_image_id)}" alt="">`
+        ? `<img class="thumbnail" src="/media/article-images/${encodeURIComponent(a.id)}/${encodeURIComponent(a.thumbnail_image_id)}?thumb=1" alt="">`
         : "";
       card.innerHTML = `
         <button type="button" class="article-card-delete card-delete-btn" title="Delete webpage">✕</button>

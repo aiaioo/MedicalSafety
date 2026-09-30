@@ -68,7 +68,7 @@
           {% for a in section.articles %}
           <a class="article-card" href="{{ url_for('public_article', article_id=a.id) }}">
             {% if a.thumbnail_image_id %}
-            <img class="thumbnail" src="{{ url_for('api_article_image', article_id=a.id, image_id=a.thumbnail_image_id) }}" alt="">
+            <img class="thumbnail" src="{{ url_for('api_article_image', article_id=a.id, image_id=a.thumbnail_image_id, thumb=1) }}" alt="">
             {% endif %}
             <div class="card-body">
               <div class="title">{{ a.title }}</div>
