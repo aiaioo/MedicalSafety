@@ -380,6 +380,7 @@
         redraw();
         const snippet = await createSnippet(controller, boundsToPaddedRect(canvas, r.x, r.y, r.x + r.w, r.y + r.h, 5));
         if (snippet && state.annotationSnippetIds.length > idx) state.annotationSnippetIds[idx] = snippet.id;
+        await saveAfterAddition(controller);
       } else if (mode === "snippet") {
         redraw();
         await createSnippet(controller, r);
@@ -403,6 +404,7 @@
       const b = freehandBoundsFrac(s);
       const snippet = await createSnippet(controller, boundsToPaddedRect(canvas, b.x0, b.y0, b.x1, b.y1, 5));
       if (snippet && state.annotationSnippetIds.length > idx) state.annotationSnippetIds[idx] = snippet.id;
+      await saveAfterAddition(controller);
     }
 
     canvas.addEventListener("pointerdown", (e) => {
@@ -645,6 +647,18 @@
       const refreshed = await saveOnePage(controller.pageNum);
       if (refreshed > 0) await loadAllSnippets();
       setStatus("Annotation removed and page saved");
+    } catch (e) {
+      setStatus("Save failed: " + e.message, true);
+    }
+  }
+
+  // Adding an annotation saves its page right away, so every other snippet
+  // cut from that page is re-rendered to include the new annotation.
+  async function saveAfterAddition(controller) {
+    try {
+      const refreshed = await saveOnePage(controller.pageNum);
+      if (refreshed > 0) await loadAllSnippets();
+      setStatus("Annotation added and page saved");
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }
