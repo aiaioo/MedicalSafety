@@ -1575,6 +1575,8 @@ def documents_view():
         if not storage.report_exists(report_id):
             raise DocumentError(f"No report with id {report_id!r}", 404)
 
+    can_edit = bool(report_id) and has_role("report", report_id, "editor")
+
     report_cause_titles = []
     if report_id:
         this_report = add_cause_titles([r for r in storage.list_reports(g.user.id) if r["id"] == report_id])
@@ -1600,6 +1602,7 @@ def documents_view():
         source_docs=source_docs,
         default_cause=default_cause_for_display(),
         report_id=report_id,
+        can_edit=can_edit,
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
         preselect_type=preselect_type,

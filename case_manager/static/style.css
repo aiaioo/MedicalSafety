@@ -888,3 +888,10 @@ a.tag:hover { background: #d7deec; }
 .key-row.inactive { opacity: .65; }
 .key-title { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .key-value { font-size: 12px; background: #f1f3f8; padding: 2px 6px; border-radius: 4px; user-select: all; }
+
+/* Viewers can read a report but not change it: hide the editing controls
+   (the "Create annexure" link stays) and the snippet Insert buttons. */
+#docApp.report-readonly #fmtControls > :not(.toolbar-link),
+#docApp.report-readonly .insert-snippet,
+#docApp.report-readonly #saveBtn,
+#docApp.report-readonly #saveStatus { display: none; }

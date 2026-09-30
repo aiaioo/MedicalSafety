@@ -40,6 +40,9 @@ import { Pagination, repaginate } from "./pagination.js";
   const exportDocxUrl = appEl.dataset.exportDocxUrl;
   const preselectSource = appEl.dataset.preselectSource;
   const preselectType = appEl.dataset.preselectType || "pdf";
+  // Viewers can open a report but not change it (the server rejects their
+  // saves with a 403); the page is put into a read-only state below.
+  const canEdit = !reportId || !!appEl.dataset.canEdit;
 
   const editorEl = document.getElementById("editor");
   const editorPageWrap = document.getElementById("editorPageWrap");
@@ -569,6 +572,17 @@ import { Pagination, repaginate } from "./pagination.js";
   });
   editorReady = true;
 
+  if (!canEdit) {
+    editor.setEditable(false);
+    titleInput.readOnly = true;
+    saveBtn.disabled = true;
+    sourceSelect.disabled = true;
+    // Grey out everything in the File menu except the downloads.
+    fileMenuDropdown.querySelectorAll("button").forEach((b) => {
+      b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn;
+    });
+  }
+
   editor.view.dom.setAttribute("data-placeholder", "Start writing your document. Click a snippet on the right to insert it here.");
 
   // A window resize or an async image load changes layout height without
@@ -961,7 +975,7 @@ import { Pagination, repaginate } from "./pagination.js";
   // Autosave / save / export
   // ---------------------------------------------------------------------
   function markDirty() {
-    if (loadingReport) return;
+    if (loadingReport || !canEdit) return;
     dirty = true;
     setStatus("Saving…");
     if (autosaveTimer) clearTimeout(autosaveTimer);
@@ -977,6 +991,7 @@ import { Pagination, repaginate } from "./pagination.js";
   }
 
   async function saveReport() {
+    if (!canEdit) return;
     if (saving) {
       saveAgainAfter = true;
       return;

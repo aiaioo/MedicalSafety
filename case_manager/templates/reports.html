@@ -9,8 +9,9 @@
 </head>
 <body>
 <div id="docApp"
-     class="{{ '' if report_id else 'doc-app-landing' }}"
+     class="{{ 'doc-app-landing' if not report_id else ('' if can_edit else 'report-readonly') }}"
      data-report="{{ report_id }}"
+     data-can-edit="{{ '1' if can_edit else '' }}"
      data-reports-url="{{ url_for('api_reports') }}"
      data-preselect-source="{{ preselect_source }}"
      data-preselect-type="{{ preselect_type }}"
