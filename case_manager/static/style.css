@@ -815,3 +815,4 @@ a.tag:hover { background: #d7deec; }
 .color-swatch:hover { transform: scale(1.12); }
 .color-swatch.selected { outline: 2px solid #2266dd; outline-offset: 1px; }
 .page-number-label .page-number-outline { display: inline-block; box-sizing: border-box; text-align: center; vertical-align: middle; }
+.page-number-label .page-number-shaped { height: 1.6em; min-width: 1.6em; line-height: 1.6em; padding: 0 0.3em; }

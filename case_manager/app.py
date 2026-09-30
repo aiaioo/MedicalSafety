@@ -56,9 +56,9 @@ def sanitize_margins(raw, fallback=None):
 # draw them in. Font names mirror the #pageNumberFontInput <option> values in
 # reports.html (quoted where the CSS family name has a space, so the same
 # string can be dropped straight into a font-family declaration).
-REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11}
-ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "none", "shape": "none", "color": "#555555"}
-ANNEXURE_PAGE_NUMBER_SHAPES = {"none", "circle", "rectangle"}
+REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11, "shape": "none", "color": "#555555"}
+ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "none"}
+REPORT_PAGE_NUMBER_SHAPES = {"none", "circle", "rectangle"}
 REPORT_PAGE_NUMBER_POSITIONS = {
     "top-left", "top-center", "top-right",
     "bottom-left", "bottom-center", "bottom-right",
@@ -68,7 +68,7 @@ REPORT_PAGE_NUMBER_FONTS = {
     "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
     "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
 }
-ANNEXURE_TEXT_DROP = 0.18  # tuned so the number's glyphs sit optically centred in the outline
+PAGE_NUMBER_TEXT_DROP = 0.18  # tuned so the number's glyphs sit optically centred in the outline
 ANNEXURE_PAGE_NUMBER_BAND = 46  # pt of header/footer band the annexure page numbers sit in (the preview mirrors it)
 REPORT_PAGE_NUMBER_SKIP_MAX = 50
 REPORT_PAGE_NUMBER_FONT_SIZE_MIN = 6
@@ -110,7 +110,20 @@ def sanitize_page_numbers(raw, fallback=None):
         if not isinstance(font_size, (int, float)) or not (REPORT_PAGE_NUMBER_FONT_SIZE_MIN <= font_size <= REPORT_PAGE_NUMBER_FONT_SIZE_MAX):
             font_size = REPORT_DEFAULT_PAGE_NUMBERS["fontSize"]
 
-    return {"position": position, "skip": skip, "font": font, "fontSize": font_size}
+    shape = raw.get("shape") if isinstance(raw, dict) else None
+    if shape not in REPORT_PAGE_NUMBER_SHAPES:
+        shape = fallback.get("shape")
+        if shape not in REPORT_PAGE_NUMBER_SHAPES:
+            shape = REPORT_DEFAULT_PAGE_NUMBERS["shape"]
+
+    color = raw.get("color") if isinstance(raw, dict) else None
+    if not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+        color = fallback.get("color")
+        if not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+            color = REPORT_DEFAULT_PAGE_NUMBERS["color"]
+
+    return {"position": position, "skip": skip, "font": font, "fontSize": font_size,
+            "shape": shape, "color": color.lower()}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
@@ -938,66 +951,46 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0):
     return "".join(out)
 
 
-def sanitize_annexure_page_numbers(raw, fallback=None):
-    """sanitize_page_numbers plus the annexure-only outline shape and colour."""
-    fallback = fallback if isinstance(fallback, dict) else ANNEXURE_DEFAULT_PAGE_NUMBERS
-    out = sanitize_page_numbers(raw, fallback)
-    raw = raw if isinstance(raw, dict) else {}
-    for key, ok in (("shape", lambda v: v in ANNEXURE_PAGE_NUMBER_SHAPES),
-                    ("color", lambda v: isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v))):
-        value = raw.get(key)
-        if not ok(value):
-            value = fallback.get(key)
-            if not ok(value):
-                value = ANNEXURE_DEFAULT_PAGE_NUMBERS[key]
-        out[key] = value.lower() if key == "color" else value
-    return out
-
-
 def _flatten_json_text(node):
     if node.get("type") == "text":
         return node.get("text", "")
     return "".join(_flatten_json_text(c) for c in node.get("content") or [])
 
 
-def _pdf_draw_page_number(device, mediabox, m, position, page_num, font, font_size):
-    """Draws a page-number string into the header or footer margin band of
-    the page already written to `device`, reusing fitz.Story for
-    layout/alignment rather than hand-computing text placement.
-
-    fitz's Story lays a block out from the top of whatever rect it's given,
-    and (at least for a fresh Story with no stylesheet) reserves noticeably
-    more line-box height than the font size alone would suggest -- handing
-    it a rect exactly as tall as the header/footer margin, as a naive
-    top/bottom-anchored placement would, can silently overflow (Story then
-    draws nothing at all) once the font size is large relative to the
-    margin, e.g. the "large page-number font, default margins" combination
-    Page setup now allows. So this measures the real single-line height
-    first with a throwaway Story placed in a tall scratch rect, then hands a
-    *second* Story (place() consumes a Story's layout state) a rect of that
-    measured height, centered on the margin band's vertical midpoint --
-    matching the vertical centering the on-screen preview achieves via
-    line-height (see .page-number-label in style.css) while still fitting
-    whatever font size was chosen."""
-    vert, _, horiz = position.partition("-")
-    band_height = m["header"] if vert == "top" else m["footer"]
-    if band_height <= 0:
+def stamp_page_numbers(doc, pn, m):
+    """Draws page numbers onto the already-built PDF `doc`, from page index
+    pn["skip"] on (numbered from 1), centred vertically in the header or
+    footer margin band `m` (a sanitize_margins dict) and against its
+    left/centre/right edge, in the chosen font, size and colour, optionally
+    inside a circle or rectangle. The number gets a box just wide enough for
+    it (and the outline); the text itself is laid out by insert_htmlbox in a
+    slightly wider rect so a font-metrics mismatch can't wrap it."""
+    if pn["position"] == "none":
+        return
+    vert, _, horiz = pn["position"].partition("-")
+    band = m["header"] if vert == "top" else m["footer"]
+    if band <= 0:
         return  # no room in the margin to draw into
-    css = f"font-family: {font}, Helvetica, Arial, sans-serif; font-size: {font_size}pt; color: #555; margin: 0;"
-    html = f'<p style="text-align:{horiz}; {css}">{page_num}</p>'
-
-    x0, x1 = mediabox.x0 + m["left"], mediabox.x1 - m["right"]
-    probe_rect = fitz.Rect(x0, mediabox.y0, x1, mediabox.y1)
-    more, filled = fitz.Story(html=html).place(probe_rect)
-    line_height = (filled[3] - filled[1]) if not more else font_size * 1.3
-
-    band_top = mediabox.y0 if vert == "top" else mediabox.y1 - band_height
-    center_y = band_top + band_height / 2
-    rect = fitz.Rect(x0, center_y - line_height / 2, x1, center_y + line_height / 2)
-
-    story = fitz.Story(html=html)
-    story.place(rect)
-    story.draw(device)
+    fs = pn["fontSize"]
+    color = pn["color"]
+    rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {color}; margin: 0; text-align: center;"
+    box_h = fs * 1.6
+    for i in range(pn["skip"], doc.page_count):
+        page = doc[i]
+        r = page.rect
+        label = str(i - pn["skip"] + 1)
+        box_w = max(box_h, fitz.get_text_length(label, fontsize=fs) + fs * 0.6) if pn["shape"] != "none" else fitz.get_text_length(label, fontsize=fs)
+        left, right = r.x0 + m["left"], r.x1 - m["right"]
+        x0 = {"left": left, "center": (left + right - box_w) / 2, "right": right - box_w}[horiz]
+        mid = r.y0 + band / 2 if vert == "top" else r.y1 - band / 2
+        box = fitz.Rect(x0, mid - box_h / 2, x0 + box_w, mid + box_h / 2)
+        if pn["shape"] == "circle":
+            page.draw_oval(box, color=rgb, width=1)
+        elif pn["shape"] == "rectangle":
+            page.draw_rect(box, color=rgb, width=1)
+        drop = PAGE_NUMBER_TEXT_DROP * fs
+        page.insert_htmlbox(box + (-fs, drop, fs, drop), f'<p style="{css}">{label}</p>')
 
 
 def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
@@ -1014,17 +1007,17 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
     more = 1
-    page_index = 0
     while more:
         device = writer.begin_page(mediabox)
         more, _ = story.place(where)
         story.draw(device)
-        if pn["position"] != "none" and page_index >= pn["skip"]:
-            _pdf_draw_page_number(device, mediabox, m, pn["position"], page_index - pn["skip"] + 1, pn["font"], pn["fontSize"])
         writer.end_page()
-        page_index += 1
     writer.close()
-    return buf.getvalue()
+    if pn["position"] == "none":
+        return buf.getvalue()
+    with fitz.open(stream=buf.getvalue(), filetype="pdf") as numbered:
+        stamp_page_numbers(numbered, pn, m)
+        return numbered.tobytes()
 
 
 # ---------------------------------------------------------------------------
@@ -1378,7 +1371,16 @@ def _docx_apply_page_numbers(doc, page_numbers):
 
     font_name = _docx_clean_font_name(page_numbers.get("font"))
     font_size = page_numbers.get("fontSize")
+    color = page_numbers.get("color")
     for run in paragraph.runs:
+        if color:
+            run.font.color.rgb = RGBColor.from_string(color[1:].upper())
+        if page_numbers.get("shape", "none") != "none":
+            # Word has no simple circle around a field, so both shapes come out as a box.
+            bdr = OxmlElement("w:bdr")
+            for attr, val in (("val", "single"), ("sz", "6"), ("space", "1"), ("color", color[1:].upper())):
+                bdr.set(qn(f"w:{attr}"), val)
+            run._r.get_or_add_rPr().append(bdr)
         if font_name:
             run.font.name = font_name
         if font_size:
@@ -1965,7 +1967,7 @@ def _annexure_payload(report_id, saved, page_numbers=None):
     order += [{"id": d, "page_mode": "all", "page_range": ""} for d in snippet_pages
               if d in docs and d not in {o["id"] for o in order}]
     return {
-        "pageNumbers": sanitize_annexure_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
+        "pageNumbers": sanitize_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
                                              ANNEXURE_DEFAULT_PAGE_NUMBERS),
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
@@ -2007,7 +2009,7 @@ def api_report_annexure(report_id):
                 saved.append({"id": d, "page_mode": mode, "page_range": page_range if mode == "custom" else ""})
         page_numbers = None
         if "pageNumbers" in body:
-            page_numbers = sanitize_annexure_page_numbers(body["pageNumbers"], storage.get_annexure_page_numbers(report_id))
+            page_numbers = sanitize_page_numbers(body["pageNumbers"], storage.get_annexure_page_numbers(report_id))
             storage.save_annexure_page_numbers(report_id, page_numbers)
         payload = _annexure_payload(report_id, saved, page_numbers)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
@@ -2042,29 +2044,7 @@ def api_report_annexure_export(report_id):
                 for p in pages:
                     out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
         pn = payload["pageNumbers"]
-        if pn["position"] != "none":
-            vert, _, horiz = pn["position"].partition("-")
-            fs = pn["fontSize"]
-            color = pn["color"]
-            css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {color}; margin: 0; text-align: center;"
-            rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
-            box_h = fs * 1.6
-            for i in range(pn["skip"], out.page_count):
-                page = out[i]
-                r = page.rect
-                label = str(i - pn["skip"] + 1)
-                # The number sits in a box just wide enough for it (and the outline, if any),
-                # placed against the left/centre/right of the margins like the report's numbers.
-                box_w = max(box_h, fitz.get_text_length(label, fontsize=fs) + fs * 0.6)
-                left, right = r.x0 + 36, r.x1 - 36
-                x0 = {"left": left, "center": (left + right - box_w) / 2, "right": right - box_w}[horiz]
-                mid = r.y0 + ANNEXURE_PAGE_NUMBER_BAND / 2 if vert == "top" else r.y1 - ANNEXURE_PAGE_NUMBER_BAND / 2
-                box = fitz.Rect(x0, mid - box_h / 2, x0 + box_w, mid + box_h / 2)
-                if pn["shape"] == "circle":
-                    page.draw_oval(box, color=rgb, width=1)
-                elif pn["shape"] == "rectangle":
-                    page.draw_rect(box, color=rgb, width=1)
-                page.insert_htmlbox(box + (0, ANNEXURE_TEXT_DROP * fs, 0, ANNEXURE_TEXT_DROP * fs), f'<p style="{css}">{label}</p>')
+        stamp_page_numbers(out, pn, {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND})
         data = out.tobytes()
     finally:
         out.close()

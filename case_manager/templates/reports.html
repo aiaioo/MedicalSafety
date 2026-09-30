@@ -258,6 +258,19 @@
           <input id="pageNumberFontSizeInput" type="number" min="6" max="72" step="1">
         </label>
       </div>
+      <div class="margin-grid">
+        <label class="modal-field">Shape around page number
+          <select id="pageNumberShapeInput">
+            <option value="none">None</option>
+            <option value="circle">Circle</option>
+            <option value="rectangle">Rectangle</option>
+          </select>
+        </label>
+        <div class="modal-field">Page number colour
+          <div id="pageNumberColorPalette" class="color-palette" role="radiogroup" aria-label="Page number colour"></div>
+        </div>
+      </div>
+      <p class="modal-hint">In Word files a circle comes out as a box, as Word can't outline a page number with a circle.</p>
       <p id="pageSetupError" class="error-message" style="display:none"></p>
       <div class="modal-actions">
         <button type="button" id="pageSetupCancel">Cancel</button>
@@ -300,6 +313,7 @@
 try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); } catch (e) {}
 </script>{% endif %}
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
+<script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
 <script src="{{ url_for('static', filename='dist/editor.bundle.js') }}"></script>
 </body>
 </html>

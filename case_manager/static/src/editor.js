@@ -71,6 +71,8 @@ import { Pagination, repaginate } from "./pagination.js";
   const pageNumberStartInput = document.getElementById("pageNumberStartInput");
   const pageNumberFontInput = document.getElementById("pageNumberFontInput");
   const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
+  const pageNumberShapeInput = document.getElementById("pageNumberShapeInput");
+  const pageNumberColorPalette = document.getElementById("pageNumberColorPalette");
   const pageSetupError = document.getElementById("pageSetupError");
   const pageSetupCancel = document.getElementById("pageSetupCancel");
   const pageSetupApply = document.getElementById("pageSetupApply");
@@ -91,7 +93,9 @@ import { Pagination, repaginate } from "./pagination.js";
   ]);
   const PAGE_NUMBER_FONT_SIZE_MIN = 6;
   const PAGE_NUMBER_FONT_SIZE_MAX = 72;
-  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, font: "Arial", fontSize: 11 };
+  const PAGE_NUMBER_SHAPES = new Set(["none", "circle", "rectangle"]);
+  const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" };
   let pageNumbers = { ...DEFAULT_PAGE_NUMBERS };
 
   const newDocModal = document.getElementById("newDocModal");
@@ -379,7 +383,9 @@ import { Pagination, repaginate } from "./pagination.js";
     const fontSizeRaw = raw && typeof raw === "object" ? Number(raw.fontSize) : NaN;
     const fontSize = Number.isFinite(fontSizeRaw) && fontSizeRaw >= PAGE_NUMBER_FONT_SIZE_MIN && fontSizeRaw <= PAGE_NUMBER_FONT_SIZE_MAX
       ? fontSizeRaw : DEFAULT_PAGE_NUMBERS.fontSize;
-    return { position, skip, font, fontSize };
+    const shape = raw && PAGE_NUMBER_SHAPES.has(raw.shape) ? raw.shape : DEFAULT_PAGE_NUMBERS.shape;
+    const color = raw && typeof raw.color === "string" && HEX_COLOR.test(raw.color) ? raw.color.toLowerCase() : DEFAULT_PAGE_NUMBERS.color;
+    return { position, skip, font, fontSize, shape, color };
   }
 
   function marginsPx() {
@@ -431,7 +437,16 @@ import { Pagination, repaginate } from "./pagination.js";
         label.className = `page-number-label page-number-${pageNumbers.position}`;
         label.style.fontFamily = pageNumbers.font;
         label.style.fontSize = pageNumbers.fontSize + "pt";
-        label.textContent = String(i - pageNumbers.skip + 1);
+        label.style.color = pageNumbers.color;
+        const num = document.createElement("span");
+        num.className = "page-number-outline";
+        num.textContent = String(i - pageNumbers.skip + 1);
+        if (pageNumbers.shape !== "none") {
+          num.style.border = "1px solid " + pageNumbers.color;
+          num.style.borderRadius = pageNumbers.shape === "circle" ? "50%" : "0";
+          num.classList.add("page-number-shaped");
+        }
+        label.appendChild(num);
         rect.appendChild(label);
       }
       frag.appendChild(rect);
@@ -460,6 +475,13 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(PAGE_NUMBER_FONT_SIZE_MAX, Math.max(PAGE_NUMBER_FONT_SIZE_MIN, n));
   }
 
+  // The colour is only committed with Apply, like the dialog's other fields.
+  let pendingPageNumberColor = pageNumbers.color;
+  const selectPageNumberSwatch = PageNumberPalette.mount(pageNumberColorPalette, (c) => {
+    pendingPageNumberColor = c;
+    selectPageNumberSwatch(c);
+  });
+
   pageSetupBtn.addEventListener("click", () => {
     marginLeftInput.value = margins.left;
     marginRightInput.value = margins.right;
@@ -469,6 +491,9 @@ import { Pagination, repaginate } from "./pagination.js";
     pageNumberStartInput.value = pageNumbers.skip + 1;
     pageNumberFontInput.value = pageNumbers.font;
     pageNumberFontSizeInput.value = pageNumbers.fontSize;
+    pageNumberShapeInput.value = pageNumbers.shape;
+    pendingPageNumberColor = pageNumbers.color;
+    selectPageNumberSwatch(pendingPageNumberColor);
     pageSetupError.style.display = "none";
     openModal(pageSetupModal);
   });
@@ -500,7 +525,8 @@ import { Pagination, repaginate } from "./pagination.js";
       return;
     }
     margins = { left, right, header, footer };
-    pageNumbers = { position: pageNumberPositionInput.value, skip, font: pageNumberFontInput.value, fontSize };
+    pageNumbers = { position: pageNumberPositionInput.value, skip, font: pageNumberFontInput.value, fontSize,
+      shape: PAGE_NUMBER_SHAPES.has(pageNumberShapeInput.value) ? pageNumberShapeInput.value : "none", color: pendingPageNumberColor };
     applyMarginsToCss();
     markDirty();
     closeModal(pageSetupModal);
