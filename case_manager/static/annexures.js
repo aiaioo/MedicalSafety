@@ -7,6 +7,7 @@
   const addBtn = document.getElementById("addBtn");
   const statusMsg = document.getElementById("statusMsg");
 
+  const includeAnnotations = document.getElementById("includeAnnotations");
   const pnPosition = document.getElementById("pageNumberPositionInput");
   const pnStart = document.getElementById("pageNumberStartInput");
   const pnFont = document.getElementById("pageNumberFontInput");
@@ -15,7 +16,7 @@
   const pnPalette = document.getElementById("pageNumberColorPalette");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], pageNumbers: { position: "none", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
+  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -106,7 +107,7 @@
         wrap.style.maxWidth = "100%";
         wrap.style.background = "white";
         wrap.innerHTML = `<span class="page-label">${esc(d.title)} &middot; page ${n}</span>` +
-          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}">`;
+          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}${state.includeAnnotations ? "&annotations=1" : ""}">`;
         shown++;
         if (pn.position !== "none" && shown > pn.skip) {
           const scale = parseFloat(wrap.style.width) / dim.width; // px per pt
@@ -228,6 +229,7 @@
 
   function renderPageNumberInputs() {
     const pn = state.pageNumbers;
+    includeAnnotations.checked = !!state.includeAnnotations;
     pnPosition.value = pn.position;
     pnStart.value = pn.skip + 1;
     pnFont.value = pn.font;
@@ -254,6 +256,10 @@
     state.pageNumbers = { position: pnPosition.value, skip: start - 1, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
     commit();
   }
+  includeAnnotations.addEventListener("change", () => {
+    state.includeAnnotations = includeAnnotations.checked;
+    commit();
+  });
   [pnPosition, pnStart, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
 
   function render(pagesToo) {
@@ -272,7 +278,7 @@
         body: JSON.stringify({ documents: state.documents.map((d) => {
           const a = applied(d);
           return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
-        }), pageNumbers: state.pageNumbers }),
+        }), pageNumbers: state.pageNumbers, includeAnnotations: state.includeAnnotations }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
