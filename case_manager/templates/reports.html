@@ -25,7 +25,10 @@
     {% if report_id %}
     <a class="btn docbar-lead" href="{{ url_for('documents_view') }}">Reports</a>
     {% else %}
-    <a class="btn docbar-lead" href="{{ url_for('allegations_view') }}">Allegations</a>
+    <a class="btn docbar-lead" id="allegationsLink" href="{{ url_for('allegations_view') }}" hidden>Allegations</a>
+    <script>
+      try { if (localStorage.getItem('caseplan.advanced') === '1') document.getElementById('allegationsLink').hidden = false; } catch (e) {}
+    </script>
     {% endif %}
     <div class="docbar-center"><span class="docbar-title">{{ "Report" if report_id else "Reports" }}</span>
       {%- if report_id %}{% if picker_causes and picker_causes|length > 1 %}<span class="cause-label">Cause:</span><span class="cause-picker cause-static" title="{{ report_cause_titles | join(", ") or "No cause" }}">{{ report_cause_titles | join(", ") or "No cause" }}</span>{% endif %}
