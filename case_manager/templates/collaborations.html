@@ -25,7 +25,7 @@
              data-keys-url="{{ url_for('api_keys') }}"
              data-item-url-base="{{ url_for('api_key_item', kind='KIND', key_id=0) }}">
       <h3>Share using a secret key</h3>
-      <p class="modal-hint">Anyone with a key can open the item (and everything beneath it) without an account, after solving a captcha. Delete a key to stop sharing; switch it off to suspend it.</p>
+      <p class="modal-hint">Anyone with a key can open the item (and everything beneath it) without an account, after solving a captcha. Delete a key to stop sharing.</p>
       <form id="keyForm" class="key-form">
         <label class="modal-field">Share
           <select id="keyKind">
@@ -62,7 +62,7 @@
           <img class="auth-captcha" id="captchaImg" alt="Captcha: distorted letters and digits" width="200" height="70">
           <button type="button" class="btn" id="captchaRefresh" title="Show a different image">&#8635;</button>
         </span>
-        <input type="text" id="captchaAnswer" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" required>
+        <input type="text" id="captchaAnswer" placeholder="Type the text shown in the image above" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" required>
       </label>
       <p class="error-message" id="inviteError" role="alert" style="display:none"></p>
       <p id="inviteOk" style="display:none; color:#1d6b34"></p>

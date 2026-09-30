@@ -43,24 +43,35 @@
   kindEl.addEventListener("change", fillObjects);
 
   function keyRow(kind, k) {
-    const copy = el("button", {className: "btn", type: "button", textContent: "Copy key"});
-    copy.addEventListener("click", function () {
-      navigator.clipboard.writeText(k.key).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy key"; }, 1500); });
-    });
-    const toggle = el("button", {className: "btn", type: "button", textContent: k.active ? "Deactivate" : "Activate"});
-    toggle.addEventListener("click", function () { act(toggle, function () { return api(itemUrl(kind, k.id), "PATCH", {active: !k.active}); }); });
-    const del = el("button", {className: "btn", type: "button", textContent: "Delete"});
+    function copier(label, text) {
+      const b = el("button", {className: "btn", type: "button", textContent: label});
+      b.addEventListener("click", function () {
+        navigator.clipboard.writeText(text).then(function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = label; }, 1500); });
+      });
+      return b;
+    }
+    const copyLink = copier("Copy link", new URL(k.url, window.location.href).href);
+    const copy = copier("Copy key", k.key);
+    const del = el("button", {className: "card-delete-btn", type: "button", textContent: "\u{1F5D1}", title: "Delete key"});
     del.addEventListener("click", function () {
-      if (confirm("Delete this key? Anyone using it will lose access to " + k.title + ".")) {
-        act(del, function () { return api(itemUrl(kind, k.id), "DELETE"); });
+      if (!del.classList.contains("confirming")) {
+        del.classList.add("confirming");
+        del.textContent = "Confirm?";
+        del._confirmTimer = setTimeout(function () {
+          del.classList.remove("confirming");
+          del.textContent = "\u{1F5D1}";
+        }, 3000);
+        return;
       }
+      clearTimeout(del._confirmTimer);
+      act(del, function () { return api(itemUrl(kind, k.id), "DELETE"); });
     });
     return el("div", {className: "key-row" + (k.active ? "" : " inactive")}, [
       el("span", {className: "key-title", textContent: k.title, title: k.title}),
       el("span", {className: "collab-role", textContent: (k.permission === "editor" ? "Can edit" : "Can view") + (k.active ? "" : " – deactivated")}),
       el("code", {className: "key-value", textContent: k.key}),
       el("a", {className: "key-link", href: k.url, textContent: "link", title: k.url}),
-      el("span", {className: "collab-actions"}, [copy, toggle, del]),
+      el("span", {className: "collab-actions"}, [copyLink, copy, del]),
     ]);
   }
 
