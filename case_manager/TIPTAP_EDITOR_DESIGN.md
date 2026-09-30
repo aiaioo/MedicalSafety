@@ -162,6 +162,35 @@ reflect an on-screen resize at all.
   entry — kept for pasted-in tables, since the old toolbar never exposed a table button
   either). Pasting a table today gets flattened by Tiptap's own paste handling. Adding
   `@tiptap/extension-table` plus corresponding exporter support is future work if needed.
+
+  **Deferring tables is safe; the data model already accommodates them.** Reports are stored
+  as ProseMirror JSON (a typed node tree, not raw HTML), so tables would just be extra node
+  types (`table`, `tableRow`, `tableCell`, `tableHeader`, with `colspan`/`rowspan`/`colwidth`
+  attrs). Adding them later is purely additive: no migration, and existing documents load
+  unchanged. Until then, `sanitize_report_doc` (`app.py`) drops any node type outside
+  `REPORT_BLOCK_TYPES`, and paste flattens tables to paragraphs, so no half-supported table
+  can reach storage. Rolling tables back *after* shipping them would silently strip them from
+  any report saved in the meantime (same whitelist) — use a feature flag or back up first.
+
+  **What adding tables would involve** (estimated, not started):
+  - *Editor:* insert/add/delete rows and columns, header row, merge/split, and column resize
+    come with `@tiptap/extension-table`. Whole-table resize and row-height resize are not
+    built in and need custom handles/attrs (`resizableImage.js` is a template).
+  - *Pagination (the hard part):* `collectBreakUnits` in `pagination.js` treats a table as one
+    atomic unit, so a table taller than a page would gap or overflow. It needs `tableRow` as
+    a break unit (as list items are today), and the break widget must render as a
+    `<tr><td colspan>` inside a table rather than a `div`. Single rows taller than a page
+    would still overflow.
+  - *Exporters:* whitelist table nodes and attrs in `sanitize_node`; add table output to
+    `_json_blocks_to_html` (PDF via `fitz.Story`, whose CSS support is limited) and
+    `_docx_render_blocks` (python-docx). PDF page breaks already only approximate the
+    editor's; row-split tables would make that more visible.
+  - *Lists in cells / tables in lists:* both are legal in the schema by default (cell content
+    is `block+`; list item content is `paragraph block*`), but the numbering walkers
+    (`buildMarkerIndex` in `listNumbering.js`, `_ListNumberingState` in `app.py`) and the
+    pagination walker only recurse through list nodes and would need to descend into tables.
+  - *Keep new tree-walking code table-ready:* don't assume a top-level block is only a
+    paragraph, heading, list or image; use a default branch.
 - **Legacy document migration** is best-effort, not lossless — see the "Data model"
   section above.
 
