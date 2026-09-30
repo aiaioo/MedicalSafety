@@ -1018,6 +1018,11 @@ def set_default_cause(user_id: int, cause_id: str) -> None:
         cur.execute("UPDATE users SET default_cause_id = %s WHERE id = %s", (cause_id, user_id))
 
 
+def set_show_advanced(user_id: int, show: bool) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE users SET show_advanced = %s WHERE id = %s", (show, user_id))
+
+
 # ---------------------------------------------------------------------------
 # Allegations (+ inculpatory/exculpatory evidence, + "to prove" items each
 # optionally linking some of that evidence, + linked cases)
@@ -1219,7 +1224,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash FROM user_sessions s JOIN users u ON u.id = s.user_id
+            SELECT u.id, u.email, u.password_hash, u.show_advanced FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
             (token_hash,),

@@ -1428,6 +1428,16 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/settings/advanced", methods=["PUT"])
+def api_set_show_advanced():
+    """Saves whether this user has "View advanced features" turned on."""
+    show = (request.get_json(silent=True) or {}).get("show")
+    if not isinstance(show, bool):
+        return jsonify({"error": "show must be true or false"}), 400
+    storage.set_show_advanced(g.user.id, show)
+    return jsonify({"show": show})
+
+
 @app.route("/annotations")
 def page_view():
     doc_id = request.args.get("doc", "")

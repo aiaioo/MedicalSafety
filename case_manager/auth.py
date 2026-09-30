@@ -65,10 +65,14 @@ class User:
     id: int
     email: str
     password_hash: str
+    show_advanced: bool = False
 
     @classmethod
     def from_row(cls, row: dict) -> User:
-        return cls(id=row["id"], email=row["email"], password_hash=row["password_hash"])
+        return cls(
+            id=row["id"], email=row["email"], password_hash=row["password_hash"],
+            show_advanced=row.get("show_advanced", False),
+        )
 
     @staticmethod
     def hash_password(password: str) -> str:

@@ -16,7 +16,7 @@
 
 <div class="container">
 
-  <div id="advanced-sections" hidden>
+  <div id="advanced-sections"{% if not g.user.show_advanced %} hidden{% endif %}>
 
   <h1>Causes</h1>
 
@@ -55,7 +55,7 @@
     <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
   </section>
 
-  <label style="display: block; margin: 0.5rem 0;"><input type="checkbox" id="advanced-toggle"> View advanced features</label>
+  <label style="display: block; margin: 0.5rem 0;"><input type="checkbox" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
 
   <div style="height: 3rem;" aria-hidden="true"></div>
 </div>
@@ -63,14 +63,19 @@
 (function () {
   var toggle = document.getElementById('advanced-toggle');
   var sections = document.getElementById('advanced-sections');
-  var KEY = 'caseplan.advanced';
-  function apply(on) { toggle.checked = on; sections.hidden = !on; }
-  var saved = false;
-  try { saved = localStorage.getItem(KEY) === '1'; } catch (e) {}
-  apply(saved);
   toggle.addEventListener('change', function () {
-    apply(toggle.checked);
-    try { localStorage.setItem(KEY, toggle.checked ? '1' : '0'); } catch (e) {}
+    var on = toggle.checked;
+    sections.hidden = !on;
+    fetch({{ url_for('api_set_show_advanced')|tojson }}, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({show: on})
+    }).then(function (r) {
+      if (!r.ok) throw new Error();
+    }).catch(function () {
+      toggle.checked = !on;
+      sections.hidden = on;
+    });
   });
 })();
 </script>
