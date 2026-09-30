@@ -7,7 +7,7 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
-  .public-page { max-width: 1040px; margin: 0 auto; padding: 0 20px 48px; }
+  .public-page { max-width: 1500px; margin: 0 auto; padding: 0 20px 48px; }
   .public-layout { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
   .public-main { flex: 1; min-width: 0; }
   .public-hero { padding: 48px 0 28px; }
@@ -19,7 +19,19 @@
   .public-empty { color: #8a92a5; }
   /* The shared .article-card-grid/.article-card rules (thumbnail + summary)
      live in style.css -- the articles workspace's own landing grid uses
-     the same classes, so a webpage looks the same wherever it's listed. */
+     the same classes, so a webpage looks the same wherever it's listed.
+     The overrides below just make the public page's own cards bigger:
+     each at least ~30% of the page width on large screens, with larger
+     type -- the content-creator workspace's denser grid is untouched. */
+  .public-main .article-card-grid { grid-template-columns: repeat(auto-fit, minmax(30%, 1fr)); gap: 24px; }
+  .public-main .article-card .thumbnail { height: 220px; }
+  .public-main .article-card .card-body { padding: 20px 22px; }
+  .public-main .article-card .title { font-size: 19px; margin-bottom: 8px; }
+  .public-main .article-card .summary { font-size: 15px; line-height: 1.5; -webkit-line-clamp: 4; }
+  .public-main .article-card .meta { font-size: 13px; }
+  @media (max-width: 900px) {
+    .public-main .article-card-grid { grid-template-columns: 1fr; }
+  }
 
   /* The "legal tools" panel: pinned to the top of the right-hand column,
      never stretched to the full column height. */
