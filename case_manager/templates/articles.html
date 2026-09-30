@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if article_id %}Webpage{% else %}Webpages{% endif %}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="articleApp"
+     class="{{ 'doc-app-landing' if not article_id }}"
+     data-article="{{ article_id }}"
+     data-articles-url="{{ url_for('api_articles') }}"
+     {% if article_id %}
+     data-article-url="{{ url_for('api_article', article_id=article_id) }}"
+     data-image-upload-url="{{ url_for('api_article_image_upload', article_id=article_id) }}"
+     {% endif %}
+>
+  <header class="docbar">
+    <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    {% if article_id %}
+    <a class="btn docbar-lead" href="{{ url_for('articles_view') }}">Webpages</a>
+    {% endif %}
+    <div class="docbar-center"><span class="docbar-title">{{ "Webpage" if article_id else "Webpages" }}</span></div>
+
+    {% if article_id %}
+    <input id="titleInput" class="doc-name" type="text" placeholder="Untitled webpage">
+    <button type="button" id="saveBtn" class="save-btn">Save</button>
+    {% endif %}
+    <span id="saveStatus" class="save-status"></span>
+    <a class="btn" style="margin-left: auto;" href="{{ url_for('account_view') }}">My account</a>
+  </header>
+
+  <div class="toolbar doc-toolbar" id="formatToolbar">
+    <nav class="file-menu">
+      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
+      <div class="menu-dropdown" id="fileMenuDropdown">
+        <button type="button" id="newDocBtn">New webpage&hellip;</button>
+        <button type="button" id="openDocBtn">Open&hellip;</button>
+      </div>
+    </nav>
+    <span class="toolbar-sep"></span>
+    <div class="fmt-controls" id="fmtControls" style="display: {{ 'none' if not article_id else 'contents' }};">
+    <button type="button" class="fmt-btn" id="undoBtn" title="Undo">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7H10a3.5 3.5 0 0 1 0 7H6.5"/><path d="M6 4 3 7l3 3"/></svg>
+    </button>
+    <button type="button" class="fmt-btn" id="redoBtn" title="Redo">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 7H6a3.5 3.5 0 0 0 0 7h3.5"/><path d="M10 4l3 3-3 3"/></svg>
+    </button>
+    <span class="toolbar-sep"></span>
+    <select id="fontFamilySelect" class="fmt-select" title="Font">
+      <option value="Arial" style="font-family:Arial">Arial</option>
+      <option value="Georgia" style="font-family:Georgia">Georgia</option>
+      <option value="'Times New Roman'" style="font-family:'Times New Roman'">Times New Roman</option>
+      <option value="'Courier New'" style="font-family:'Courier New'">Courier New</option>
+      <option value="Verdana" style="font-family:Verdana">Verdana</option>
+      <option value="'Trebuchet MS'" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+      <option value="'Comic Sans MS'" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+    </select>
+    <select id="fontSizeSelect" class="fmt-select fmt-select-narrow" title="Font size">
+      {% for pt in [8,9,10,11,12,14,18,24,30,36,48,60,72,96] %}
+      <option value="{{ pt }}" {{ 'selected' if pt == 11 }}>{{ pt }}</option>
+      {% endfor %}
+    </select>
+    <span class="toolbar-sep"></span>
+    <select id="blockFormatSelect" class="fmt-select" title="Paragraph style">
+      <option value="P">Normal text</option>
+      <option value="H1">Heading 1</option>
+      <option value="H2">Heading 2</option>
+      <option value="H3">Heading 3</option>
+    </select>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" class="fmt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" class="fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+    <div class="color-pop-wrap">
+      <button type="button" class="color-btn" id="textColorBtn" title="Text color" aria-haspopup="true" aria-expanded="false">
+        <span>A</span><span class="swatch" id="textColorSwatch"></span>
+      </button>
+      <input id="textColorInput" type="hidden" value="#1c1c1c">
+      <div id="textColorPopover" class="color-popover" hidden>
+        <div id="textColorPalette" class="color-palette" role="radiogroup" aria-label="Text colour"></div>
+      </div>
+    </div>
+    <div class="color-pop-wrap">
+      <button type="button" class="color-btn" id="highlightColorBtn" title="Highlight color" aria-haspopup="true" aria-expanded="false">
+        <span>H</span><span class="swatch" id="highlightColorSwatch"></span>
+      </button>
+      <input id="highlightColorInput" type="hidden" value="#fff59d">
+      <div id="highlightColorPopover" class="color-popover" hidden>
+        <button type="button" class="color-none" id="noHighlightBtn" title="Remove highlight"><span class="color-none-box"></span>No colour</button>
+        <div id="highlightColorPalette" class="color-palette" role="radiogroup" aria-label="Highlight colour"></div>
+      </div>
+    </div>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" data-cmd="justifyLeft" title="Align left">
+      <svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="0" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="0" y="12" width="10" height="2"/></svg>
+    </button>
+    <button type="button" class="fmt-btn" data-cmd="justifyCenter" title="Align center">
+      <svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="3" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="3" y="12" width="10" height="2"/></svg>
+    </button>
+    <button type="button" class="fmt-btn" data-cmd="justifyRight" title="Align right">
+      <svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="6" y="4" width="10" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="6" y="12" width="10" height="2"/></svg>
+    </button>
+    <button type="button" class="fmt-btn" data-cmd="justifyFull" title="Justify">
+      <svg viewBox="0 0 16 14" width="16" height="14" fill="currentColor"><rect x="0" y="0" width="16" height="2"/><rect x="0" y="4" width="16" height="2"/><rect x="0" y="8" width="16" height="2"/><rect x="0" y="12" width="16" height="2"/></svg>
+    </button>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" id="insertUnorderedListBtn" title="Bullet list">&bull; List</button>
+    <button type="button" class="fmt-btn" id="insertOrderedListBtn" title="Numbered list">1. List</button>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" id="linkBtn" title="Insert or edit link">&#128279; Link</button>
+    <button type="button" class="fmt-btn" id="insertImageBtn" title="Insert image">&#128247; Image</button>
+    <input type="file" id="imageFileInput" accept="image/*" hidden>
+    </div>
+  </div>
+
+  <main class="viewer-layout">
+    <div class="editor-container">
+      {% if article_id %}
+      <div class="editor-page-wrap" id="editorPageWrap">
+        <div id="editor" class="editor"></div>
+      </div>
+      {% else %}
+      <div class="doc-landing">
+        <h2>Your webpages</h2>
+        <p class="empty" id="landingEmptyHint">No webpages yet. Use File &rarr; New webpage to create one.</p>
+        <div id="articleListLanding" class="report-grid"></div>
+      </div>
+      {% endif %}
+    </div>
+    {% if article_id %}
+    <aside class="sidebar">
+      <h3>Publish</h3>
+      <label class="modal-field">Section
+        <select id="sectionSelect">
+          <option value="">&mdash; draft (no section) &mdash;</option>
+          {% for w in websites %}
+          <optgroup label="{{ w.name }}">
+            {% for s in w.sections %}
+            <option value="{{ s.id }}">{{ s.title }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="modal-field" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="publishedInput"> Published
+      </label>
+      <p class="empty" style="margin: 8px 0 0;">A webpage only appears on the public site once it's assigned a section and marked Published.</p>
+    </aside>
+    {% endif %}
+  </main>
+
+  <div class="modal-overlay" id="newDocModal">
+    <div class="modal">
+      <h3>New webpage</h3>
+      <label class="modal-field">Title
+        <input id="newDocName" type="text" placeholder="e.g. How to file a complaint" maxlength="200">
+      </label>
+      <p id="newDocError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="newDocCancel">Cancel</button>
+        <button type="button" id="newDocCreate">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="openDocModal">
+    <div class="modal">
+      <h3>Open a webpage</h3>
+      <div id="openDocList" class="report-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="openDocCancel">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
+<script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
+<script src="{{ url_for('static', filename='dist/article.bundle.js') }}"></script>
+</body>
+</html>

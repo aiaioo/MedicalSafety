@@ -2876,6 +2876,262 @@ def api_doc_links(doc_id):
     return _update_links("source", doc_id)
 
 
+def require_admin():
+    if not g.user.is_admin:
+        raise DocumentError("You don't have permission to see this page", 403)
+
+
+def require_content_creator():
+    if not g.user.is_content_creator:
+        raise DocumentError("You don't have permission to see this page", 403)
+
+
+# ---------------------------------------------------------------------------
+# Admin: the Users tab (roles + per-user stats) and the Websites tab (see
+# db/migrations/022_content_platform.sql). Every route here is admin-only.
+# ---------------------------------------------------------------------------
+
+WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
+
+
+@app.route("/admin")
+def admin_view():
+    require_admin()
+    return render_template("admin.html", users=storage.admin_list_users(), websites=storage.list_websites())
+
+
+@app.route("/api/admin/user/<int:user_id>/roles", methods=["PUT"])
+def api_admin_user_roles(user_id):
+    require_admin()
+    body = request.get_json(silent=True) or {}
+    is_admin = bool(body.get("is_admin"))
+    is_content_creator = bool(body.get("is_content_creator"))
+    if not is_admin and user_id == g.user.id and storage.count_admins() <= 1:
+        raise DocumentError("You can't remove your own administrator access while you're the only administrator", 400)
+    storage.set_user_roles(user_id, is_admin, is_content_creator)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/websites", methods=["POST"])
+def api_admin_websites():
+    require_admin()
+    body = request.get_json(silent=True) or {}
+    domain = str(body.get("domain") or "").strip().lower()
+    name = str(body.get("name") or "").strip()[:100]
+    if not WEBSITE_DOMAIN_RE.match(domain):
+        raise DocumentError("Enter a valid domain, e.g. example.com", 400)
+    if not name:
+        raise DocumentError("A website name is required", 400)
+    if storage.website_exists(domain):
+        raise DocumentError("A website with that domain already exists", 409)
+    storage.create_website(domain, domain, name)
+    return jsonify({"id": domain, "domain": domain, "name": name, "sections": []})
+
+
+@app.route("/api/admin/website/<website_id>", methods=["DELETE"])
+def api_admin_website(website_id):
+    require_admin()
+    storage.delete_website(website_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/website/<website_id>/sections", methods=["POST"])
+def api_admin_sections(website_id):
+    require_admin()
+    if not storage.website_exists(website_id):
+        raise DocumentError(f"No website with id {website_id!r}", 404)
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "").strip()[:100]
+    if not title:
+        raise DocumentError("A section title is required", 400)
+    section_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
+    website = next((w for w in storage.list_websites() if w["id"] == website_id), None)
+    position = len(website["sections"]) if website else 0
+    storage.create_section(section_id, website_id, title, position)
+    return jsonify({"id": section_id, "title": title, "position": position})
+
+
+@app.route("/api/admin/section/<section_id>", methods=["POST", "DELETE"])
+def api_admin_section(section_id):
+    require_admin()
+    if not storage.section_exists(section_id):
+        raise DocumentError(f"No section with id {section_id!r}", 404)
+    if request.method == "DELETE":
+        storage.delete_section(section_id)
+        return jsonify({"ok": True})
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "").strip()[:100]
+    if not title:
+        raise DocumentError("A section title is required", 400)
+    position = body.get("position")
+    storage.update_section(section_id, title, position if isinstance(position, int) else 0)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Articles workspace: a content creator's own webpages -- the same kind of
+# Tiptap document a report is (sanitize_report_doc applies unchanged), just
+# never paginated, and arranged into website_sections rather than causes.
+# See templates/articles.html, static/src/article-editor.js.
+# ---------------------------------------------------------------------------
+
+ARTICLE_IMAGE_MAX_PIXELS = 1600
+
+
+def require_article(article_id):
+    """An article this content creator authored -- articles aren't shared,
+    so there's no viewer/editor role to check, just ownership."""
+    check_report_id(article_id)
+    article = storage.get_article(article_id)
+    if article is None or article["author_id"] != g.user.id:
+        raise DocumentError(f"No webpage with id {article_id!r}", 404)
+    return article
+
+
+def valid_section_id(raw):
+    """A section id from the client, or None for "no section" (draft) --
+    anything else must name a section that actually exists."""
+    section_id = str(raw or "").strip()
+    if not section_id:
+        return None
+    if not storage.section_exists(section_id):
+        raise DocumentError(f"No section with id {section_id!r}", 400)
+    return section_id
+
+
+@app.route("/articles")
+def articles_view():
+    require_content_creator()
+    article_id = request.args.get("article", "")
+    if article_id:
+        require_article(article_id)
+    return render_template("articles.html", article_id=article_id, websites=storage.list_websites())
+
+
+@app.route("/api/articles", methods=["GET", "POST"])
+def api_articles():
+    require_content_creator()
+    if request.method == "GET":
+        return jsonify(storage.list_articles(g.user.id))
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title") or "").strip()[:200]
+    if not title:
+        raise DocumentError("A title is required", 400)
+    article_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "title": title, "doc": {"type": "doc", "content": []}, "section_id": None, "published": False,
+        "created_at": now, "updated_at": now,
+    }
+    storage.create_article(article_id, data, g.user.id)
+    return jsonify({"id": article_id, **data})
+
+
+@app.route("/api/article/<article_id>", methods=["GET", "POST", "DELETE"])
+def api_article(article_id):
+    require_content_creator()
+    existing = require_article(article_id)
+
+    if request.method == "GET":
+        return jsonify(existing)
+    if request.method == "DELETE":
+        storage.delete_article(article_id)
+        return jsonify({"ok": True})
+
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title", existing.get("title", ""))).strip()[:200]
+    if not title:
+        raise DocumentError("A title is required", 400)
+    section_id = valid_section_id(body.get("section_id", existing.get("section_id")))
+    published = bool(body.get("published")) and section_id is not None
+    doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
+    data = {
+        "title": title, "doc": doc_json, "section_id": section_id, "published": published,
+        "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    storage.save_article(article_id, data)
+    return jsonify(data)
+
+
+@app.route("/api/article/<article_id>/image", methods=["POST"])
+def api_article_image_upload(article_id):
+    require_content_creator()
+    require_article(article_id)
+    upload = request.files.get("image")
+    if upload is None:
+        raise DocumentError("Please choose an image.", 400)
+    try:
+        img = Image.open(upload.stream)
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise DocumentError("That file isn't an image we can read. Please choose a JPEG, PNG or GIF image.", 400)
+    img.thumbnail((ARTICLE_IMAGE_MAX_PIXELS, ARTICLE_IMAGE_MAX_PIXELS))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=88)  # re-encoding also drops any metadata or embedded payload
+    image_id = uuid.uuid4().hex[:24]
+    storage.create_article_image(article_id, image_id, "image/jpeg", out.getvalue())
+    return jsonify({"id": image_id, "url": url_for("api_article_image", article_id=article_id, image_id=image_id)})
+
+
+@app.route("/media/article-images/<article_id>/<image_id>")
+def api_article_image(article_id, image_id):
+    """Serves one of an article's embedded images -- reachable by anyone
+    once the article is published (see auth.PUBLIC_ENDPOINTS), else only its
+    author, so a draft's images can still be previewed while writing it."""
+    check_report_id(article_id)
+    article = storage.get_article(article_id)
+    if article is None:
+        abort(404)
+    viewer = g.user
+    allowed = article["published"] or (viewer is not None and not viewer.is_guest and viewer.id == article["author_id"])
+    if not allowed:
+        abort(404)
+    image = storage.get_article_image(image_id)
+    if image is None or image["article_id"] != article_id:
+        abort(404)
+    resp = Response(image["data"], mimetype=image["content_type"])
+    resp.headers["Cache-Control"] = "public, max-age=31536000" if article["published"] else "private, no-cache"
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# The public content aggregation page: every website's sections and their
+# published articles, tastefully laid out, reachable by anyone -- see
+# auth.PUBLIC_ENDPOINTS.
+# ---------------------------------------------------------------------------
+
+def current_website():
+    """The website matching the host this request came in on (the same
+    lookup inject_site_name does for the site name), or a sane default if
+    the host isn't recognized (e.g. localhost in development)."""
+    host = request.host.split(":")[0].lower().removeprefix("www.")
+    site = storage.get_website_by_domain(host)
+    if site is not None:
+        return site
+    sites = storage.list_websites()
+    return next((s for s in sites if s["name"] == DEFAULT_SITE_NAME), sites[0] if sites else None)
+
+
+@app.route("/public")
+def public_view():
+    site = current_website()
+    if site is None:
+        raise DocumentError("No website is configured yet", 404)
+    return render_template("public.html", website=site, sections=storage.public_sections(site["id"]))
+
+
+@app.route("/article/<article_id>")
+def public_article(article_id):
+    check_report_id(article_id)
+    article = storage.get_published_article(article_id)
+    if article is None:
+        raise DocumentError(f"No published webpage with id {article_id!r}", 404)
+    body_html = _json_blocks_to_html((article["doc"] or {}).get("content") or [])
+    return render_template("article_view.html", article=article, body_html=body_html)
+
+
 @app.route("/media/snippets/<doc_id>/<path:filename>")
 def api_snippet_file(doc_id, filename):
     check_doc_id(doc_id)

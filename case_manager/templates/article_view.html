@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ article.title }} &mdash; {{ article.website_name }}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  .article-page { max-width: 720px; margin: 0 auto; padding: 32px 20px 60px; }
+  .article-meta { color: #8a92a5; font-size: 13px; margin-bottom: 24px; }
+  .article-body { font-size: 16px; line-height: 1.65; color: #1c1c1c; }
+  .article-body h1 { font-size: 28px; margin: 1em 0 0.4em; }
+  .article-body h2 { font-size: 22px; margin: 1em 0 0.4em; }
+  .article-body h3 { font-size: 18px; margin: 1em 0 0.4em; }
+  .article-body img { max-width: 100%; border-radius: 6px; }
+  .article-body p.img-p { margin: 16px 0; }
+  .article-body a { color: #2266dd; }
+  .article-body ul, .article-body ol { padding-left: 1.4em; }
+</style>
+</head>
+<body>
+<header class="docbar" style="position: relative;">
+  <a class="home-link docbar-lead" href="{{ url_for('public_view') }}" title="Home">{{ article.website_name }}</a>
+  <div class="docbar-center"><span class="doc-name doc-name-static">{{ article.section_title }}</span></div>
+  {% if g.user and not g.user.is_guest %}
+  <div style="margin-left: auto;"><a class="btn" href="{{ url_for('account_view') }}">My account</a></div>
+  {% endif %}
+</header>
+
+<main class="article-page">
+  <h1>{{ article.title }}</h1>
+  <p class="article-meta">Updated {{ article.updated_at[:10] }} &middot; {{ article.section_title }}</p>
+  <div class="article-body">{{ body_html | safe }}</div>
+</main>
+</body>
+</html>

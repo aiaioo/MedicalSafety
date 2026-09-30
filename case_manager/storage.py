@@ -48,7 +48,8 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from converters import ConversionError, convert_to_pdf
 from db.storage_backend import (
-    cache_storage_dir, document_storage_key, get_storage_backend, owner_dir_name, snippet_storage_key,
+    LocalFilesystemStorage, cache_storage_dir, document_storage_key, get_storage_backend, owner_dir_name,
+    snippet_storage_key,
 )
 
 
@@ -1242,7 +1243,10 @@ def create_user(email: str, password_hash: str) -> dict | None:
 
 def get_user_by_email(email: str) -> dict | None:
     with _cursor() as cur:
-        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s)", (email,))
+        cur.execute(
+            "SELECT id, email, password_hash, is_admin, is_content_creator FROM users WHERE lower(email) = lower(%s)",
+            (email,),
+        )
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -1264,7 +1268,8 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced FROM user_sessions s JOIN users u ON u.id = s.user_id
+            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_admin, u.is_content_creator
+            FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
             (token_hash,),
@@ -1774,3 +1779,293 @@ def unlink_from(kind: str, object_id: str, target_kind: str, target_id: str) -> 
     with _cursor() as cur:
         cur.execute(f"DELETE FROM {table} WHERE {key} = %s AND {target_key} = %s", (object_id, target_id))  # noqa: S608
         return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Admin: every registered user, with the role flags and per-kind ownership
+# counts the admin page's Users tab shows, plus how much disk space their
+# files use (see db/migrations/022_content_platform.sql). Only ever read by
+# an admin -- app.py enforces that, this module just answers the query.
+# ---------------------------------------------------------------------------
+
+def _disk_usage_bytes(storage_dir: str) -> int | None:
+    """Total bytes on disk under this user's storage folder, or None if the
+    active backend isn't local disk (e.g. S3 -- there's no cheap way to sum
+    an object store's sizes here, so the admin page just shows "n/a")."""
+    backend = get_storage_backend()
+    if not isinstance(backend, LocalFilesystemStorage):
+        return None
+    root = backend.root / storage_dir
+    if not root.is_dir():
+        return 0
+    return sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+
+
+def admin_list_users() -> list[dict]:
+    """Every user, oldest first, with {"id", "email", "is_admin",
+    "is_content_creator", "created_at", "causes", "cases", "allegations",
+    "documents", "reports", "disk_usage_bytes"} -- the counts are of objects
+    this user owns (not merely shared with them), matching list_owned_objects."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.email, u.is_admin, u.is_content_creator, u.storage_dir, u.created_at,
+                   (SELECT count(*) FROM user_causes uc WHERE uc.user_id = u.id AND uc.role = 'owner') AS causes,
+                   (SELECT count(*) FROM user_cases uc WHERE uc.user_id = u.id AND uc.role = 'owner') AS cases,
+                   (SELECT count(*) FROM user_allegations ua WHERE ua.user_id = u.id AND ua.role = 'owner') AS allegations,
+                   (SELECT count(*) FROM user_sources us WHERE us.user_id = u.id AND us.role = 'owner') AS documents,
+                   (SELECT count(*) FROM user_reports ur WHERE ur.user_id = u.id AND ur.role = 'owner') AS reports
+            FROM users u
+            ORDER BY u.created_at, u.id
+            """
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"], "email": r["email"], "is_admin": r["is_admin"], "is_content_creator": r["is_content_creator"],
+            "created_at": _iso(r["created_at"]),
+            "causes": r["causes"], "cases": r["cases"], "allegations": r["allegations"],
+            "documents": r["documents"], "reports": r["reports"],
+            "disk_usage_bytes": _disk_usage_bytes(r["storage_dir"]),
+        }
+        for r in rows
+    ]
+
+
+def count_admins() -> int:
+    with _cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM users WHERE is_admin")
+        return cur.fetchone()["n"]
+
+
+def set_user_roles(user_id: int, is_admin: bool, is_content_creator: bool) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE users SET is_admin = %s, is_content_creator = %s WHERE id = %s",
+            (is_admin, is_content_creator, user_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Websites and their sections (db/migrations/022_content_platform.sql). An
+# admin manages these; a content creator only picks among them for an
+# article (see articles below).
+# ---------------------------------------------------------------------------
+
+def list_websites() -> list[dict]:
+    """Every website, each with its sections ({"id", "title", "position"})
+    in display order -- for the admin Websites tab and the article editor's
+    section picker."""
+    with _cursor() as cur:
+        cur.execute("SELECT id, domain, name FROM websites ORDER BY name")
+        sites = cur.fetchall()
+        cur.execute("SELECT id, website_id, title, position FROM website_sections ORDER BY website_id, position, id")
+        sections = cur.fetchall()
+    by_site: dict[str, list] = {}
+    for s in sections:
+        by_site.setdefault(s["website_id"], []).append({"id": s["id"], "title": s["title"], "position": s["position"]})
+    return [{"id": s["id"], "domain": s["domain"], "name": s["name"], "sections": by_site.get(s["id"], [])} for s in sites]
+
+
+def get_website_by_domain(domain: str) -> dict | None:
+    """The website served on this host (see app.py's inject_site_name),
+    with its sections, or None for an unrecognized host."""
+    sites = list_websites()
+    return next((s for s in sites if s["domain"].lower() == domain.lower()), None)
+
+
+def website_exists(website_id: str) -> bool:
+    return _exists("websites", website_id)
+
+
+def section_exists(section_id: str) -> bool:
+    return _exists("website_sections", section_id)
+
+
+def create_website(website_id: str, domain: str, name: str) -> None:
+    with _cursor() as cur:
+        cur.execute("INSERT INTO websites (id, domain, name) VALUES (%s, %s, %s)", (website_id, domain, name))
+
+
+def delete_website(website_id: str) -> None:
+    with _cursor() as cur:
+        if not _lock(cur, "websites", website_id):
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM website_sections WHERE website_id = %s LIMIT 1", (website_id,),
+                       "Cannot delete a website that still has sections")
+        cur.execute("DELETE FROM websites WHERE id = %s", (website_id,))
+
+
+def create_section(section_id: str, website_id: str, title: str, position: int) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO website_sections (id, website_id, title, position) VALUES (%s, %s, %s, %s)",
+            (section_id, website_id, title, position),
+        )
+
+
+def update_section(section_id: str, title: str, position: int) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE website_sections SET title = %s, position = %s WHERE id = %s", (title, position, section_id))
+
+
+def delete_section(section_id: str) -> None:
+    with _cursor() as cur:
+        # An article can't stay published under a section that no longer
+        # exists -- ON DELETE SET NULL clears section_id, but published must
+        # be cleared explicitly too, here, in the same transaction.
+        cur.execute("UPDATE articles SET published = FALSE WHERE section_id = %s", (section_id,))
+        cur.execute("DELETE FROM website_sections WHERE id = %s", (section_id,))
+
+
+# ---------------------------------------------------------------------------
+# Articles: a content creator's own webpages (db/migrations/022_content_
+# platform.sql). Ownership is the single author_id column, not the shared
+# user_* access tables another kind here uses -- an article is never
+# collaboratively edited.
+# ---------------------------------------------------------------------------
+
+def list_articles(user_id: int) -> list[dict]:
+    """This author's own articles, most recently updated first."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.id, a.title, a.section_id, a.published, a.created_at, a.updated_at,
+                   ws.title AS section_title, w.name AS website_name
+            FROM articles a
+            LEFT JOIN website_sections ws ON ws.id = a.section_id
+            LEFT JOIN websites w ON w.id = ws.website_id
+            WHERE a.author_id = %s
+            ORDER BY a.updated_at DESC
+            """,
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"], "title": r["title"], "section_id": r["section_id"], "published": r["published"],
+            "section_title": r["section_title"], "website_name": r["website_name"],
+            "created_at": _iso(r["created_at"]), "updated_at": _iso(r["updated_at"]),
+        }
+        for r in rows
+    ]
+
+
+def article_exists(article_id: str) -> bool:
+    return _exists("articles", article_id)
+
+
+def get_article(article_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, title, doc, section_id, published, author_id, created_at, updated_at FROM articles WHERE id = %s",
+            (article_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"], "title": row["title"], "doc": row["doc"], "section_id": row["section_id"],
+        "published": row["published"], "author_id": row["author_id"],
+        "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
+    }
+
+
+def create_article(article_id: str, data: dict, author_id: int) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO articles (id, title, doc, section_id, published, author_id, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (article_id, data["title"], psycopg2.extras.Json(data["doc"]), data.get("section_id"),
+             data.get("published", False), author_id, data["created_at"], data["updated_at"]),
+        )
+
+
+def save_article(article_id: str, data: dict) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            UPDATE articles SET title = %s, doc = %s, section_id = %s, published = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (data["title"], psycopg2.extras.Json(data["doc"]), data.get("section_id"),
+             data.get("published", False), data["updated_at"], article_id),
+        )
+
+
+def delete_article(article_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("DELETE FROM articles WHERE id = %s", (article_id,))
+
+
+def create_article_image(article_id: str, image_id: str, content_type: str, data: bytes) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO article_images (id, article_id, content_type, data) VALUES (%s, %s, %s, %s)",
+            (image_id, article_id, content_type, data),
+        )
+
+
+def get_article_image(image_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT article_id, content_type, data FROM article_images WHERE id = %s", (image_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# The public side: published articles grouped by section, for the content
+# aggregation page (see app.py's public_view) -- draft articles (published =
+# FALSE, or no section) never appear here.
+# ---------------------------------------------------------------------------
+
+def public_sections(website_id: str) -> list[dict]:
+    """This website's sections in display order, each with its published
+    articles ({"id", "title", "updated_at"}, newest first)."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, title FROM website_sections WHERE website_id = %s ORDER BY position, id",
+            (website_id,),
+        )
+        sections = cur.fetchall()
+        cur.execute(
+            """
+            SELECT a.id, a.title, a.section_id, a.updated_at FROM articles a
+            JOIN website_sections ws ON ws.id = a.section_id AND ws.website_id = %s
+            WHERE a.published
+            ORDER BY a.position, a.updated_at DESC
+            """,
+            (website_id,),
+        )
+        articles = cur.fetchall()
+    by_section: dict[str, list] = {}
+    for a in articles:
+        by_section.setdefault(a["section_id"], []).append(
+            {"id": a["id"], "title": a["title"] or a["id"], "updated_at": _iso(a["updated_at"])}
+        )
+    return [{"id": s["id"], "title": s["title"], "articles": by_section.get(s["id"], [])} for s in sections]
+
+
+def get_published_article(article_id: str) -> dict | None:
+    """The article plus its section/website, only if it's actually
+    published -- the read-only public view uses this, never get_article."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.id, a.title, a.doc, a.updated_at, ws.title AS section_title, w.id AS website_id, w.name AS website_name
+            FROM articles a
+            JOIN website_sections ws ON ws.id = a.section_id
+            JOIN websites w ON w.id = ws.website_id
+            WHERE a.id = %s AND a.published
+            """,
+            (article_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"], "title": row["title"], "doc": row["doc"], "updated_at": _iso(row["updated_at"]),
+        "section_title": row["section_title"], "website_id": row["website_id"], "website_name": row["website_name"],
+    }

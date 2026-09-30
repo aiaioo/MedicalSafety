@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ website.name }}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  .public-page { max-width: 880px; margin: 0 auto; padding: 0 20px 48px; }
+  .public-hero { padding: 48px 0 28px; }
+  .public-hero h1 { font-size: 30px; margin: 0 0 6px; }
+  .public-hero p { color: #6b7280; margin: 0; }
+  .public-section { margin: 36px 0; }
+  .public-section h2 { font-size: 20px; font-weight: 600; border-bottom: 1px solid #e0e2e8; padding-bottom: 8px; margin-bottom: 16px; }
+  .public-article-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .public-article-card { display: block; border: 1px solid #e0e2e8; border-radius: 10px; padding: 16px 18px;
+    text-decoration: none; color: inherit; background: #fff; transition: box-shadow 0.15s, border-color 0.15s; }
+  .public-article-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.08); border-color: #cfd4e0; }
+  .public-article-card .title { font-weight: 600; margin-bottom: 6px; }
+  .public-article-card .meta { font-size: 12px; color: #8a92a5; }
+  .public-empty { color: #8a92a5; }
+</style>
+</head>
+<body>
+<header class="docbar" style="position: relative;">
+  <a class="home-link docbar-lead" href="{{ url_for('public_view') }}" title="Home">{{ website.name }}</a>
+  <div class="docbar-center"><span class="doc-name doc-name-static">{{ website.name }}</span></div>
+  {% if g.user and not g.user.is_guest %}
+  <div style="margin-left: auto;"><a class="btn" href="{{ url_for('account_view') }}">My account</a></div>
+  {% endif %}
+</header>
+
+<main class="public-page">
+  <div class="public-hero">
+    <h1>{{ website.name }}</h1>
+    <p>Articles and guides from {{ website.name }}.</p>
+  </div>
+
+  {% set any_articles = sections | selectattr("articles") | list %}
+  {% if not any_articles %}
+  <p class="public-empty">Nothing has been published here yet.</p>
+  {% endif %}
+
+  {% for section in sections %}
+  {% if section.articles %}
+  <section class="public-section">
+    <h2>{{ section.title }}</h2>
+    <div class="public-article-grid">
+      {% for a in section.articles %}
+      <a class="public-article-card" href="{{ url_for('public_article', article_id=a.id) }}">
+        <div class="title">{{ a.title }}</div>
+        <div class="meta">Updated {{ a.updated_at[:10] }}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+  {% endfor %}
+</main>
+</body>
+</html>

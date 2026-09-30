@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife",
+    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife && esbuild static/src/article-editor.js --bundle --outfile=static/dist/article.bundle.js --format=iife",
     "watch": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife --watch"
   },
   "dependencies": {
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-highlight": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-link": "^3.31.3",
     "@tiptap/extension-text-align": "^3.31.3",
     "@tiptap/extension-text-style": "^3.31.3",
     "@tiptap/pm": "^3.31.3",

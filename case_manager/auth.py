@@ -39,7 +39,13 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 
 # Endpoints reachable without signing in -- everything else redirects to
 # the sign-in page (or, for /api/ routes, answers 401).
-PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "auth.unlock", "static"}
+PUBLIC_ENDPOINTS = {
+    "auth.signin", "auth.signup", "auth.unlock", "static",
+    # The content aggregation page and the articles on it are the one part
+    # of the site meant for anyone, signed in or not -- see app.py's
+    # public_view/public_article/api_article_image.
+    "public_view", "public_article", "api_article_image",
+}
 
 # Key holders (people using a secret key without an account) have no users
 # row and no sign-in: a key session (see storage.create_key_session) stands in,
@@ -107,12 +113,15 @@ class User:
     password_hash: str
     show_advanced: bool = False
     is_guest: bool = False  # a key session, not a registered user
+    is_admin: bool = False
+    is_content_creator: bool = False
 
     @classmethod
     def from_row(cls, row: dict) -> User:
         return cls(
             id=row["id"], email=row["email"], password_hash=row["password_hash"],
             show_advanced=row.get("show_advanced", False),
+            is_admin=row.get("is_admin", False), is_content_creator=row.get("is_content_creator", False),
         )
 
     @staticmethod

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administration</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  .admin-page { max-width: 980px; margin: 24px auto; padding: 0 20px 40px; }
+  .admin-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid #e0e2e8; }
+  .admin-tab { padding: 8px 14px; border: none; background: none; cursor: pointer; font-size: 14px;
+    color: #6b7280; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .admin-tab.active { color: #2266dd; border-bottom-color: #2266dd; font-weight: 500; }
+  .admin-panel { display: none; }
+  .admin-panel.active { display: block; }
+  table.admin-users { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.admin-users th, table.admin-users td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #edeff3; white-space: nowrap; }
+  table.admin-users th { color: #6b7280; font-weight: 500; }
+  table.admin-users td.email-col { white-space: normal; word-break: break-word; }
+  .role-save-status { font-size: 12px; color: #8a92a5; margin-left: 6px; }
+  .website-card { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 16px 19px; margin-bottom: 20px; }
+  .website-card h3 { margin: 0 0 2px; }
+  .website-card .domain { color: #8a92a5; font-size: 13px; margin-bottom: 12px; }
+  .section-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .section-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
+  .add-row { display: flex; gap: 8px; margin-top: 10px; }
+  .add-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
+  .new-website-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .new-website-form label { font-size: 12px; color: #46536b; display: flex; flex-direction: column; gap: 4px; }
+  .new-website-form input { padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header class="docbar" style="position: relative;">
+  <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+  <div class="docbar-center"><span class="doc-name doc-name-static">Administration</span></div>
+  <div style="margin-left: auto;"><a class="btn" href="{{ url_for('account_view') }}">My account</a></div>
+</header>
+
+<main class="admin-page">
+  <div class="admin-tabs">
+    <button type="button" class="admin-tab active" data-tab="users">Users</button>
+    <button type="button" class="admin-tab" data-tab="websites">Websites</button>
+  </div>
+
+  <section class="admin-panel active" id="tab-users">
+    <p class="modal-hint">Everyone who has signed up, what they own, and how much of their storage they're using. Tick Admin or Content creator to grant that role.</p>
+    <table class="admin-users">
+      <thead>
+        <tr>
+          <th>Email</th><th>Joined</th>
+          <th>Causes</th><th>Cases</th><th>Allegations</th><th>Documents</th><th>Reports</th><th>Disk used</th>
+          <th>Admin</th><th>Content creator</th>
+        </tr>
+      </thead>
+      <tbody id="usersTableBody">
+        {% for u in users %}
+        <tr data-user-id="{{ u.id }}">
+          <td class="email-col">{{ u.email }}</td>
+          <td>{{ u.created_at[:10] }}</td>
+          <td>{{ u.causes }}</td>
+          <td>{{ u.cases }}</td>
+          <td>{{ u.allegations }}</td>
+          <td>{{ u.documents }}</td>
+          <td>{{ u.reports }}</td>
+          <td data-disk-bytes="{{ u.disk_usage_bytes if u.disk_usage_bytes is not none else '' }}">&mdash;</td>
+          <td><input type="checkbox" class="role-admin" {{ 'checked' if u.is_admin }}></td>
+          <td><input type="checkbox" class="role-content-creator" {{ 'checked' if u.is_content_creator }}></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p id="rolesError" class="error-message" style="display:none"></p>
+  </section>
+
+  <section class="admin-panel" id="tab-websites">
+    <p class="modal-hint">Content creators publish webpages under a website's sections. Add more sections any time, or a whole new website.</p>
+    <div id="websiteList">
+      {% for w in websites %}
+      <div class="website-card" data-website-id="{{ w.id }}">
+        <h3>{{ w.name }}</h3>
+        <div class="domain">{{ w.domain }}</div>
+        <div class="sections-list">
+          {% for s in w.sections %}
+          <div class="section-row" data-section-id="{{ s.id }}">
+            <input type="text" class="section-title" value="{{ s.title }}">
+            <button type="button" class="btn section-save">Save</button>
+            <button type="button" class="btn card-delete-btn section-delete" title="Delete section">&#10005;</button>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="add-row">
+          <input type="text" class="new-section-title" placeholder="New section title">
+          <button type="button" class="btn add-section-btn">Add section</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="website-card">
+      <h3>Add a website</h3>
+      <div class="new-website-form">
+        <label>Domain<input type="text" id="newWebsiteDomain" placeholder="example.com"></label>
+        <label>Name<input type="text" id="newWebsiteName" placeholder="Example"></label>
+        <button type="button" class="btn" id="addWebsiteBtn">Add website</button>
+      </div>
+      <p id="websiteError" class="error-message" style="display:none"></p>
+    </div>
+  </section>
+</main>
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+</body>
+</html>
