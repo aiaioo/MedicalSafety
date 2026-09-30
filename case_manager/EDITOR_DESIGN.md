@@ -30,7 +30,7 @@ annotator (see `ANNOTATOR_DESIGN.md`), then export the result as a PDF. It lives
 | `/api/report/<id>` | POST | Save/update a report. Body: `{name, html, source_doc, source_type, margins}`. Server re-sanitizes `html` and re-validates `margins` before persisting (§ Sanitization, § Page margins). |
 | `/api/report/<id>/export` | GET | Renders the saved `html` to a PDF (`render_report_pdf`) using the report's saved `margins`, and returns it as a download. |
 | `/api/report/<id>/export.docx` | GET | Renders the saved `html` to a `.docx` (`render_report_docx`) and returns it as a download. |
-| `/api/documents/upload` | POST | Multipart `file` field (`.pdf` only). Validates the file actually opens (PyMuPDF), saves it into `storage/documents/` under a slugified doc id, and returns `{id, type, filename}`. See § Uploading a source document. |
+| `/api/documents/upload` | POST | Multipart `file` field (`.pdf` only). Validates the file actually opens (PyMuPDF), saves it into `storage/<owner>/documents/` under a slugified doc id, and returns `{id, type, filename}`. See § Uploading a source document. |
 
 Report records are stored one-per-file as `storage/reports/<id>.json`:
 
@@ -107,11 +107,11 @@ programmatically clicks a hidden `<input type="file" id="uploadSourceInput">` si
 right next to it in the dropdown — the standard pattern for a custom-styled file picker
 trigger. It's deliberately in its own group (separated by `<hr>`s from New/Open above and
 Page setup below) since it's a different kind of action: it mutates the shared
-`storage/documents/` library rather than the current report.
+`documents` library rather than the current report.
 
 On the input's `change` event, `document.js` posts the file as `multipart/form-data` to
 `POST /api/documents/upload`, which is the only way to add a source document short of
-dropping a file into `storage/documents/` on the server directly (§ Document model in
+dropping a file into `storage/<owner>/documents/` on the server directly (§ Document model in
 `ANNOTATOR_DESIGN.md`). On success it:
 
 - appends a new `<option>` (value `"<id>|<type>"`) to **both** `sourceSelect` and the New

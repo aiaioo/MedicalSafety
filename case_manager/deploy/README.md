@@ -42,6 +42,10 @@ psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/mig
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/005_signup_attempts.sql
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/006_general_cause_for_unassociated.sql
 psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/007_report_snippets.sql
+# ...then 008 to 012 in order, and 013 followed by the one-off file move
+# (files are stored per user -- storage/<owner>/documents/ etc.):
+psql "postgresql://case_manager_app:<password>@localhost/case_manager" -f db/migrations/013_document_storage_owner.sql
+sudo -u case-manager DATABASE_URL=postgresql://case_manager_app:<password>@localhost/case_manager python3 db/relocate_files.py
 
 # 7. The secrets file systemd will inject as this process's environment --
 #    see case-manager.env.example for the exact commands and template.

@@ -8,13 +8,14 @@ write, delete, or serve the bytes. Swapping backends (e.g. local disk ->
 S3) later is then a one-line change (get_storage_backend), never a data
 migration, because no stored value has to change.
 
-Today's key layout intentionally mirrors the existing on-disk layout under
-storage/documents/ and storage/snippets/, so migrating existing files costs nothing:
-they can stay exactly where they are.
+Each user's files live under storage/<owner>/ (documents/, snippets/, cache/),
+where <owner> is a hash of the email of the user who owns the cause the
+document was uploaded for -- see owner_dir_name().
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from abc import ABC, abstractmethod
@@ -26,17 +27,38 @@ from typing import Optional
 # Storage keys: pure functions of a row's own natural-key columns.
 # ---------------------------------------------------------------------------
 
-def document_storage_key(document_id: str, doc_type: str) -> str:
-    """Key for an uploaded source document's bytes (documents.id/doc_type)."""
-    return f"storage/documents/{document_id}.{doc_type}"
+def owner_dir_name(email: str) -> str:
+    """The per-user folder name: the first 32 hex chars of the SHA-256 of the
+    lowercased email. It is computed once, when a document is uploaded, and
+    stored on the document's row (documents.storage_owner), so a later change
+    of email address never strands files. Each user's value is also kept in
+    users.storage_dir, set when the account is created."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:32]
 
 
-def snippet_storage_key(document_id: str, doc_type: str, filename: str) -> str:
+def _owner_root(owner: Optional[str]) -> str:
+    # `owner` is None only for a document nobody owns (nothing can reach it);
+    # those stay in the flat layout used before files were organised per user.
+    return f"storage/{owner}" if owner else "storage"
+
+
+def document_storage_key(document_id: str, doc_type: str, owner: Optional[str] = None) -> str:
+    """Key for an uploaded source document's bytes (documents.id/doc_type),
+    under the owner of the cause it was uploaded for."""
+    return f"{_owner_root(owner)}/documents/{document_id}.{doc_type}"
+
+
+def snippet_storage_key(document_id: str, doc_type: str, filename: str, owner: Optional[str] = None) -> str:
     """Key for a cropped snippet PNG (snippets.document_id + filename), with
-    doc_type folded into the folder name exactly as storage/snippets/ does
-    today (<doc_id>__<norm_type>/<filename>)."""
+    doc_type folded into the folder name (<doc_id>__<norm_type>/<filename>),
+    beside the document it was cropped from."""
     norm_type = "docx" if doc_type in ("doc", "docx") else "pdf"
-    return f"storage/snippets/{document_id}__{norm_type}/{filename}"
+    return f"{_owner_root(owner)}/snippets/{document_id}__{norm_type}/{filename}"
+
+
+def cache_storage_dir(owner: Optional[str] = None) -> str:
+    """Folder (relative to the storage root) for a user's docx->pdf render cache."""
+    return f"{_owner_root(owner)}/cache"
 
 
 # ---------------------------------------------------------------------------

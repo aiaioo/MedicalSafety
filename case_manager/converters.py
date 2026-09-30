@@ -20,7 +20,7 @@ def convert_to_pdf(src_path: Path, out_dir: Path) -> Path:
             "LibreOffice ('soffice') was not found on this machine, so Word "
             "documents can't be converted automatically. Install it with "
             "`brew install --cask libreoffice`, or convert the file to PDF "
-            "yourself and place it in storage/documents/ with the same base name "
+            "yourself and place it in the document's storage/<owner>/documents/ folder with the same base name "
             f"(e.g. {src_path.stem}.pdf)."
         )
 

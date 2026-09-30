@@ -34,7 +34,7 @@ Restart=on-failure
 RestartSec=3
 
 # Basic hardening -- this process only needs to read its own code/venv, read
-# and write storage/documents/ and storage/cache/ under WorkingDirectory, and talk to
+# and write under storage/ inside WorkingDirectory, and talk to
 # Postgres over the network/socket named in DATABASE_URL.
 NoNewPrivileges=true
 PrivateTmp=true

@@ -104,24 +104,25 @@ python3 app.py
 Serves on `http://127.0.0.1:5050` (macOS reserves port 5000 for AirPlay
 Receiver, hence the non-default port). Override with `PORT=8000 python3 app.py`.
 
-Open `http://127.0.0.1:5050/` to see documents found in `storage/documents/`, or go
+Open `http://127.0.0.1:5050/` to see your documents, or go
 straight to a page:
 
 ```
 http://127.0.0.1:5050/annotations?doc=sample&type=pdf&page=1
 ```
 
-A demo file `storage/documents/sample.pdf` is included (page 1 = real text layer,
-page 2 = image-only, simulating a scanned page).
 
 ## Adding documents
 
 Easiest: in the document editor (`/document`), use **File → Upload source…**, or
 `POST /api/documents/upload` (multipart `file` field) directly — either way the file is
-validated (must actually open as a PDF; other types are rejected) and saved into `storage/documents/` under a
+validated (must actually open as a PDF; other types are rejected) and saved under a
 slugified id, de-duplicated automatically if that id is already taken.
 
-You can also drop files into `storage/documents/` directly:
+Files are stored per user, under the owner of the cause they're uploaded for
+(`storage/<owner>/documents/`, where `<owner>` is the first 32 hex chars of the SHA-256 of
+that owner's lowercased email, recorded in `documents.storage_owner`). A file dropped
+into that folder by hand still needs a `documents` row to be visible. Supported types:
 - `<doc_id>.pdf` — used directly.
 - Only PDFs are supported as source documents. Word files (`.docx`/`.doc`) are not
   accepted: converting them needs LibreOffice, which isn't installed. Convert to PDF
@@ -158,9 +159,9 @@ metadata, reports, cases, causes, allegations) lives in PostgreSQL (see
 docstring — talks to the database or to these paths directly:
 
 ```
-storage/documents/<doc_id>.<ext>          source PDFs / Word docs (you add these)
-storage/cache/<doc_id>.pdf        Word -> PDF conversion cache (disposable, never in the database)
-storage/snippets/<doc_id>__<type>/*.png   extracted snippet images (row per file in the `snippets` table)
+storage/<owner>/documents/<doc_id>.<ext>          uploaded source PDFs
+storage/<owner>/cache/<doc_id>.pdf                Word -> PDF conversion cache (disposable, never in the database)
+storage/<owner>/snippets/<doc_id>__<type>/*.png   extracted snippet images (row per file in the `snippets` table)
 ```
 
 ## API

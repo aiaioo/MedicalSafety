@@ -21,6 +21,8 @@ storage/causes/*
 storage/allegations/*
 storage/doc_meta/*
 storage/documents/*
+# Per-user folders (storage/<32-hex owner hash>/{documents,snippets,cache}/)
+storage/????????????????????????????????/
 !storage/cache/.gitkeep
 !storage/annotations/.gitkeep
 !storage/snippets/.gitkeep
@@ -30,5 +32,4 @@ storage/documents/*
 !storage/allegations/.gitkeep
 !storage/doc_meta/.gitkeep
 !storage/documents/.gitkeep
-!storage/documents/sample.pdf
 .playwright-mcp/

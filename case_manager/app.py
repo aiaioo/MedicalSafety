@@ -481,7 +481,7 @@ def _source_doc_exists(doc_id, doc_type):
 
 def sanitize_hearing_doc_list(raw, allowed_doc_ids):
     """A hearing's submitted/received document list -- each entry links to an
-    uploaded source document (storage/documents/), not a report. Drop entries whose
+    uploaded source document (storage/<owner>/documents/), not a report. Drop entries whose
     document no longer exists (or isn't in `allowed_doc_ids`, see
     linkable_ids) rather than storing a dangling reference."""
     if not isinstance(raw, list):

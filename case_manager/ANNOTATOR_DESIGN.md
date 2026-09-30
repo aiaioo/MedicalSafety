@@ -26,14 +26,14 @@ deals with `<img>` + `<canvas>`, with zero PDF parsing/text-layer/font logic in 
 browser, and PDFs and converted Word docs are visually indistinguishable to the rest of
 the app once resolved.
 
-- **PDF source** (`storage/documents/<id>.pdf`): used directly.
-- **Word source** (`storage/documents/<id>.docx` or `.doc`): converted once via `convert_to_pdf`
+- **PDF source** (`storage/<owner>/documents/<id>.pdf`): used directly.
+- **Word source** (`storage/<owner>/documents/<id>.docx` or `.doc`): converted once via `convert_to_pdf`
   (`converters.py`, shells out to `soffice --headless --convert-to pdf`) into
-  `storage/cache/<id>.pdf`. Re-converted automatically if the source file's mtime is
+  `storage/<owner>/cache/<id>.pdf`. Re-converted automatically if the source file's mtime is
   newer than the cached PDF's, so editing the source Word doc and reloading picks up the
   change without any manual cache-busting. If LibreOffice (`soffice`/`libreoffice`) isn't
   on `PATH`, this raises a `ConversionError` with instructions (install LibreOffice, or
-  drop a same-named `.pdf` into `storage/documents/` yourself).
+  drop a same-named `.pdf` into `storage/<owner>/documents/` yourself).
 - `doc_id` is validated everywhere via `DOC_ID_RE` (`^[A-Za-z0-9_-]+$`) before touching
   the filesystem — the main defense against path traversal through a user-controllable
   id.
@@ -322,7 +322,7 @@ either discard it or write to a fresh in-memory buffer:
   re-validates each page's list through `sanitize_annotations` again (defense in depth —
   never trust that what's on disk still satisfies today's validation rules), draws it
   onto that page, and serializes the *whole modified-in-memory* document via
-  `d.tobytes(deflate=True)`. The file on disk under `storage/documents/` is untouched; only the
+  `d.tobytes(deflate=True)`. The file on disk under `storage/<owner>/documents/` is untouched; only the
   bytes returned to the client include the markup.
 - `/api/doc/<id>/render/<page>` (the plain page raster used for on-screen viewing)
   deliberately does **not** call `draw_annotations_on_page` — annotation markup is drawn

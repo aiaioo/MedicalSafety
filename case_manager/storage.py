@@ -45,7 +45,9 @@ import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
 from converters import ConversionError, convert_to_pdf
-from db.storage_backend import document_storage_key, get_storage_backend, snippet_storage_key
+from db.storage_backend import (
+    cache_storage_dir, document_storage_key, get_storage_backend, owner_dir_name, snippet_storage_key,
+)
 
 
 class StorageError(Exception):
@@ -158,11 +160,49 @@ _LINKED_IDS_SQL = """
 # Documents (metadata) + their bytes + the docx->pdf render cache
 # ---------------------------------------------------------------------------
 
-_CONVERSION_CACHE_DIR = Path(__file__).resolve().parent / "storage" / "cache"
+_BASE_DIR = Path(__file__).resolve().parent
 
 
-def _conversion_cache_path(document_id: str) -> Path:
-    return _CONVERSION_CACHE_DIR / f"{document_id}.pdf"
+def _conversion_cache_dir(owner: str | None) -> Path:
+    return _BASE_DIR / cache_storage_dir(owner)
+
+
+def _conversion_cache_path(document_id: str, owner: str | None) -> Path:
+    return _conversion_cache_dir(owner) / f"{document_id}.pdf"
+
+
+def _document_location(document_id: str) -> tuple[str, str | None] | None:
+    """(doc_type, storage owner folder) -- everything needed to build a
+    document's or its snippets' storage keys -- or None if there's no such
+    document."""
+    with _cursor() as cur:
+        cur.execute("SELECT doc_type, storage_owner FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+    return (row["doc_type"], row["storage_owner"]) if row else None
+
+
+def _cause_owner_dir(cur, link: tuple[str, str], fallback_user_id: int) -> str:
+    """The storage folder for a document uploaded for `link` = ("cause" |
+    "case", id): the owner of that cause's users.storage_dir (of the case's
+    cause). The uploader stands in only if the cause has no owner row."""
+    kind, target_id = link
+    cause_id = target_id
+    if kind == "case":
+        cur.execute("SELECT cause_id FROM cases WHERE id = %s", (target_id,))
+        row = cur.fetchone()
+        cause_id = row["cause_id"] if row else None
+    cur.execute(
+        """
+        SELECT u.storage_dir FROM user_causes uc JOIN users u ON u.id = uc.user_id
+        WHERE uc.cause_id = %s AND uc.role = 'owner' ORDER BY uc.created_at, u.id LIMIT 1
+        """,
+        (cause_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        cur.execute("SELECT storage_dir FROM users WHERE id = %s", (fallback_user_id,))
+        row = cur.fetchone()
+    return row["storage_dir"]
 
 
 def list_documents(user_id: int) -> list[dict]:
@@ -214,12 +254,16 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
     """Registers a freshly uploaded document: writes its bytes via the
     storage backend, then -- in one transaction -- its row (title defaults
     to its own id, matching the old doc_meta fallback), its uploader's
-    ownership, and its first association, `link` = ("cause" | "case", id)."""
-    get_storage_backend().write_bytes(document_storage_key(document_id, doc_type), data)
+    ownership, and its first association, `link` = ("cause" | "case", id).
+    The bytes go under the owner of that cause (see _cause_owner_dir), a
+    folder fixed on the row from then on."""
+    with _cursor() as cur:
+        owner = _cause_owner_dir(cur, link, owner_id)
+    get_storage_backend().write_bytes(document_storage_key(document_id, doc_type, owner), data)
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO documents (id, doc_type, title) VALUES (%s, %s, %s)",
-            (document_id, doc_type, document_id),
+            "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
+            (document_id, doc_type, document_id, owner),
         )
         _grant(cur, owner_id, "source", document_id, "owner")
         _link(cur, "source", document_id, *link)
@@ -230,9 +274,10 @@ def delete_document(document_id: str) -> None:
     cache entry). Refused while it has annotations or snippets, is linked
     to a hearing, is the source of a report, or is in an annexure -- deleting it would
     silently cut those references."""
-    doc_type = get_document_type(document_id)
-    if doc_type is None:
+    location = _document_location(document_id)
+    if location is None:
         return
+    doc_type, owner = location
     with _cursor() as cur:
         if not _lock(cur, "documents", document_id):
             return
@@ -250,30 +295,33 @@ def delete_document(document_id: str) -> None:
     # The row goes first: if that fails nothing is lost, and if the file
     # delete fails afterwards the worst case is a stray file, never a row
     # whose file is missing.
-    get_storage_backend().delete(document_storage_key(document_id, doc_type))
-    _conversion_cache_path(document_id).unlink(missing_ok=True)
+    get_storage_backend().delete(document_storage_key(document_id, doc_type, owner))
+    _conversion_cache_path(document_id, owner).unlink(missing_ok=True)
 
 
 def get_document_pdf_bytes(document_id: str) -> bytes:
     """The document's content as PDF bytes -- straight from storage for a
     native PDF, or converted-and-cached (LibreOffice, run at most once per
     document since uploads are never replaced in place) for a Word doc."""
-    doc_type = get_document_type(document_id)
-    if doc_type is None:
+    location = _document_location(document_id)
+    if location is None:
         raise StorageError(f"No document with id {document_id!r}")
+    doc_type, owner = location
 
     backend = get_storage_backend()
     if doc_type == "pdf":
-        return backend.read_bytes(document_storage_key(document_id, "pdf"))
+        return backend.read_bytes(document_storage_key(document_id, "pdf", owner))
 
-    cache_path = _conversion_cache_path(document_id)
+    cache_dir = _conversion_cache_dir(owner)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = _conversion_cache_path(document_id, owner)
     if not cache_path.exists():
-        source_bytes = backend.read_bytes(document_storage_key(document_id, doc_type))
+        source_bytes = backend.read_bytes(document_storage_key(document_id, doc_type, owner))
         with tempfile.TemporaryDirectory() as tmp_dir:
             source_path = Path(tmp_dir) / f"{document_id}.{doc_type}"
             source_path.write_bytes(source_bytes)
             try:
-                converted = convert_to_pdf(source_path, _CONVERSION_CACHE_DIR)
+                converted = convert_to_pdf(source_path, cache_dir)
             except ConversionError as exc:
                 raise StorageError(str(exc)) from exc
             if converted != cache_path:
@@ -359,13 +407,14 @@ def list_snippets(document_id: str, page: int | None = None) -> list[dict]:
 
 
 def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png_bytes: bytes) -> dict:
-    doc_type = get_document_type(document_id)
-    if doc_type is None:
+    location = _document_location(document_id)
+    if location is None:
         raise StorageError(f"No document with id {document_id!r}")
+    doc_type, owner = location
 
     snippet_id = uuid.uuid4().hex[:12]
     filename = f"p{page}_{snippet_id}.png"
-    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, filename), png_bytes)
+    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, filename, owner), png_bytes)
 
     created_at = datetime.now(timezone.utc).isoformat()
     with _cursor() as cur:
@@ -385,10 +434,11 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
 def replace_snippet_image(document_id: str, snippet: dict, annotated: bool, png_bytes: bytes) -> None:
     """Overwrites an existing snippet's PNG in place (same filename, so the
     URLs reports embed keep working) and refreshes its annotated flag."""
-    doc_type = get_document_type(document_id)
-    if doc_type is None:
+    location = _document_location(document_id)
+    if location is None:
         raise StorageError(f"No document with id {document_id!r}")
-    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, snippet["filename"]), png_bytes)
+    doc_type, owner = location
+    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, snippet["filename"], owner), png_bytes)
     with _cursor() as cur:
         cur.execute("UPDATE snippets SET annotated = %s WHERE id = %s", (annotated, snippet["id"]))
 
@@ -405,18 +455,20 @@ def delete_snippet(document_id: str, snippet_id: str) -> bool:
                        "Cannot delete a snippet that is used in a report")
         cur.execute("DELETE FROM snippets WHERE id = %s", (snippet_id,))
 
-    doc_type = get_document_type(document_id)
-    if doc_type is not None:
-        get_storage_backend().delete(snippet_storage_key(document_id, doc_type, row["filename"]))
+    location = _document_location(document_id)
+    if location is not None:
+        doc_type, owner = location
+        get_storage_backend().delete(snippet_storage_key(document_id, doc_type, row["filename"], owner))
     return True
 
 
 def read_snippet_bytes(document_id: str, filename: str) -> bytes | None:
-    doc_type = get_document_type(document_id)
-    if doc_type is None:
+    location = _document_location(document_id)
+    if location is None:
         return None
+    doc_type, owner = location
     backend = get_storage_backend()
-    key = snippet_storage_key(document_id, doc_type, filename)
+    key = snippet_storage_key(document_id, doc_type, filename, owner)
     if not backend.exists(key):
         return None
     return backend.read_bytes(key)
@@ -1135,8 +1187,8 @@ def create_user(email: str, password_hash: str) -> dict | None:
     try:
         with _cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id, email, password_hash",
-                (email, password_hash),
+                "INSERT INTO users (email, password_hash, storage_dir) VALUES (%s, %s, %s) RETURNING id, email, password_hash",
+                (email, password_hash, owner_dir_name(email)),
             )
             return dict(cur.fetchone())
     except psycopg2.errors.UniqueViolation:
