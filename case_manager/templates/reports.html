@@ -132,6 +132,8 @@
         <button type="button" id="customLevelsBtn">Custom levels&hellip;</button>
       </div>
     </span>
+    <span class="toolbar-sep"></span>
+    <a class="toolbar-link" id="annexureLink" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Create annexure</a>
     </div>
   </div>
   <style id="dynamicListStyles"></style>
@@ -163,7 +165,6 @@
           </select>
         </label>
         <a class="btn" id="annotateLink" href="#" style="display:none">Annotate documents &raquo;</a>
-        <a class="btn" id="annexureLink" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}" style="display: table; margin-top: 6px;">Create annexure</a>
       </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
