@@ -136,10 +136,12 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scann
 # Behind a reverse proxy every request arrives from the proxy's address, so
 # take the client's from X-Forwarded-For -- but only as many proxies' worth as
 # TRUSTED_PROXY_HOPS says (0 = none, e.g. local development), since a client
-# can put anything it likes in that header.
+# can put anything it likes in that header. X-Forwarded-Proto is trusted the
+# same way so absolute links (e.g. share-key URLs, built from the domain the
+# visitor used) come out as https://, not http://.
 _proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
 if _proxy_hops:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops, x_proto=_proxy_hops)
 # Sign-up/sign-in/sign-out, plus a before-request gate that keeps every other
 # route behind a signed-in session and sets g.user -- see auth.py.
 app.register_blueprint(auth.bp)
