@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My account</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  .account-page { max-width: 560px; margin: 24px auto; padding: 0 20px; }
+  .account-page section { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 4px 19px 16px; margin-bottom: 24px; }
+  .account-photo { display: flex; align-items: center; gap: 16px; margin: 14px 0; }
+  .account-photo img, .account-photo .placeholder { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: #e6e9f0; }
+  .ok-message { color: #1d6b34; }
+</style>
+</head>
+<body>
+<header class="docbar" style="position: relative;">
+  <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+  <div class="docbar-center"><span class="doc-name doc-name-static">My account</span></div>
+</header>
+
+<main class="account-page">
+  <section>
+    <h2>Details</h2>
+    <p class="modal-hint">Signed in as {{ g.user.email }}</p>
+    <div class="account-photo">
+      <img id="photoImg" alt="Your photo"{% if not profile.has_photo %} hidden{% endif %} src="{{ url_for('account_photo') }}{% if profile.has_photo %}?v=0{% endif %}">
+      <div class="placeholder" id="photoPlaceholder"{% if profile.has_photo %} hidden{% endif %}></div>
+      <div>
+        <input type="file" id="photoFile" accept="image/*" hidden>
+        <button type="button" class="btn" id="photoChoose">Choose photo</button>
+        <button type="button" class="btn" id="photoRemove"{% if not profile.has_photo %} hidden{% endif %}>Remove</button>
+      </div>
+    </div>
+    <form id="detailsForm" autocomplete="off">
+      <label class="modal-field">Name
+        <input type="text" id="fullName" maxlength="100" value="{{ profile.full_name }}">
+      </label>
+      <label class="modal-field">City
+        <input type="text" id="city" maxlength="100" value="{{ profile.city }}">
+      </label>
+      <label class="modal-field">Country
+        <input type="text" id="country" maxlength="100" value="{{ profile.country }}">
+      </label>
+      <p class="error-message" id="detailsError" role="alert" style="display:none"></p>
+      <p class="ok-message" id="detailsOk" style="display:none">Saved.</p>
+      <button type="submit" class="btn">Save details</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Password</h2>
+    <form id="passwordForm" autocomplete="off">
+      <label class="modal-field">Current password
+        <input type="password" id="oldPassword" autocomplete="current-password" required>
+      </label>
+      <label class="modal-field">New password
+        <input type="password" id="newPassword" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label class="modal-field">Repeat new password
+        <input type="password" id="confirmPassword" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label class="modal-field">Type the characters you see
+        <span class="collab-captcha-row">
+          <img class="auth-captcha" id="captchaImg" alt="Captcha: distorted letters and digits" width="200" height="70">
+          <button type="button" class="btn" id="captchaRefresh" title="Show a different image">&#8635;</button>
+        </span>
+        <input type="text" id="captchaAnswer" placeholder="Type the text shown in the image above" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" required>
+      </label>
+      <p class="error-message" id="passwordError" role="alert" style="display:none"></p>
+      <p class="ok-message" id="passwordOk" style="display:none">Password changed. Other devices have been signed out.</p>
+      <button type="submit" class="btn">Change password</button>
+    </form>
+  </section>
+</main>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  async function api(url, method, body, raw) {
+    const opts = {method: method || "GET"};
+    if (raw) opts.body = raw;
+    else if (body) { opts.headers = {"Content-Type": "application/json"}; opts.body = JSON.stringify(body); }
+    const r = await fetch(url, opts);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+  function show(el, msg) { el.textContent = msg; el.style.display = msg ? "" : "none"; }
+
+  // Details
+  $("detailsForm").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    show($("detailsError"), ""); $("detailsOk").style.display = "none";
+    try {
+      await api({{ url_for('api_account_details')|tojson }}, "PUT",
+        {full_name: $("fullName").value, city: $("city").value, country: $("country").value});
+      $("detailsOk").style.display = "";
+    } catch (e) { show($("detailsError"), e.message); }
+  });
+
+  // Photo
+  function setPhoto(on) {
+    $("photoImg").hidden = !on; $("photoPlaceholder").hidden = on; $("photoRemove").hidden = !on;
+    if (on) $("photoImg").src = {{ url_for('account_photo')|tojson }} + "?v=" + Date.now();
+  }
+  $("photoChoose").addEventListener("click", () => $("photoFile").click());
+  $("photoFile").addEventListener("change", async () => {
+    const file = $("photoFile").files[0];
+    if (!file) return;
+    show($("detailsError"), "");
+    const fd = new FormData(); fd.append("photo", file);
+    try { await api({{ url_for('api_account_photo')|tojson }}, "POST", null, fd); setPhoto(true); }
+    catch (e) { show($("detailsError"), e.message); }
+    $("photoFile").value = "";
+  });
+  $("photoRemove").addEventListener("click", async () => {
+    try { await api({{ url_for('api_account_photo')|tojson }}, "DELETE"); setPhoto(false); }
+    catch (e) { show($("detailsError"), e.message); }
+  });
+
+  // Password
+  let captchaId = "";
+  async function loadCaptcha() {
+    $("captchaAnswer").value = "";
+    try {
+      const c = await api({{ url_for('api_collaborations_captcha')|tojson }});
+      captchaId = c.id; $("captchaImg").src = c.image;
+    } catch (e) { show($("passwordError"), e.message); }
+  }
+  $("captchaRefresh").addEventListener("click", loadCaptcha);
+  $("passwordForm").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    show($("passwordError"), ""); $("passwordOk").style.display = "none";
+    if ($("newPassword").value !== $("confirmPassword").value) {
+      show($("passwordError"), "The two new passwords don't match."); return;
+    }
+    try {
+      await api({{ url_for('api_account_password')|tojson }}, "POST", {
+        old_password: $("oldPassword").value, new_password: $("newPassword").value,
+        confirm_password: $("confirmPassword").value, captcha_id: captchaId, captcha_answer: $("captchaAnswer").value});
+      $("passwordForm").reset();
+      $("passwordOk").style.display = "";
+    } catch (e) { show($("passwordError"), e.message); }
+    loadCaptcha(); // each challenge works once, win or lose
+  });
+  loadCaptcha();
+})();
+</script>
+</body>
+</html>

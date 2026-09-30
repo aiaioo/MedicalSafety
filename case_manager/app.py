@@ -17,6 +17,7 @@ from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
+from PIL import Image, ImageOps, UnidentifiedImageError
 from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -1577,6 +1578,77 @@ def api_set_show_advanced():
         return jsonify({"error": "show must be true or false"}), 400
     storage.set_show_advanced(g.user.id, show)
     return jsonify({"show": show})
+
+
+ACCOUNT_FIELD_MAX_CHARS = 100
+PHOTO_MAX_PIXELS = 512
+
+
+@app.route("/account")
+def account_view():
+    return render_template("account.html", profile=storage.get_profile(g.user.id))
+
+
+@app.route("/account/photo")
+def account_photo():
+    photo = storage.get_photo(g.user.id)
+    if photo is None:
+        abort(404)
+    return Response(photo, mimetype="image/jpeg", headers={"Cache-Control": "private, no-cache"})
+
+
+@app.route("/api/account/details", methods=["PUT"])
+def api_account_details():
+    body = request.get_json(silent=True) or {}
+    values = []
+    for field in ("full_name", "city", "country"):
+        value = body.get(field, "")
+        if not isinstance(value, str) or len(value.strip()) > ACCOUNT_FIELD_MAX_CHARS:
+            raise DocumentError(f"Each detail must be at most {ACCOUNT_FIELD_MAX_CHARS} characters.", 400)
+        values.append(value.strip())
+    storage.set_profile(g.user.id, *values)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/photo", methods=["POST", "DELETE"])
+def api_account_photo():
+    if request.method == "DELETE":
+        storage.set_photo(g.user.id, None)
+        return jsonify({"ok": True})
+    upload = request.files.get("photo")
+    if upload is None:
+        raise DocumentError("Please choose a photo.", 400)
+    try:
+        img = Image.open(upload.stream)
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise DocumentError("That file isn't an image we can read. Please choose a JPEG or PNG photo.", 400)
+    img.thumbnail((PHOTO_MAX_PIXELS, PHOTO_MAX_PIXELS))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=88)  # re-encoding also drops any metadata or embedded payload
+    storage.set_photo(g.user.id, out.getvalue())
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/password", methods=["POST"])
+def api_account_password():
+    body = request.get_json(silent=True) or {}
+    old, new, confirm = (str(body.get(k) or "") for k in ("old_password", "new_password", "confirm_password"))
+    # The challenge is checked (and used up) first, so old passwords can't be guessed without solving one per try.
+    if not auth.captcha_passed(str(body.get("captcha_id") or ""), str(body.get("captcha_answer") or "")):
+        raise DocumentError("The characters you typed didn't match the image. Please try the new one.", 400)
+    if not g.user.check_password(old[:auth.PASSWORD_MAX_CHARS]):
+        raise DocumentError("Your current password is incorrect.", 403)
+    if len(new) < auth.PASSWORD_MIN_CHARS:
+        raise DocumentError(f"Your new password must be at least {auth.PASSWORD_MIN_CHARS} characters long.", 400)
+    if len(new) > auth.PASSWORD_MAX_CHARS:
+        raise DocumentError("That password is too long.", 400)
+    if new != confirm:
+        raise DocumentError("The two new passwords don't match.", 400)
+    storage.set_password_hash(
+        g.user.id, auth.User.hash_password(new), auth._hash_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/annotations")

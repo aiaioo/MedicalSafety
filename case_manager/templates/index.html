@@ -18,7 +18,7 @@
 </head>
 <body>
 <header class="docbar" style="position: relative;">
-  <span class="account-bar">Signed in as {{ g.user.email }}</span>
+  <span class="account-bar">Signed in as {{ g.user.email }}{% if g.user and not g.user.is_guest %} &middot; <a href="{{ url_for('account_view') }}">My account</a>{% endif %}</span>
   <div class="docbar-center"><span class="doc-name doc-name-static">Case Plan</span>{% include "_cause_picker.html" %}</div>
   <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
     {% include "_notifications.html" %}

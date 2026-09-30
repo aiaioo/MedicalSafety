@@ -4,6 +4,7 @@ python-docx>=1.1
 
 # Image captcha on the sign-up form (see auth.py). Pulls in Pillow.
 captcha>=0.7
+Pillow
 
 # PostgreSQL driver -- used by storage.py (the app's persistence layer) and
 # by db/migrate_json_to_postgres.py.

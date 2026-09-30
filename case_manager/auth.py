@@ -51,7 +51,8 @@ KEY_SESSION_LIFETIME = timedelta(days=7)
 GUEST_BLOCKED_ENDPOINTS = {
     "index", "collaborations_view", "api_collaborations", "api_collaborations_captcha",
     "api_collaborations_seen", "api_collaboration_item", "api_collaboration_accept",
-    "api_collaboration_access", "api_set_show_advanced", "api_default_cause", "api_keys", "api_key_item",
+    "api_collaboration_access", "api_set_show_advanced", "api_default_cause",
+    "account_view", "account_photo", "api_account_details", "api_account_photo", "api_account_password", "api_keys", "api_key_item",
 }
 GUEST_BLOCKED_POSTS = {
     "api_causes", "api_upload_document", "api_reports", "api_allegation_cases", "api_allegations",

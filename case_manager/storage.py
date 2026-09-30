@@ -1023,6 +1023,45 @@ def set_show_advanced(user_id: int, show: bool) -> None:
         cur.execute("UPDATE users SET show_advanced = %s WHERE id = %s", (show, user_id))
 
 
+def get_profile(user_id: int) -> dict:
+    """{"full_name", "city", "country", "has_photo"} for the account page."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT full_name, city, country, photo IS NOT NULL AS has_photo FROM users WHERE id = %s",
+            (user_id,),
+        )
+        return dict(cur.fetchone())
+
+
+def set_profile(user_id: int, full_name: str, city: str, country: str) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE users SET full_name = %s, city = %s, country = %s WHERE id = %s",
+            (full_name, city, country, user_id),
+        )
+
+
+def get_photo(user_id: int) -> bytes | None:
+    with _cursor() as cur:
+        cur.execute("SELECT photo FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    return bytes(row["photo"]) if row and row["photo"] is not None else None
+
+
+def set_photo(user_id: int, photo: bytes | None) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE users SET photo = %s WHERE id = %s", (photo, user_id))
+
+
+def set_password_hash(user_id: int, password_hash: str, keep_token_hash: str) -> None:
+    """Saves a new password hash and signs the user out everywhere else."""
+    with _cursor() as cur:
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
+        cur.execute(
+            "DELETE FROM user_sessions WHERE user_id = %s AND token_hash <> %s", (user_id, keep_token_hash),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Allegations (+ inculpatory/exculpatory evidence, + "to prove" items each
 # optionally linking some of that evidence, + linked cases)
