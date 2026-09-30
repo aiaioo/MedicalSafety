@@ -20,6 +20,7 @@ storage/cases/*
 storage/causes/*
 storage/allegations/*
 storage/doc_meta/*
+storage/documents/*
 !storage/cache/.gitkeep
 !storage/annotations/.gitkeep
 !storage/snippets/.gitkeep
@@ -28,4 +29,6 @@ storage/doc_meta/*
 !storage/causes/.gitkeep
 !storage/allegations/.gitkeep
 !storage/doc_meta/.gitkeep
+!storage/documents/.gitkeep
+!storage/documents/sample.pdf
 .playwright-mcp/

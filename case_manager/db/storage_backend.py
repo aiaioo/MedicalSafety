@@ -9,7 +9,7 @@ S3) later is then a one-line change (get_storage_backend), never a data
 migration, because no stored value has to change.
 
 Today's key layout intentionally mirrors the existing on-disk layout under
-documents/ and storage/snippets/, so migrating existing files costs nothing:
+storage/documents/ and storage/snippets/, so migrating existing files costs nothing:
 they can stay exactly where they are.
 """
 
@@ -28,7 +28,7 @@ from typing import Optional
 
 def document_storage_key(document_id: str, doc_type: str) -> str:
     """Key for an uploaded source document's bytes (documents.id/doc_type)."""
-    return f"documents/{document_id}.{doc_type}"
+    return f"storage/documents/{document_id}.{doc_type}"
 
 
 def snippet_storage_key(document_id: str, doc_type: str, filename: str) -> str:
@@ -77,7 +77,7 @@ def _validate_key(key: str) -> None:
 
 class LocalFilesystemStorage(StorageBackend):
     """Backend used today: files live under a root directory on local disk
-    (the project's own documents/ and storage/ folders)."""
+    (the project's own storage/ folder)."""
 
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -167,7 +167,7 @@ def get_storage_backend() -> StorageBackend:
     switching backends never requires a code change at call sites.
 
     STORAGE_BACKEND=local (default): STORAGE_ROOT (default: the project
-    directory containing documents/ and storage/) on local disk.
+    directory containing storage/) on local disk.
     STORAGE_BACKEND=s3: STORAGE_S3_BUCKET (+ optional STORAGE_S3_PREFIX).
     """
     global _backend
