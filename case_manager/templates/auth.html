@@ -33,6 +33,12 @@
              spellcheck="false" maxlength="10" required>
     </label>
     {% endif %}
+    {% if mode == 'signup' %}
+    <label class="auth-terms">
+      <input type="checkbox" name="accept_terms" value="1" required>
+      <span>I accept the <a href="#" id="terms-link">terms and conditions</a></span>
+    </label>
+    {% endif %}
     {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
     <div class="modal-actions">
       <button type="submit" class="btn">{{ 'Sign up' if mode == 'signup' else 'Sign in' }}</button>
@@ -46,5 +52,33 @@
     </p>
   </form>
 </div>
+{% if mode == 'signup' %}
+<div class="modal-overlay" id="terms-overlay" role="dialog" aria-modal="true" aria-labelledby="terms-title">
+  <div class="modal modal-wide terms-modal">
+    <h3 id="terms-title">Terms and conditions</h3>
+    <div class="terms-body">
+      <ol>
+        <li><strong>As is.</strong> {{ site_name }} (the "Software") is offered "as is" and "as available", without warranties of any kind. No claim is made that it is suitable for any purpose, including any medical, legal, regulatory or professional use, or that it is accurate, complete, secure or uninterrupted.</li>
+        <li><strong>Indemnity.</strong> By using the Software you agree to indemnify the provider of the Software and hold them blameless against any claim, loss or damage you or anyone else may suffer as a result of your use of it.</li>
+        <li><strong>Keep backups.</strong> You are asked to keep backups of all your data, both in local storage on your own devices and on cloud drives. The provider is not responsible for any loss or corruption of data.</li>
+        <li><strong>Changes.</strong> These terms may change from time to time. Continued use of the Software after a change means you accept the updated terms.</li>
+        <li><strong>Disputes.</strong> These terms are governed by the laws of India. Any dispute arising from them or from your use of the Software falls under the jurisdiction of the courts in Bangalore and must be resolved by arbitration.</li>
+      </ol>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn" id="terms-close">Close</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  const overlay = document.getElementById("terms-overlay");
+  const open = (e) => { e.preventDefault(); overlay.classList.add("open"); };
+  const close = () => overlay.classList.remove("open");
+  document.getElementById("terms-link").addEventListener("click", open);
+  document.getElementById("terms-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+})();
+</script>
+{% endif %}
 </body>
 </html>

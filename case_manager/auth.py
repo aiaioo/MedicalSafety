@@ -341,6 +341,8 @@ def signup():
         error = "That password is too long."
     elif password != confirm:
         error = "The two passwords don't match."
+    elif not request.form.get("accept_terms"):
+        error = "Please accept the terms and conditions to create an account."
     elif not captcha_ok:
         error = "The characters you typed didn't match the image. Please try the new one."
     if error:
