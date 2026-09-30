@@ -577,6 +577,9 @@ import { Pagination, repaginate } from "./pagination.js";
     titleInput.readOnly = true;
     saveBtn.disabled = true;
     sourceSelect.disabled = true;
+    document.querySelectorAll(".annex-numbering select, .annex-numbering input, .annex-numbering button").forEach((el) => {
+      el.disabled = true;
+    });
     // Grey out everything in the File menu except the downloads.
     fileMenuDropdown.querySelectorAll("button").forEach((b) => {
       b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn;
