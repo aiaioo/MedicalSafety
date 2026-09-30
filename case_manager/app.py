@@ -1555,6 +1555,7 @@ def page_view():
         doc_type=raw_type,
         norm_type=norm_type,
         doc_title=storage.get_document_title(doc_id),
+        can_edit=has_role("source", doc_id, "editor"),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
         page_count=page_count,

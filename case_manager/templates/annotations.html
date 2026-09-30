@@ -47,6 +47,8 @@
 <script src="{{ url_for('static', filename='annotations-landing.js') }}"></script>
 {% else %}
 <div id="app"
+     class="{{ '' if can_edit else 'doc-readonly' }}"
+     data-can-edit="{{ '1' if can_edit else '' }}"
      data-doc="{{ doc_id }}"
      data-type="{{ doc_type }}"
      data-page="{{ page }}"

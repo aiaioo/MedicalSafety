@@ -15,6 +15,9 @@
   const downloadPagesUrl = appEl.dataset.downloadPagesUrl;
   const downloadOriginalUrl = appEl.dataset.downloadOriginalUrl;
   const titleUrl = appEl.dataset.titleUrl;
+  // Viewers can look at a document and its annotations but not change them
+  // (the server rejects their saves with a 403).
+  const canEdit = !!appEl.dataset.canEdit;
 
   const container = document.getElementById("viewerContainer");
   const statusMsg = document.getElementById("statusMsg");
@@ -689,7 +692,7 @@
     }
 
     canvas.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return; // left/primary button only; right-click is handled via contextmenu
+      if (!canEdit || e.button !== 0) return; // left/primary button only; right-click is handled via contextmenu
       setCurrentPage(pageNum);
       if (mode === null) {
         const [x, y] = clientToFrac(canvas, e.clientX, e.clientY);
@@ -772,7 +775,7 @@
       else if (mode === "freehand") finishFreehand();
     });
     canvas.addEventListener("dblclick", (e) => {
-      if (mode !== null) return;
+      if (!canEdit || mode !== null) return;
       const [x, y] = clientToFrac(canvas, e.clientX, e.clientY);
       const idx = hitTestAnnotations(canvas, state.annotations, x, y);
       const a = idx >= 0 ? state.annotations[idx] : null;
@@ -792,6 +795,7 @@
 
     canvas.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      if (!canEdit) return;
       setCurrentPage(pageNum);
       const [x, y] = clientToFrac(canvas, e.clientX, e.clientY);
       const idx = hitTestAnnotations(canvas, state.annotations, x, y);
@@ -948,7 +952,7 @@
 
   // ---- selection deletion (Delete/Backspace key, right-click menu) ----
   function deleteSelected() {
-    if (!selected) return;
+    if (!canEdit || !selected) return;
     const { controller, index } = selected;
     if (!controller.state.annotations[index]) return;
     controller.state.annotations.splice(index, 1);
@@ -1350,6 +1354,12 @@
   }
 
   // ---- boot ----
+  if (!canEdit) {
+    titleInput.readOnly = true;
+    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #pageSetupBtn").forEach((el) => {
+      el.disabled = true;
+    });
+  }
   setMode(null);
   (async () => {
     await Promise.all([loadInfo(), loadAllAnnotations()]);

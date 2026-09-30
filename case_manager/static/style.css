@@ -895,3 +895,12 @@ a.tag:hover { background: #d7deec; }
 #docApp.report-readonly .insert-snippet,
 #docApp.report-readonly #saveBtn,
 #docApp.report-readonly #saveStatus { display: none; }
+
+/* Annotations page for viewers: no editing controls, no snippet Delete. */
+#app.doc-readonly .del-snippet,
+#app.doc-readonly #saveBtn,
+#app.doc-readonly .mode-group,
+#app.doc-readonly .color-pop-wrap,
+#app.doc-readonly #undoBtn,
+#app.doc-readonly #clearBtn,
+#app.doc-readonly #modeHint { display: none; }
