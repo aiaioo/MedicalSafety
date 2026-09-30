@@ -139,7 +139,7 @@
           {% for w in websites %}
           <optgroup label="{{ w.name }}">
             {% for s in w.sections %}
-            <option value="{{ s.id }}">{{ s.title }}</option>
+            <option value="{{ s.id }}">{{ s.title }}{{ " (shown in the public page's sign-in panel)" if s.kind == "legal_tools" }}</option>
             {% endfor %}
           </optgroup>
           {% endfor %}

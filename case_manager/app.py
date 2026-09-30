@@ -1567,6 +1567,10 @@ def inject_notifications():
 
 @app.route("/")
 def index():
+    # A signed-out visitor lands on the public content aggregation page
+    # instead of being sent to sign in -- see auth.PUBLIC_ENDPOINTS.
+    if g.user is None:
+        return redirect(url_for("public_view"))
     return render_template("index.html")
 
 
@@ -3119,7 +3123,11 @@ def public_view():
     site = current_website()
     if site is None:
         raise DocumentError("No website is configured yet", 404)
-    return render_template("public.html", website=site, sections=storage.public_sections(site["id"]))
+    return render_template(
+        "public.html", website=site,
+        sections=storage.public_sections(site["id"]),
+        legal_tools=storage.public_legal_tools_section(site["id"]),
+    )
 
 
 @app.route("/article/<article_id>")

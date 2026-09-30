@@ -41,10 +41,12 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 # the sign-in page (or, for /api/ routes, answers 401).
 PUBLIC_ENDPOINTS = {
     "auth.signin", "auth.signup", "auth.unlock", "static",
-    # The content aggregation page and the articles on it are the one part
-    # of the site meant for anyone, signed in or not -- see app.py's
-    # public_view/public_article/api_article_image.
-    "public_view", "public_article", "api_article_image",
+    # "index" itself redirects a signed-out visitor to public_view (see
+    # app.py's index()) rather than to sign-in, so it has to be reachable
+    # signed out too. The content aggregation page and the articles on it
+    # are the one part of the site meant for anyone, signed in or not --
+    # see app.py's public_view/public_article/api_article_image.
+    "index", "public_view", "public_article", "api_article_image",
 }
 
 # Key holders (people using a secret key without an account) have no users

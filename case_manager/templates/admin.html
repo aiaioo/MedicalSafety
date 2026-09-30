@@ -85,6 +85,7 @@
           {% for s in w.sections %}
           <div class="section-row" data-section-id="{{ s.id }}">
             <input type="text" class="section-title" value="{{ s.title }}">
+            {% if s.kind == "legal_tools" %}<span class="modal-hint" style="margin:0;">(top-right sign-in panel)</span>{% endif %}
             <button type="button" class="btn section-save">Save</button>
             <button type="button" class="btn card-delete-btn section-delete" title="Delete section">&#10005;</button>
           </div>

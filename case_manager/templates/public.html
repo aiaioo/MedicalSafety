@@ -7,7 +7,9 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
-  .public-page { max-width: 880px; margin: 0 auto; padding: 0 20px 48px; }
+  .public-page { max-width: 1040px; margin: 0 auto; padding: 0 20px 48px; }
+  .public-layout { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  .public-main { flex: 1; min-width: 0; }
   .public-hero { padding: 48px 0 28px; }
   .public-hero h1 { font-size: 30px; margin: 0 0 6px; }
   .public-hero p { color: #6b7280; margin: 0; }
@@ -20,6 +22,28 @@
   .public-article-card .title { font-weight: 600; margin-bottom: 6px; }
   .public-article-card .meta { font-size: 12px; color: #8a92a5; }
   .public-empty { color: #8a92a5; }
+
+  /* The "legal tools" panel: pinned to the top of the right-hand column,
+     never stretched to the full column height. */
+  .legal-tools { width: 260px; flex-shrink: 0; margin-top: 48px; background: #fcfcfd;
+    border: 1px solid #d5dae3; border-radius: 12px; padding: 18px 20px; }
+  .legal-tools h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    color: #46536b; margin: 0 0 14px; }
+  .legal-tools-signin .modal-field { display: block; margin: 10px 0; font-size: 13px; color: #46536b; }
+  .legal-tools-signin input { width: 100%; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
+    box-sizing: border-box; margin-top: 4px; }
+  .legal-tools-signin .btn { width: 100%; margin-top: 8px; }
+  .legal-tools-signup { font-size: 12px; margin: 10px 0 0; }
+  .legal-tools-signedin p { font-size: 13px; color: #46536b; margin: 0 0 10px; }
+  .legal-tools-articles { margin-top: 16px; border-top: 1px solid #e0e2e8; padding-top: 12px;
+    display: flex; flex-direction: column; gap: 8px; }
+  .legal-tools-article { font-size: 13px; color: #2266dd; text-decoration: none; }
+  .legal-tools-article:hover { text-decoration: underline; }
+
+  @media (max-width: 720px) {
+    .public-layout { flex-direction: column; }
+    .legal-tools { width: 100%; margin-top: 0; order: -1; }
+  }
 </style>
 </head>
 <body>
@@ -32,31 +56,65 @@
 </header>
 
 <main class="public-page">
-  <div class="public-hero">
-    <h1>{{ website.name }}</h1>
-    <p>Articles and guides from {{ website.name }}.</p>
-  </div>
+  <div class="public-layout">
+    <div class="public-main">
+      <div class="public-hero">
+        <h1>{{ website.name }}</h1>
+        <p>Articles and guides from {{ website.name }}.</p>
+      </div>
 
-  {% set any_articles = sections | selectattr("articles") | list %}
-  {% if not any_articles %}
-  <p class="public-empty">Nothing has been published here yet.</p>
-  {% endif %}
+      {% set any_articles = sections | selectattr("articles") | list %}
+      {% if not any_articles %}
+      <p class="public-empty">Nothing has been published here yet.</p>
+      {% endif %}
 
-  {% for section in sections %}
-  {% if section.articles %}
-  <section class="public-section">
-    <h2>{{ section.title }}</h2>
-    <div class="public-article-grid">
-      {% for a in section.articles %}
-      <a class="public-article-card" href="{{ url_for('public_article', article_id=a.id) }}">
-        <div class="title">{{ a.title }}</div>
-        <div class="meta">Updated {{ a.updated_at[:10] }}</div>
-      </a>
+      {% for section in sections %}
+      {% if section.articles %}
+      <section class="public-section">
+        <h2>{{ section.title }}</h2>
+        <div class="public-article-grid">
+          {% for a in section.articles %}
+          <a class="public-article-card" href="{{ url_for('public_article', article_id=a.id) }}">
+            <div class="title">{{ a.title }}</div>
+            <div class="meta">Updated {{ a.updated_at[:10] }}</div>
+          </a>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
       {% endfor %}
     </div>
-  </section>
-  {% endif %}
-  {% endfor %}
+
+    <aside class="legal-tools">
+      <h2>{{ legal_tools.title if legal_tools else "Legal tools" }}</h2>
+      {% if g.user and not g.user.is_guest %}
+      <div class="legal-tools-signedin">
+        <p>Signed in as {{ g.user.email }}.</p>
+        <a class="btn" href="{{ url_for('index') }}">Go to your workspace</a>
+      </div>
+      {% else %}
+      <form class="legal-tools-signin" method="post" action="{{ url_for('auth.signin') }}">
+        <input type="hidden" name="next" value="{{ url_for('index') }}">
+        <label class="modal-field">Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <label class="modal-field">Password
+          <input type="password" name="password" required autocomplete="current-password">
+        </label>
+        <button type="submit" class="btn">Sign in</button>
+      </form>
+      <p class="legal-tools-signup"><a href="{{ url_for('auth.signup', next=url_for('index')) }}">Create an account</a></p>
+      {% endif %}
+
+      {% if legal_tools and legal_tools.articles %}
+      <div class="legal-tools-articles">
+        {% for a in legal_tools.articles %}
+        <a class="legal-tools-article" href="{{ url_for('public_article', article_id=a.id) }}">{{ a.title }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </aside>
+  </div>
 </main>
 </body>
 </html>

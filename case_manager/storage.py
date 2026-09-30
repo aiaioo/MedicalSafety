@@ -1853,17 +1853,21 @@ def set_user_roles(user_id: int, is_admin: bool, is_content_creator: bool) -> No
 # ---------------------------------------------------------------------------
 
 def list_websites() -> list[dict]:
-    """Every website, each with its sections ({"id", "title", "position"})
-    in display order -- for the admin Websites tab and the article editor's
-    section picker."""
+    """Every website, each with its sections ({"id", "title", "position",
+    "kind"}) in display order -- for the admin Websites tab and the article
+    editor's section picker. "kind" is "legal_tools" for the one special,
+    always-present section shown in the public page's sign-in panel (see
+    db/migrations/023_legal_tools_section.sql), "section" for an ordinary one."""
     with _cursor() as cur:
         cur.execute("SELECT id, domain, name FROM websites ORDER BY name")
         sites = cur.fetchall()
-        cur.execute("SELECT id, website_id, title, position FROM website_sections ORDER BY website_id, position, id")
+        cur.execute("SELECT id, website_id, title, position, kind FROM website_sections ORDER BY website_id, position, id")
         sections = cur.fetchall()
     by_site: dict[str, list] = {}
     for s in sections:
-        by_site.setdefault(s["website_id"], []).append({"id": s["id"], "title": s["title"], "position": s["position"]})
+        by_site.setdefault(s["website_id"], []).append(
+            {"id": s["id"], "title": s["title"], "position": s["position"], "kind": s["kind"]}
+        )
     return [{"id": s["id"], "domain": s["domain"], "name": s["name"], "sections": by_site.get(s["id"], [])} for s in sites]
 
 
@@ -1885,6 +1889,14 @@ def section_exists(section_id: str) -> bool:
 def create_website(website_id: str, domain: str, name: str) -> None:
     with _cursor() as cur:
         cur.execute("INSERT INTO websites (id, domain, name) VALUES (%s, %s, %s)", (website_id, domain, name))
+        # Every website gets its "legal tools" panel section too (see
+        # db/migrations/023_legal_tools_section.sql) -- the public page
+        # always has one to show its sign-in box in, not just the two seeded
+        # at install.
+        cur.execute(
+            "INSERT INTO website_sections (id, website_id, title, position, kind) VALUES (%s, %s, %s, %s, 'legal_tools')",
+            (f"{website_id}-legal-tools", website_id, "Legal tools", 99),
+        )
 
 
 def delete_website(website_id: str) -> None:
@@ -2022,18 +2034,19 @@ def get_article_image(image_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def public_sections(website_id: str) -> list[dict]:
-    """This website's sections in display order, each with its published
-    articles ({"id", "title", "updated_at"}, newest first)."""
+    """This website's ordinary sections (excluding its "legal tools" one,
+    see public_legal_tools_section) in display order, each with its
+    published articles ({"id", "title", "updated_at"}, newest first)."""
     with _cursor() as cur:
         cur.execute(
-            "SELECT id, title FROM website_sections WHERE website_id = %s ORDER BY position, id",
+            "SELECT id, title FROM website_sections WHERE website_id = %s AND kind = 'section' ORDER BY position, id",
             (website_id,),
         )
         sections = cur.fetchall()
         cur.execute(
             """
             SELECT a.id, a.title, a.section_id, a.updated_at FROM articles a
-            JOIN website_sections ws ON ws.id = a.section_id AND ws.website_id = %s
+            JOIN website_sections ws ON ws.id = a.section_id AND ws.website_id = %s AND ws.kind = 'section'
             WHERE a.published
             ORDER BY a.position, a.updated_at DESC
             """,
@@ -2046,6 +2059,30 @@ def public_sections(website_id: str) -> list[dict]:
             {"id": a["id"], "title": a["title"] or a["id"], "updated_at": _iso(a["updated_at"])}
         )
     return [{"id": s["id"], "title": s["title"], "articles": by_section.get(s["id"], [])} for s in sections]
+
+
+def public_legal_tools_section(website_id: str) -> dict | None:
+    """This website's "legal tools" section ({"id", "title", "articles"}),
+    for the public page's top-right sign-in panel -- None only if the
+    website predates db/migrations/023_legal_tools_section.sql and hasn't
+    been re-migrated."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, title FROM website_sections WHERE website_id = %s AND kind = 'legal_tools'",
+            (website_id,),
+        )
+        section = cur.fetchone()
+        if section is None:
+            return None
+        cur.execute(
+            "SELECT id, title, updated_at FROM articles WHERE section_id = %s AND published ORDER BY position, updated_at DESC",
+            (section["id"],),
+        )
+        articles = cur.fetchall()
+    return {
+        "id": section["id"], "title": section["title"],
+        "articles": [{"id": a["id"], "title": a["title"] or a["id"], "updated_at": _iso(a["updated_at"])} for a in articles],
+    }
 
 
 def get_published_article(article_id: str) -> dict | None:
