@@ -6,6 +6,13 @@
 <title>Case Plan</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  .collapsible { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+    transition: grid-template-rows 0.3s ease, opacity 0.3s ease, visibility 0s linear 0.3s; }
+  .collapsible.open { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+  .collapsible-inner { overflow: hidden; min-height: 0; }
+  @media (prefers-reduced-motion: reduce) { .collapsible { transition: none; } }
+</style>
 </head>
 <body>
 <header class="docbar" style="position: relative;">
@@ -16,7 +23,8 @@
 
 <div class="container">
 
-  <div id="advanced-sections"{% if not g.user.show_advanced %} hidden{% endif %}>
+  <div id="advanced-sections" class="collapsible{% if g.user.show_advanced %} open{% endif %}"{% if not g.user.show_advanced %} inert{% endif %}>
+  <div class="collapsible-inner">
 
   <h1>Causes</h1>
 
@@ -39,6 +47,7 @@
     <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
   </section>
 
+  </div>
   </div>
 
   <h1>Reports</h1>
@@ -63,9 +72,13 @@
 (function () {
   var toggle = document.getElementById('advanced-toggle');
   var sections = document.getElementById('advanced-sections');
+  function setOpen(on) {
+    sections.classList.toggle('open', on);
+    if (on) sections.removeAttribute('inert'); else sections.setAttribute('inert', '');
+  }
   toggle.addEventListener('change', function () {
     var on = toggle.checked;
-    sections.hidden = !on;
+    setOpen(on);
     fetch({{ url_for('api_set_show_advanced')|tojson }}, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
@@ -74,7 +87,7 @@
       if (!r.ok) throw new Error();
     }).catch(function () {
       toggle.checked = !on;
-      sections.hidden = on;
+      setOpen(!on);
     });
   });
 })();
