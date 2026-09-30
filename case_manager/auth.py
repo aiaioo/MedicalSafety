@@ -38,7 +38,36 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 
 # Endpoints reachable without signing in -- everything else redirects to
 # the sign-in page (or, for /api/ routes, answers 401).
-PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "static"}
+PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "auth.unlock", "static"}
+
+# Guests (people using a secret key without an account) reach only the
+# objects their keys cover: never the home page, collaborations, account
+# settings, key management, or creating new top-level causes.
+GUEST_LIFETIME = timedelta(days=7)
+GUEST_BLOCKED_ENDPOINTS = {
+    "index", "collaborations_view", "api_collaborations", "api_collaborations_captcha",
+    "api_collaborations_seen", "api_collaboration_item", "api_collaboration_accept",
+    "api_collaboration_access", "api_set_show_advanced", "api_default_cause", "api_keys", "api_key_item",
+}
+GUEST_BLOCKED_POSTS = {"api_causes"}
+
+# A page addressed by one of these query parameters is that object's URL, so
+# a signed-out visitor to it is offered the key prompt if it has any keys.
+# endpoint -> (query parameter, kind of object)
+KEYED_PAGES = {
+    "page_view": ("doc", "source"),
+    "documents_view": ("report", "report"),
+    "annexures_view": ("annexure", "report"),
+    "allegations_view": ("allegation", "allegation"),
+    "causes_view": ("cause", "cause"),
+    "cases_view": ("case", "case"),
+}
+KEY_LENGTH = 32
+KEY_DEACTIVATED_MESSAGE = (
+    "This key has been temporarily deactivated by the owner. "
+    "Please message the owner for access or a new key."
+)
+
 
 # The "are you human?" image on the sign-up form. Each challenge's answer is
 # kept server-side (storage.create_signup_captcha), single-use, and expires.
@@ -66,12 +95,13 @@ class User:
     email: str
     password_hash: str
     show_advanced: bool = False
+    is_guest: bool = False
 
     @classmethod
     def from_row(cls, row: dict) -> User:
         return cls(
             id=row["id"], email=row["email"], password_hash=row["password_hash"],
-            show_advanced=row.get("show_advanced", False),
+            show_advanced=row.get("show_advanced", False), is_guest=row.get("is_guest", False),
         )
 
     @staticmethod
@@ -160,9 +190,9 @@ def _cookie_secure() -> bool:
     return request.is_secure or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 
-def _start_session(user: User, next_url: str):
+def _start_session(user: User, next_url: str, lifetime: timedelta = SESSION_LIFETIME):
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
+    expires_at = datetime.now(timezone.utc) + lifetime
     storage.create_session(user.id, _hash_token(token), expires_at)
     resp = redirect(next_url)
     resp.set_cookie(
@@ -191,19 +221,83 @@ def load_user_and_require_signin():
         if row is not None:
             g.user = User.from_row(row)
 
+    if g.user is not None and g.user.is_guest and (
+        request.endpoint in GUEST_BLOCKED_ENDPOINTS
+        or (request.endpoint in GUEST_BLOCKED_POSTS and request.method != "GET")
+    ):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Please sign in with an account to do that"}), 403
+        return redirect(url_for("auth.signin"))
+
     if g.user is None and request.endpoint not in PUBLIC_ENDPOINTS:
         if request.path.startswith("/api/"):
             return jsonify({"error": "Please sign in first"}), 401
         next_path = request.full_path if request.query_string else request.path
+        target = _keyed_target()
+        if target is not None:
+            return redirect(url_for("auth.unlock", kind=target[0], id=target[1], next=next_path))
         return redirect(url_for("auth.signin", next=next_path))
     return None
+
+
+def _keyed_target() -> tuple[str, str] | None:
+    """(kind, id) of the shared object this signed-out request is for, if
+    anyone has put a key on it."""
+    param_kind = KEYED_PAGES.get(request.endpoint or "")
+    if param_kind is None:
+        return None
+    object_id = request.args.get(param_kind[0], "")
+    if not object_id or len(object_id) > 200 or not storage.object_has_keys(param_kind[1], object_id):
+        return None
+    return param_kind[1], object_id
+
+
+def _render_unlock(kind: str, object_id: str, next_url: str, error: str = "", status: int = 200):
+    return render_template(
+        "unlock.html", kind=kind, object_id=object_id, next=next_url, error=error, captcha=new_captcha(),
+    ), status
+
+
+@bp.route("/unlock", methods=["GET", "POST"])
+def unlock():
+    """The key prompt: a secret key plus a captcha gives a guest session (or,
+    for someone already in a guest session, more access) on one shared
+    object -- and everything beneath it."""
+    kind = request.values.get("kind", "")
+    object_id = request.values.get("id", "")
+    next_url = _safe_next(request.values.get("next"))
+    if kind not in storage.SHARE_KINDS or not storage.object_has_keys(kind, object_id):
+        return redirect(url_for("auth.signin", next=next_url))
+    if g.user is not None and not g.user.is_guest:
+        return redirect(next_url)  # signed-in users use their own access
+    if request.method == "GET":
+        return _render_unlock(kind, object_id, next_url)
+
+    if not storage.record_signup_attempt("unlock:" + _client_key(), SIGNUP_ATTEMPT_LIMIT, SIGNUP_ATTEMPT_WINDOW_SECONDS):
+        return _render_unlock(kind, object_id, next_url, "Too many attempts from your network. Please try again later.", 429)
+    # The captcha is checked (and used up) first, so keys can't be guessed without solving one per try.
+    if not captcha_passed(request.form.get("captcha_id") or "", request.form.get("captcha_answer") or ""):
+        return _render_unlock(kind, object_id, next_url, "The characters you typed didn't match the image. Please try the new one.", 400)
+    entered = (request.form.get("key") or "").strip()
+    found = storage.find_key(kind, object_id, entered) if len(entered) == KEY_LENGTH else None
+    if found is None:
+        return _render_unlock(kind, object_id, next_url, "That key isn't valid for this page.", 403)
+    if not found["active"]:
+        return _render_unlock(kind, object_id, next_url, KEY_DEACTIVATED_MESSAGE, 403)
+
+    if g.user is not None:  # already a guest: add this key to their session
+        storage.redeem_key(g.user.id, kind, entered)
+        return redirect(next_url)
+    guest = User.from_row(storage.create_guest())
+    storage.redeem_key(guest.id, kind, entered)
+    return _start_session(guest, next_url, GUEST_LIFETIME)
 
 
 @bp.route("/signup", methods=["GET", "POST"])
 def signup():
     next_url = _safe_next(request.values.get("next"))
     if request.method == "GET":
-        if g.user is not None:
+        if g.user is not None and not g.user.is_guest:
             return redirect(next_url)
         return _render_signup("", "", next_url)
 
@@ -241,7 +335,7 @@ def signup():
 def signin():
     next_url = _safe_next(request.values.get("next"))
     if request.method == "GET":
-        if g.user is not None:
+        if g.user is not None and not g.user.is_guest:
             return redirect(next_url)
         return render_template("auth.html", mode="signin", email="", error="", next=next_url)
 

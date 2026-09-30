@@ -179,6 +179,14 @@ ROLE_RANK = {"viewer": 1, "editor": 2, "owner": 3}
 ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source": "document", "allegation": "allegation"}
 
 
+def raise_no_access(kind, object_id, message):
+    """The 404 for an object the user can't reach -- except that a guest
+    whose key for it has been switched off is told so."""
+    if g.user.is_guest and storage.has_deactivated_key(g.user.id, kind, object_id):
+        raise DocumentError(auth.KEY_DEACTIVATED_MESSAGE, 403)
+    raise DocumentError(message, 404)
+
+
 def has_role(kind, object_id, min_role):
     role = storage.get_role(g.user.id, kind, object_id)
     return role is not None and ROLE_RANK[role] >= ROLE_RANK[min_role]
@@ -188,7 +196,7 @@ def require_role(kind, object_id, min_role="viewer"):
     label = ACCESS_LABELS[kind]
     role = storage.get_role(g.user.id, kind, object_id)
     if role is None:
-        raise DocumentError(f"No {label} with id {object_id!r}", 404)
+        raise_no_access(kind, object_id, f"No {label} with id {object_id!r}")
     if ROLE_RANK[role] < ROLE_RANK[min_role]:
         action = "delete" if min_role == "owner" else "change"
         raise DocumentError(f"You don't have permission to {action} this {label}", 403)
@@ -203,7 +211,7 @@ def require_allegation_role(allegation, min_role="viewer"):
              storage.get_role(g.user.id, "allegation", allegation["id"])]
     best = max((r for r in roles if r), key=ROLE_RANK.get, default=None)
     if best is None:
-        raise DocumentError(f"No allegation with id {allegation['id']!r}", 404)
+        raise_no_access("allegation", allegation["id"], f"No allegation with id {allegation['id']!r}")
     if ROLE_RANK[best] < ROLE_RANK[min_role]:
         raise DocumentError("You don't have permission to change this allegation", 403)
     return best
@@ -335,6 +343,8 @@ def require_editable_cause(raw):
 
 
 def create_default_cause():
+    if g.user.is_guest:
+        raise DocumentError("Guests can't create new items. Sign in with an account to do that.", 403)
     return storage.create_general_cause(g.user.id)
 
 
@@ -376,7 +386,7 @@ def inject_cause_picker():
     """The title bar's cause picker (templates/_cause_picker.html): the
     causes this user can edit -- only those can be a default -- and which
     one is the default now."""
-    if not getattr(g, "user", None):
+    if not getattr(g, "user", None) or g.user.is_guest:
         return {}
     causes = [
         {"id": c["id"], "title": c["title"] or c["id"]}
@@ -1751,6 +1761,66 @@ def api_collaboration_access(collaboration_id):
         grants[kind] = wanted
     storage.set_shared_objects(g.user.id, other_id, grants)
     return jsonify({"shared_by_me": storage.list_shared_objects(g.user.id, other_id)})
+
+
+# ---------------------------------------------------------------------------
+# Secret keys: the owner of a cause, case, allegation, report or document
+# shares it with anyone holding one of its keys (see
+# db/migrations/018_secret_keys.sql and auth.unlock). Deleting a key
+# unshares; switching it off suspends it.
+# ---------------------------------------------------------------------------
+
+# kind -> (page path, query parameter) of the URL a key opens
+KEY_PAGE_URLS = {
+    "cause": ("causes_view", "cause"),
+    "case": ("cases_view", "case"),
+    "allegation": ("allegations_view", "allegation"),
+    "report": ("documents_view", "report"),
+    "source": ("page_view", "doc"),
+}
+
+
+def key_kind(raw):
+    if raw not in storage.SHARE_KINDS:
+        raise DocumentError(f"Invalid kind: {raw!r}", 400)
+    return raw
+
+
+@app.route("/api/keys", methods=["GET", "POST"])
+def api_keys():
+    if request.method == "GET":
+        keys = storage.list_keys(g.user.id)
+        for kind, items in keys.items():
+            endpoint, param = KEY_PAGE_URLS[kind]
+            for item in items:
+                item["url"] = url_for(endpoint, _external=True, **{param: item["object_id"]})
+        return jsonify({"keys": keys, "shareable": storage.list_owned_objects(g.user.id)})
+
+    body = request.get_json(silent=True) or {}
+    kind = key_kind(body.get("kind"))
+    object_id = body.get("object_id")
+    if not isinstance(object_id, str):
+        raise DocumentError("Choose what to share", 400)
+    if body.get("permission") not in storage.KEY_PERMISSIONS:
+        raise DocumentError("Permission must be viewer or editor", 400)
+    require_role(kind, object_id, "owner")  # only an owner can share it
+    storage.create_key(g.user.id, kind, object_id, body["permission"])
+    return jsonify({"ok": True}), 201
+
+
+@app.route("/api/key/<kind>/<int:key_id>", methods=["PATCH", "DELETE"])
+def api_key_item(kind, key_id):
+    kind = key_kind(kind)
+    if request.method == "DELETE":
+        done = storage.delete_key(g.user.id, kind, key_id)
+    else:
+        active = (request.get_json(silent=True) or {}).get("active")
+        if not isinstance(active, bool):
+            raise DocumentError("active must be true or false", 400)
+        done = storage.set_key_active(g.user.id, kind, key_id, active)
+    if not done:
+        raise DocumentError("No such key", 404)
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

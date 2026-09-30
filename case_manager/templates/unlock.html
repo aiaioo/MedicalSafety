@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enter access key</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+  <form class="modal auth-card" method="post" action="{{ url_for('auth.unlock') }}">
+    <h3>Enter the access key</h3>
+    <p class="modal-hint">This page has been shared with a secret key. Enter the key you were given to continue.</p>
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="id" value="{{ object_id }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="modal-field">Access key
+      <input type="text" name="key" autocomplete="off" spellcheck="false" maxlength="32" required autofocus>
+    </label>
+    <label class="modal-field">Type the characters you see
+      <img class="auth-captcha" src="{{ captcha.image }}" alt="Captcha: distorted letters and digits" width="200" height="70">
+      <input type="hidden" name="captcha_id" value="{{ captcha.id }}">
+      <input type="text" name="captcha_answer" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" maxlength="10" required>
+    </label>
+    {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
+    <div class="modal-actions">
+      <button type="submit" class="btn">Continue</button>
+    </div>
+    <p class="modal-hint auth-switch">
+      Have an account? <a href="{{ url_for('auth.signin', next=next) }}">Sign in</a>
+    </p>
+  </form>
+</div>
+</body>
+</html>

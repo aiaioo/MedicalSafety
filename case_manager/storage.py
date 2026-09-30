@@ -33,6 +33,7 @@ HTTP error shape they want; this module doesn't know about Flask.
 from __future__ import annotations
 
 import os
+import secrets
 import tempfile
 import uuid
 from collections.abc import Collection
@@ -859,7 +860,7 @@ def list_causes(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT c.id, c.title, c.description, c.created_at, c.updated_at, uc.role
-            FROM causes c JOIN user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s
+            FROM causes c JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s
             """,
             (user_id,),
         )
@@ -1202,7 +1203,7 @@ def create_user(email: str, password_hash: str) -> dict | None:
 
 def get_user_by_email(email: str) -> dict | None:
     with _cursor() as cur:
-        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s)", (email,))
+        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s) AND NOT is_guest", (email,))
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -1224,7 +1225,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced FROM user_sessions s JOIN users u ON u.id = s.user_id
+            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_guest FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
             (token_hash,),
@@ -1541,6 +1542,131 @@ def set_shared_objects(owner_id: int, collaborator_id: int, grants: dict[str, di
                     f"ON CONFLICT (user_id, {column}) DO UPDATE SET role = EXCLUDED.role WHERE {table}.role <> 'owner'",
                     (collaborator_id, oid, wanted[oid]),
                 )
+
+
+# ---------------------------------------------------------------------------
+# Secret keys (db/migrations/018_secret_keys.sql): an owner shares an object
+# with whoever holds one of its keys. Entering a key records a redemption for
+# the (guest) user; the eff_user_* views turn redemptions of active keys into
+# viewer/editor access, which cascades to child objects like any other role.
+# ---------------------------------------------------------------------------
+
+_KEY_TABLES = {
+    "cause": ("cause_keys", "cause_id"),
+    "case": ("case_keys", "case_id"),
+    "allegation": ("allegation_keys", "allegation_id"),
+    "report": ("report_keys", "report_id"),
+    "source": ("document_keys", "document_id"),
+}
+KEY_PERMISSIONS = ("viewer", "editor")
+GUEST_LIFETIME_DAYS = 7
+
+
+def create_key(owner_id: int, kind: str, object_id: str, permission: str) -> dict:
+    """Adds an active 32-character key to the object; the caller has already
+    checked that `owner_id` owns it."""
+    table, column = _KEY_TABLES[kind]
+    key = secrets.token_urlsafe(24)  # 24 bytes -> exactly 32 URL-safe characters
+    with _cursor() as cur:
+        cur.execute(
+            f"INSERT INTO {table} (owner_id, {column}, key, permission) VALUES (%s, %s, %s, %s) "  # noqa: S608 (fixed names)
+            "RETURNING id",
+            (owner_id, object_id, key, permission),
+        )
+        return {"id": cur.fetchone()["id"], "key": key}
+
+
+def list_keys(owner_id: int) -> dict[str, list[dict]]:
+    """kind -> [{"id", "object_id", "title", "key", "permission", "active"}],
+    the keys this user created, oldest first."""
+    result = {}
+    with _cursor() as cur:
+        for kind, (table, column) in _KEY_TABLES.items():
+            obj_table, title_col = _OBJECT_TITLES[kind]
+            cur.execute(
+                f"SELECT k.id, k.{column} AS object_id, o.{title_col} AS title, k.key, k.permission, k.active "  # noqa: S608
+                f"FROM {table} k JOIN {obj_table} o ON o.id = k.{column} WHERE k.owner_id = %s "
+                f"ORDER BY lower(o.{title_col}), k.{column}, k.id",
+                (owner_id,),
+            )
+            result[kind] = [{**r, "title": r["title"] or r["object_id"]} for r in cur.fetchall()]
+    return result
+
+
+def set_key_active(owner_id: int, kind: str, key_id: int, active: bool) -> bool:
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"UPDATE {table} SET active = %s WHERE id = %s AND owner_id = %s", (active, key_id, owner_id))  # noqa: S608
+        return cur.rowcount == 1
+
+
+def delete_key(owner_id: int, kind: str, key_id: int) -> bool:
+    """Deletes the key, so the object is no longer shared by it, and forgets
+    everyone's redemptions of it."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"DELETE FROM {table} WHERE id = %s AND owner_id = %s RETURNING key", (key_id, owner_id))  # noqa: S608
+        row = cur.fetchone()
+        if row is None:
+            return False
+        cur.execute("DELETE FROM key_redemptions WHERE kind = %s AND key = %s", (kind, row["key"]))
+        return True
+
+
+def object_has_keys(kind: str, object_id: str) -> bool:
+    """Whether anyone has shared this object by key (active or not) -- i.e.
+    whether a signed-out visitor should be offered the key prompt."""
+    table, column = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT EXISTS(SELECT 1 FROM {table} WHERE {column} = %s) AS ok", (object_id,))  # noqa: S608
+        return cur.fetchone()["ok"]
+
+
+def find_key(kind: str, object_id: str, key: str) -> dict | None:
+    """{"active", "permission"} for this object's key, else None."""
+    table, column = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT active, permission FROM {table} WHERE {column} = %s AND key = %s", (object_id, key))  # noqa: S608
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def redeem_key(user_id: int, kind: str, key: str) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO key_redemptions (user_id, kind, key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            (user_id, kind, key),
+        )
+
+
+def has_deactivated_key(user_id: int, kind: str, object_id: str) -> bool:
+    """Whether this user got into the object with a key its owner has since
+    switched off."""
+    table, column = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(
+            f"SELECT EXISTS(SELECT 1 FROM key_redemptions r JOIN {table} k ON k.key = r.key "  # noqa: S608
+            f"WHERE r.user_id = %s AND r.kind = %s AND k.{column} = %s AND NOT k.active) AS ok",
+            (user_id, kind, object_id),
+        )
+        return cur.fetchone()["ok"]
+
+
+def create_guest() -> dict:
+    """A throwaway, password-less user for someone using a key without an
+    account. Guests whose sessions have all expired are swept out here."""
+    with _cursor() as cur:
+        cur.execute(
+            "DELETE FROM users WHERE is_guest AND NOT EXISTS "
+            "(SELECT 1 FROM user_sessions s WHERE s.user_id = users.id AND s.expires_at > now())"
+        )
+        email = f"guest-{secrets.token_hex(8)}@guest.invalid"
+        cur.execute(
+            "INSERT INTO users (email, password_hash, storage_dir, is_guest) VALUES (%s, '!', %s, TRUE) "
+            "RETURNING id, email, password_hash, show_advanced, is_guest",
+            (email, owner_dir_name(email)),
+        )
+        return dict(cur.fetchone())
 
 
 def grant_owner(kind: str, object_id: str, user_id: int) -> None:
