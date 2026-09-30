@@ -57,6 +57,8 @@ def sanitize_margins(raw, fallback=None):
 # reports.html (quoted where the CSS family name has a space, so the same
 # string can be dropped straight into a font-family declaration).
 REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11}
+ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "none", "shape": "none", "color": "#555555"}
+ANNEXURE_PAGE_NUMBER_SHAPES = {"none", "circle", "rectangle"}
 REPORT_PAGE_NUMBER_POSITIONS = {
     "top-left", "top-center", "top-right",
     "bottom-left", "bottom-center", "bottom-right",
@@ -66,6 +68,8 @@ REPORT_PAGE_NUMBER_FONTS = {
     "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
     "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
 }
+ANNEXURE_TEXT_DROP = 0.18  # tuned so the number's glyphs sit optically centred in the outline
+ANNEXURE_PAGE_NUMBER_BAND = 46  # pt of header/footer band the annexure page numbers sit in (the preview mirrors it)
 REPORT_PAGE_NUMBER_SKIP_MAX = 50
 REPORT_PAGE_NUMBER_FONT_SIZE_MIN = 6
 REPORT_PAGE_NUMBER_FONT_SIZE_MAX = 72
@@ -932,6 +936,22 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0):
             first_html = _json_inline_to_html(first.get("content") or []) if first and first.get("type") in ("paragraph", "heading") else ""
             out.append(f"<li>{marker}{first_html}{_json_blocks_to_html(rest, num_state=num_state, depth=depth)}</li>")
     return "".join(out)
+
+
+def sanitize_annexure_page_numbers(raw, fallback=None):
+    """sanitize_page_numbers plus the annexure-only outline shape and colour."""
+    fallback = fallback if isinstance(fallback, dict) else ANNEXURE_DEFAULT_PAGE_NUMBERS
+    out = sanitize_page_numbers(raw, fallback)
+    raw = raw if isinstance(raw, dict) else {}
+    for key, ok in (("shape", lambda v: v in ANNEXURE_PAGE_NUMBER_SHAPES),
+                    ("color", lambda v: isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v))):
+        value = raw.get(key)
+        if not ok(value):
+            value = fallback.get(key)
+            if not ok(value):
+                value = ANNEXURE_DEFAULT_PAGE_NUMBERS[key]
+        out[key] = value.lower() if key == "color" else value
+    return out
 
 
 def _flatten_json_text(node):
@@ -1933,7 +1953,7 @@ def parse_page_range(text, page_count):
     return sorted(pages)
 
 
-def _annexure_payload(report_id, saved):
+def _annexure_payload(report_id, saved, page_numbers=None):
     """The annexure as the page shows it: the saved [{"id", "page_mode", "page_range"}] order,
     with every document the report's snippets come from present (appended if
     missing -- they can't be left out) and each one's snippet pages; documents
@@ -1945,6 +1965,8 @@ def _annexure_payload(report_id, saved):
     order += [{"id": d, "page_mode": "all", "page_range": ""} for d in snippet_pages
               if d in docs and d not in {o["id"] for o in order}]
     return {
+        "pageNumbers": sanitize_annexure_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
+                                             ANNEXURE_DEFAULT_PAGE_NUMBERS),
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
              "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
@@ -1983,7 +2005,11 @@ def api_report_annexure(report_id):
                 if mode == "custom" and parse_page_range(page_range, 1 << 30) is None:
                     raise DocumentError(f"Invalid page range: {page_range!r} (use e.g. 1-3, 7)", 400)
                 saved.append({"id": d, "page_mode": mode, "page_range": page_range if mode == "custom" else ""})
-        payload = _annexure_payload(report_id, saved)
+        page_numbers = None
+        if "pageNumbers" in body:
+            page_numbers = sanitize_annexure_page_numbers(body["pageNumbers"], storage.get_annexure_page_numbers(report_id))
+            storage.save_annexure_page_numbers(report_id, page_numbers)
+        payload = _annexure_payload(report_id, saved, page_numbers)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
@@ -2015,6 +2041,30 @@ def api_report_annexure_export(report_id):
                     pages = parse_page_range(d["page_range"], src.page_count) or []
                 for p in pages:
                     out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
+        pn = payload["pageNumbers"]
+        if pn["position"] != "none":
+            vert, _, horiz = pn["position"].partition("-")
+            fs = pn["fontSize"]
+            color = pn["color"]
+            css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {color}; margin: 0; text-align: center;"
+            rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+            box_h = fs * 1.6
+            for i in range(pn["skip"], out.page_count):
+                page = out[i]
+                r = page.rect
+                label = str(i - pn["skip"] + 1)
+                # The number sits in a box just wide enough for it (and the outline, if any),
+                # placed against the left/centre/right of the margins like the report's numbers.
+                box_w = max(box_h, fitz.get_text_length(label, fontsize=fs) + fs * 0.6)
+                left, right = r.x0 + 36, r.x1 - 36
+                x0 = {"left": left, "center": (left + right - box_w) / 2, "right": right - box_w}[horiz]
+                mid = r.y0 + ANNEXURE_PAGE_NUMBER_BAND / 2 if vert == "top" else r.y1 - ANNEXURE_PAGE_NUMBER_BAND / 2
+                box = fitz.Rect(x0, mid - box_h / 2, x0 + box_w, mid + box_h / 2)
+                if pn["shape"] == "circle":
+                    page.draw_oval(box, color=rgb, width=1)
+                elif pn["shape"] == "rectangle":
+                    page.draw_rect(box, color=rgb, width=1)
+                page.insert_htmlbox(box + (0, ANNEXURE_TEXT_DROP * fs, 0, ANNEXURE_TEXT_DROP * fs), f'<p style="{css}">{label}</p>')
         data = out.tobytes()
     finally:
         out.close()

@@ -804,3 +804,13 @@ a.tag:hover { background: #d7deec; }
 .annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
 .annex-name select, .annex-name .annex-range { margin-top: 4px; font-size: 12px; padding: 3px 4px; }
 .annex-range.invalid { border-color: #c0392b; outline-color: #c0392b; }
+
+.annex-numbering .modal-field { margin: 8px 0; }
+.annex-numbering select, .annex-numbering input { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; }
+.annex-numbering input.invalid { border-color: #c0392b; }
+.annex-section-divider { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e0e2e8; }
+.color-palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 6px; }
+.color-swatch { aspect-ratio: 1; padding: 0; border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 4px; cursor: pointer; }
+.color-swatch:hover { transform: scale(1.12); }
+.color-swatch.selected { outline: 2px solid #2266dd; outline-offset: 1px; }
+.page-number-label .page-number-outline { display: inline-block; box-sizing: border-box; text-align: center; vertical-align: middle; }

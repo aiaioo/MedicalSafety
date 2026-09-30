@@ -7,7 +7,15 @@
   const addBtn = document.getElementById("addBtn");
   const statusMsg = document.getElementById("statusMsg");
 
-  let state = { documents: [], available: [] };
+  const pnPosition = document.getElementById("pageNumberPositionInput");
+  const pnStart = document.getElementById("pageNumberStartInput");
+  const pnFont = document.getElementById("pageNumberFontInput");
+  const pnSize = document.getElementById("pageNumberFontSizeInput");
+  const pnShape = document.getElementById("pageNumberShapeInput");
+  const pnPalette = document.getElementById("pageNumberColorPalette");
+  const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
+
+  let state = { documents: [], available: [], pageNumbers: { position: "none", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -73,6 +81,8 @@
       return;
     }
     const version = ++renderPages.version;
+    const pn = state.pageNumbers;
+    let shown = 0; // annexure pages laid out so far, across documents
     for (const d of state.documents) {
       const heading = document.createElement("div");
       heading.className = "annex-doc-heading";
@@ -97,6 +107,25 @@
         wrap.style.background = "white";
         wrap.innerHTML = `<span class="page-label">${esc(d.title)} &middot; page ${n}</span>` +
           `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}">`;
+        shown++;
+        if (pn.position !== "none" && shown > pn.skip) {
+          const scale = parseFloat(wrap.style.width) / dim.width; // px per pt
+          const label = document.createElement("span");
+          label.className = `page-number-label page-number-${pn.position}`;
+          label.style.cssText = `--mg-top:${NUMBER_BAND_PT * scale}px;--mg-bottom:${NUMBER_BAND_PT * scale}px;` +
+            `--mg-left:${36 * scale}px;--mg-right:${36 * scale}px;` +
+            `font-family:${pn.font},Arial,sans-serif;font-size:${pn.fontSize * scale}px;color:${pn.color};z-index:1`;
+          const num = document.createElement("span");
+          num.className = "page-number-outline";
+          num.textContent = shown - pn.skip;
+          if (pn.shape !== "none") {
+            const h = pn.fontSize * 1.6 * scale;
+            num.style.cssText = `height:${h}px;min-width:${h}px;line-height:${h}px;padding:0 ${pn.fontSize * 0.3 * scale}px;` +
+              `border:1px solid ${pn.color};border-radius:${pn.shape === "circle" ? "50%" : "0"}`;
+          }
+          label.appendChild(num);
+          wrap.appendChild(label);
+        }
         container.appendChild(wrap);
         observer.observe(wrap);
       }
@@ -196,6 +225,63 @@
     addBtn.disabled = !state.available.length;
   }
 
+  function renderPageNumberInputs() {
+    const pn = state.pageNumbers;
+    pnPosition.value = pn.position;
+    pnStart.value = pn.skip + 1;
+    pnFont.value = pn.font;
+    pnSize.value = pn.fontSize;
+    pnShape.value = pn.shape;
+    markSelectedSwatch();
+  }
+
+  // Common colours: a grey row, then eight hues at strong and muted saturations and a few lightnesses.
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const f = (n) => {
+      const k = (n + h / 30) % 12;
+      const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return Math.round(c * 255).toString(16).padStart(2, "0");
+    };
+    return "#" + f(0) + f(8) + f(4);
+  }
+  const PALETTE = [
+    "#000000", "#333333", "#555555", "#777777", "#999999", "#bbbbbb", "#8b5a2b", "#1f3a93",
+    ...[[85, 30], [85, 45], [85, 65], [40, 40], [40, 65]].flatMap(([sat, light]) =>
+      [0, 30, 50, 130, 175, 210, 270, 320].map((hue) => hslToHex(hue, sat, light))),
+  ];
+  function markSelectedSwatch() {
+    pnPalette.querySelectorAll(".color-swatch").forEach((b) => {
+      const on = b.dataset.color === state.pageNumbers.color;
+      b.classList.toggle("selected", on);
+      b.setAttribute("aria-checked", on);
+    });
+  }
+  PALETTE.forEach((c) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "color-swatch";
+    b.dataset.color = c;
+    b.style.background = c;
+    b.title = c;
+    b.setAttribute("role", "radio");
+    b.addEventListener("click", () => { state.pageNumbers = { ...state.pageNumbers, color: c }; markSelectedSwatch(); commit(); });
+    pnPalette.appendChild(b);
+  });
+
+  // Applied as soon as every field is valid, like the per-document controls.
+  function readPageNumbers() {
+    const start = parseInt(pnStart.value, 10);
+    const size = parseFloat(pnSize.value);
+    const ok = start >= 1 && start <= 51 && size >= 6 && size <= 72;
+    pnStart.classList.toggle("invalid", !(start >= 1 && start <= 51));
+    pnSize.classList.toggle("invalid", !(size >= 6 && size <= 72));
+    if (!ok) return;
+    state.pageNumbers = { position: pnPosition.value, skip: start - 1, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
+    commit();
+  }
+  [pnPosition, pnStart, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
+
   function render(pagesToo) {
     renderList();
     renderAddPicker();
@@ -212,7 +298,7 @@
         body: JSON.stringify({ documents: state.documents.map((d) => {
           const a = applied(d);
           return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
-        }) }),
+        }), pageNumbers: state.pageNumbers }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
@@ -235,6 +321,7 @@
       if (!res.ok) throw new Error("HTTP " + res.status);
       state = await res.json();
       state.documents.forEach(remember);
+      renderPageNumberInputs();
       render(true);
     } catch (e) {
       setStatus("Failed to load annexure: " + e.message, true);

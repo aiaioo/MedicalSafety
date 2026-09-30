@@ -589,6 +589,19 @@ def save_annexure(report_id: str, documents: list[dict]) -> None:
             )
 
 
+def get_annexure_page_numbers(report_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT annexure_page_numbers FROM reports WHERE id = %s", (report_id,))
+        row = cur.fetchone()
+    return row["annexure_page_numbers"] if row else None
+
+
+def save_annexure_page_numbers(report_id: str, page_numbers: dict) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE reports SET annexure_page_numbers = %s WHERE id = %s",
+                    (psycopg2.extras.Json(page_numbers), report_id))
+
+
 def delete_report(report_id: str) -> None:
     """Refused while an allegation's evidence cites the report (the foreign
     key would otherwise just null the citation)."""
