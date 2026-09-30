@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -1076,15 +1077,15 @@ def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_ro
     return items
 
 
-def list_allegations(cause_id: str | None = None) -> list[dict]:
+def list_allegations(cause_ids: Collection[str]) -> list[dict]:
     """In display order (allegations/allegation_order.json's old job is now
-    just ORDER BY order_index -- see set_allegation_order). `cause_id`
-    limits it to that cause's allegations."""
+    just ORDER BY order_index -- see set_allegation_order). Only those under
+    `cause_ids` -- callers pass the causes the user may see."""
     with _cursor() as cur:
         cur.execute(
             "SELECT id, title, description, cause_id, created_at, updated_at FROM allegations "
-            "WHERE (%s::text IS NULL OR cause_id = %s) ORDER BY order_index",
-            (cause_id, cause_id),
+            "WHERE cause_id = ANY(%s) ORDER BY order_index",
+            (list(cause_ids),),
         )
         allegation_rows = cur.fetchall()
         cur.execute("SELECT allegation_id, id, kind, text, report_id FROM allegation_evidence ORDER BY position")

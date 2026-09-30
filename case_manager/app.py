@@ -1588,8 +1588,8 @@ def annexures_view():
 
 @app.route("/allegations")
 def allegations_view():
-    # Allegations are global (see api_allegations below); "case" is only an
-    # optional hint from the cases workspace to pre-filter the list to
+    # Allegations are scoped by the user's access to their cause (see
+    # api_allegations below); "case" is only an optional hint from the cases workspace to pre-filter the list to
     # allegations linked to that case, not a page the allegation belongs to.
     filter_case_id = request.args.get("case", "")
     if filter_case_id:
@@ -2379,10 +2379,10 @@ def api_allegations():
     if request.method == "GET":
         # ?default_cause=1: only the allegations under the user's default
         # cause (the one picked in the title bar).
-        only_cause = resolve_default_cause_id(create=False) if request.args.get("default_cause") else None
-        if request.args.get("default_cause") and not only_cause:
-            return jsonify([])
-        return jsonify(storage.list_allegations(only_cause))
+        if request.args.get("default_cause"):
+            only_cause = resolve_default_cause_id(create=False)
+            return jsonify(storage.list_allegations({only_cause}) if only_cause else [])
+        return jsonify(storage.list_allegations(storage.accessible_ids(g.user.id, "cause")))
 
     body = request.get_json(silent=True) or {}
     # An allegation's cause is mandatory: an explicit cause_id wins (the user
@@ -2416,6 +2416,8 @@ def api_allegation_item(allegation_id):
     existing = storage.get_allegation(allegation_id)
     if existing is None:
         raise DocumentError(f"No allegation with id {allegation_id!r}", 404)
+    # An allegation is governed by the role on its cause.
+    require_role("cause", existing["cause_id"], "viewer" if request.method == "GET" else "editor")
 
     if request.method == "GET":
         return jsonify(existing)
@@ -2459,7 +2461,9 @@ def api_allegations_order():
     if not isinstance(raw_order, list):
         raise DocumentError("order must be a list of allegation ids", 400)
     candidates = [aid for aid in raw_order[:2000] if isinstance(aid, str) and DOC_ID_RE.match(aid)]
-    order = storage.set_allegation_order(candidates)
+    visible = {x["id"] for x in storage.list_allegations(storage.accessible_ids(g.user.id, "cause"))}
+    full_order = storage.set_allegation_order([aid for aid in candidates if aid in visible])
+    order = [aid for aid in full_order if aid in visible]  # never echo ids the user can't see
     return jsonify({"order": order})
 
 
