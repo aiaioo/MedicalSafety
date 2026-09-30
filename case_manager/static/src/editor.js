@@ -861,21 +861,43 @@ import { Pagination, repaginate } from "./pagination.js";
     chain.run();
   });
 
-  const textColorInput = document.getElementById("textColorInput");
-  const textColorSwatch = document.getElementById("textColorSwatch");
-  textColorSwatch.style.background = textColorInput.value;
-  textColorInput.addEventListener("input", () => {
-    editor.chain().focus().setColor(textColorInput.value).run();
-    textColorSwatch.style.background = textColorInput.value;
-  });
+  // Text/highlight colour pickers: a button opening the same palette popover
+  // the annotation viewer's Color button uses. The hidden input holds the value.
+  function mountColorPopover(name, onPick) {
+    const btn = document.getElementById(name + "ColorBtn");
+    const popover = document.getElementById(name + "ColorPopover");
+    const input = document.getElementById(name + "ColorInput");
+    const swatch = document.getElementById(name + "ColorSwatch");
+    const setOpen = (open) => {
+      popover.hidden = !open;
+      btn.setAttribute("aria-expanded", open);
+    };
+    const select = PageNumberPalette.mount(document.getElementById(name + "ColorPalette"), (c) => {
+      input.value = c;
+      swatch.style.background = c;
+      select(c);
+      setOpen(false);
+      onPick(c);
+    });
+    // Keep the editor selection while the button is pressed.
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", () => setOpen(popover.hidden));
+    document.addEventListener("mousedown", (e) => {
+      if (!popover.hidden && !popover.contains(e.target) && !btn.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+    swatch.style.background = input.value;
+    select(input.value);
+    return { input, swatch, select };
+  }
 
-  const highlightColorInput = document.getElementById("highlightColorInput");
-  const highlightColorSwatch = document.getElementById("highlightColorSwatch");
-  highlightColorSwatch.style.background = highlightColorInput.value;
-  highlightColorInput.addEventListener("input", () => {
-    highlightColorSwatch.style.background = highlightColorInput.value;
-    editor.chain().focus().setHighlight({ color: highlightColorInput.value }).run();
-  });
+  const textPicker = mountColorPopover("text", (c) => editor.chain().focus().setColor(c).run());
+  const textColorInput = textPicker.input;
+  const textColorSwatch = textPicker.swatch;
+
+  const highlightPicker = mountColorPopover("highlight", (c) => editor.chain().focus().setHighlight({ color: c }).run());
+  const highlightColorInput = highlightPicker.input;
+  const highlightColorSwatch = highlightPicker.swatch;
   document.getElementById("clearHighlightBtn").addEventListener("click", () => {
     editor.chain().focus().unsetHighlight().run();
   });
@@ -900,12 +922,14 @@ import { Pagination, repaginate } from "./pagination.js";
     const color = styleAttrs.color || DEFAULT_TEXT_COLOR;
     textColorInput.value = color;
     textColorSwatch.style.background = color;
+    textPicker.select(color);
 
     const highlightColor = editor.getAttributes("highlight").color;
     if (highlightColor) {
       highlightColorInput.value = highlightColor;
       highlightColorSwatch.style.background = highlightColor;
       highlightColorSwatch.style.outline = "";
+      highlightPicker.select(highlightColorInput.value);
     } else {
       highlightColorSwatch.style.background = "transparent";
       highlightColorSwatch.style.outline = "1px solid #b8bfcf";

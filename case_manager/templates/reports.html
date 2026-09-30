@@ -93,14 +93,24 @@
     <button type="button" class="fmt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
     <button type="button" class="fmt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
     <button type="button" class="fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
-    <label class="color-btn" title="Text color">
-      <span>A</span><span class="swatch" id="textColorSwatch"></span>
-      <input id="textColorInput" type="color" value="#1c1c1c">
-    </label>
-    <label class="color-btn" title="Highlight color">
-      <span>H</span><span class="swatch" id="highlightColorSwatch"></span>
-      <input id="highlightColorInput" type="color" value="#fff59d">
-    </label>
+    <div class="color-pop-wrap">
+      <button type="button" class="color-btn" id="textColorBtn" title="Text color" aria-haspopup="true" aria-expanded="false">
+        <span>A</span><span class="swatch" id="textColorSwatch"></span>
+      </button>
+      <input id="textColorInput" type="hidden" value="#1c1c1c">
+      <div id="textColorPopover" class="color-popover" hidden>
+        <div id="textColorPalette" class="color-palette" role="radiogroup" aria-label="Text colour"></div>
+      </div>
+    </div>
+    <div class="color-pop-wrap">
+      <button type="button" class="color-btn" id="highlightColorBtn" title="Highlight color" aria-haspopup="true" aria-expanded="false">
+        <span>H</span><span class="swatch" id="highlightColorSwatch"></span>
+      </button>
+      <input id="highlightColorInput" type="hidden" value="#fff59d">
+      <div id="highlightColorPopover" class="color-popover" hidden>
+        <div id="highlightColorPalette" class="color-palette" role="radiogroup" aria-label="Highlight colour"></div>
+      </div>
+    </div>
     <button type="button" class="fmt-btn" id="clearHighlightBtn" title="Remove highlight">&#9099;</button>
     <span class="toolbar-sep"></span>
     <button type="button" class="fmt-btn" data-cmd="justifyLeft" title="Align left">
