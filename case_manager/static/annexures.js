@@ -146,6 +146,7 @@
       item.innerHTML = `<span class="annex-grip" aria-hidden="true">&#8942;&#8942;</span>` +
         `<span class="annex-name"><a href="#" class="annex-jump" title="Scroll to this document">${esc(d.title)}</a>` +
         `<span class="report-card-meta">${esc(pages)}</span>` +
+        `<a class="annex-view" href="/annotations?doc=${encodeURIComponent(d.id)}&type=${encodeURIComponent(d.type)}&page=1">View document</a>` +
         `<select class="annex-mode" title="Which pages of this document to include">` +
         `<option value="all">Include all pages</option>` +
         `<option value="snippets" ${d.snippet_pages.length ? "" : "disabled"}>Only pages with snippets</option>` +

@@ -228,7 +228,7 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
 def delete_document(document_id: str) -> None:
     """Removes a document's row plus its file (and any docx->pdf render
     cache entry). Refused while it has annotations or snippets, is linked
-    to a hearing, or is the source of a report -- deleting it would
+    to a hearing, is the source of a report, or is in an annexure -- deleting it would
     silently cut those references."""
     doc_type = get_document_type(document_id)
     if doc_type is None:
@@ -244,6 +244,8 @@ def delete_document(document_id: str) -> None:
                        "Cannot delete a document that is linked to a hearing")
         _refuse_if_any(cur, "SELECT 1 FROM reports WHERE source_document_id = %s LIMIT 1", (document_id,),
                        "Cannot delete a document that is the source of a report")
+        _refuse_if_any(cur, "SELECT 1 FROM report_annexure_documents WHERE document_id = %s LIMIT 1", (document_id,),
+                       "Cannot delete a document that is included in an annexure. Remove it from the annexure first.")
         cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
     # The row goes first: if that fails nothing is lost, and if the file
     # delete fails afterwards the worst case is a stray file, never a row

@@ -800,6 +800,7 @@ a.tag:hover { background: #d7deec; }
 .annex-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .annex-name a { color: inherit; text-decoration: none; }
 .annex-name a:hover { text-decoration: underline; }
+.annex-name a.annex-view { color: #2266dd; font-size: 12px; margin-top: 2px; }
 .annex-delete { border: none; background: none; color: #c0392b; cursor: pointer; padding: 4px; display: flex; }
 .annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
 .annex-name select, .annex-name .annex-range { margin-top: 4px; font-size: 12px; padding: 3px 4px; }
