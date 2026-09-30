@@ -397,13 +397,10 @@
       }
       s.points = smoothPoints(s.points, 2);
       state.annotations.push(s);
-      const idx = state.annotationSnippetIds.push(null) - 1;
+      state.annotationSnippetIds.push(null);
       state.dirty = true;
       updateAnnotatedPagesBtn();
       redraw();
-      const b = freehandBoundsFrac(s);
-      const snippet = await createSnippet(controller, boundsToPaddedRect(canvas, b.x0, b.y0, b.x1, b.y1, 5));
-      if (snippet && state.annotationSnippetIds.length > idx) state.annotationSnippetIds[idx] = snippet.id;
       await saveAfterAddition(controller);
     }
 
