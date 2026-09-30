@@ -12,24 +12,6 @@ static/dist/
 
 # Working storage — generated/cached at runtime, not source (and may hold real
 # case content, which shouldn't land in git history)
-storage/cache/*
-storage/annotations/*
-storage/snippets/*
-storage/reports/*
-storage/cases/*
-storage/causes/*
-storage/allegations/*
-storage/doc_meta/*
-storage/documents/*
 # Per-user folders (storage/<32-hex owner hash>/{documents,snippets,cache}/)
 storage/????????????????????????????????/
-!storage/cache/.gitkeep
-!storage/annotations/.gitkeep
-!storage/snippets/.gitkeep
-!storage/reports/.gitkeep
-!storage/cases/.gitkeep
-!storage/causes/.gitkeep
-!storage/allegations/.gitkeep
-!storage/doc_meta/.gitkeep
-!storage/documents/.gitkeep
 .playwright-mcp/
