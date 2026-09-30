@@ -475,25 +475,49 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(PAGE_NUMBER_FONT_SIZE_MAX, Math.max(PAGE_NUMBER_FONT_SIZE_MIN, n));
   }
 
-  // The colour is only committed with Apply, like the dialog's other fields.
-  let pendingPageNumberColor = pageNumbers.color;
+  // Page numbers live in the sidebar and apply as soon as a control changes.
   const selectPageNumberSwatch = PageNumberPalette.mount(pageNumberColorPalette, (c) => {
-    pendingPageNumberColor = c;
+    pageNumbers = { ...pageNumbers, color: c };
     selectPageNumberSwatch(c);
+    applyPageNumbers();
   });
+
+  function renderPageNumberInputs() {
+    pageNumberPositionInput.value = pageNumbers.position;
+    pageNumberStartInput.value = pageNumbers.skip + 1;
+    pageNumberFontInput.value = pageNumbers.font;
+    pageNumberFontSizeInput.value = pageNumbers.fontSize;
+    pageNumberShapeInput.value = pageNumbers.shape;
+    selectPageNumberSwatch(pageNumbers.color);
+  }
+
+  function applyPageNumbers() {
+    renderMarginGuides();
+    markDirty();
+  }
+
+  function readPageNumbers() {
+    const start = clampPageNumberStart(pageNumberStartInput.value);
+    const fontSize = clampPageNumberFontSize(pageNumberFontSizeInput.value);
+    pageNumberStartInput.classList.toggle("invalid", start === null);
+    pageNumberFontSizeInput.classList.toggle("invalid", fontSize === null);
+    if (start === null || fontSize === null) return;
+    if (!PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value) || !PAGE_NUMBER_FONTS.has(pageNumberFontInput.value)) return;
+    pageNumbers = {
+      position: pageNumberPositionInput.value, skip: start - 1, font: pageNumberFontInput.value, fontSize,
+      shape: PAGE_NUMBER_SHAPES.has(pageNumberShapeInput.value) ? pageNumberShapeInput.value : "none",
+      color: pageNumbers.color,
+    };
+    applyPageNumbers();
+  }
+  [pageNumberPositionInput, pageNumberStartInput, pageNumberFontInput, pageNumberFontSizeInput, pageNumberShapeInput]
+    .forEach((el) => el.addEventListener("change", readPageNumbers));
 
   pageSetupBtn.addEventListener("click", () => {
     marginLeftInput.value = margins.left;
     marginRightInput.value = margins.right;
     marginHeaderInput.value = margins.header;
     marginFooterInput.value = margins.footer;
-    pageNumberPositionInput.value = pageNumbers.position;
-    pageNumberStartInput.value = pageNumbers.skip + 1;
-    pageNumberFontInput.value = pageNumbers.font;
-    pageNumberFontSizeInput.value = pageNumbers.fontSize;
-    pageNumberShapeInput.value = pageNumbers.shape;
-    pendingPageNumberColor = pageNumbers.color;
-    selectPageNumberSwatch(pendingPageNumberColor);
     pageSetupError.style.display = "none";
     openModal(pageSetupModal);
   });
@@ -511,22 +535,7 @@ import { Pagination, repaginate } from "./pagination.js";
       pageSetupError.style.display = "block";
       return;
     }
-    const start = clampPageNumberStart(pageNumberStartInput.value);
-    if (start === null || !PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value)) {
-      pageSetupError.textContent = "Enter a start page between 1 and 51.";
-      pageSetupError.style.display = "block";
-      return;
-    }
-    const skip = start - 1;
-    const fontSize = clampPageNumberFontSize(pageNumberFontSizeInput.value);
-    if (fontSize === null || !PAGE_NUMBER_FONTS.has(pageNumberFontInput.value)) {
-      pageSetupError.textContent = "Enter a page number font size between 6 and 72.";
-      pageSetupError.style.display = "block";
-      return;
-    }
     margins = { left, right, header, footer };
-    pageNumbers = { position: pageNumberPositionInput.value, skip, font: pageNumberFontInput.value, fontSize,
-      shape: PAGE_NUMBER_SHAPES.has(pageNumberShapeInput.value) ? pageNumberShapeInput.value : "none", color: pendingPageNumberColor };
     applyMarginsToCss();
     markDirty();
     closeModal(pageSetupModal);
@@ -1125,6 +1134,7 @@ import { Pagination, repaginate } from "./pagination.js";
       titleInput.value = data.name || "";
       margins = normalizeMargins(data.margins);
       pageNumbers = normalizePageNumbers(data.pageNumbers);
+      renderPageNumberInputs();
       applyMarginsToCss();
       // Loading a report's saved content is not a user edit -- without
       // suppressing history here, this transaction becomes the first undo

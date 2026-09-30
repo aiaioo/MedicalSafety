@@ -169,6 +169,48 @@
       <div id="reportSnippetList" class="snippet-list">
         <p class="empty">Pick a source document above to see its snippets here.</p>
       </div>
+      <h3 class="annex-section-divider">Page numbers</h3>
+      <div class="annex-numbering">
+        <label class="modal-field">Page number position
+          <select id="pageNumberPositionInput">
+            <option value="none">None</option>
+            <option value="top-center">Top center</option>
+            <option value="top-left">Top left</option>
+            <option value="top-right">Top right</option>
+            <option value="bottom-center">Bottom center</option>
+            <option value="bottom-left">Bottom left</option>
+            <option value="bottom-right">Bottom right</option>
+          </select>
+        </label>
+        <label class="modal-field">Start numbering at page
+          <input id="pageNumberStartInput" type="number" min="1" max="51" step="1">
+        </label>
+        <label class="modal-field">Page number font
+          <select id="pageNumberFontInput">
+            <option value="Arial" style="font-family:Arial">Arial</option>
+            <option value="Georgia" style="font-family:Georgia">Georgia</option>
+            <option value="'Times New Roman'" style="font-family:'Times New Roman'">Times New Roman</option>
+            <option value="'Courier New'" style="font-family:'Courier New'">Courier New</option>
+            <option value="Verdana" style="font-family:Verdana">Verdana</option>
+            <option value="'Trebuchet MS'" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+            <option value="'Comic Sans MS'" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+          </select>
+        </label>
+        <label class="modal-field">Page number font size
+          <input id="pageNumberFontSizeInput" type="number" min="6" max="72" step="1">
+        </label>
+        <label class="modal-field">Shape around page number
+          <select id="pageNumberShapeInput">
+            <option value="none">None</option>
+            <option value="circle">Circle</option>
+            <option value="rectangle">Rectangle</option>
+          </select>
+        </label>
+        <div class="modal-field">Page number colour
+          <div id="pageNumberColorPalette" class="color-palette" role="radiogroup" aria-label="Page number colour"></div>
+        </div>
+        <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Shown in the page preview and included in exported PDF/Word files. In Word files a circle comes out as a box.</p>
+      </div>
     </aside>
     {% endif %}
   </main>
@@ -209,7 +251,7 @@
   <div class="modal-overlay" id="pageSetupModal">
     <div class="modal">
       <h3>Page setup</h3>
-      <p class="modal-hint">Margins in points (72pt = 1 inch). Shown as dashed guides on the page and applied to the exported PDF.</p>
+      <p class="modal-hint">Margins in points (72pt = 1 inch). Shown as dashed guides on the page and applied to the exported PDF. Page numbers are set in the side panel.</p>
       <div class="margin-grid">
         <label class="modal-field">Left margin
           <input id="marginLeftInput" type="number" min="0" max="200" step="1">
@@ -224,53 +266,6 @@
           <input id="marginFooterInput" type="number" min="0" max="200" step="1">
         </label>
       </div>
-      <p class="modal-hint">Page numbers, shown in the page preview and included in exported PDF/Word files.</p>
-      <div class="margin-grid">
-        <label class="modal-field">Page number position
-          <select id="pageNumberPositionInput">
-            <option value="top-center">Top center</option>
-            <option value="top-left">Top left</option>
-            <option value="top-right">Top right</option>
-            <option value="bottom-center">Bottom center</option>
-            <option value="bottom-left">Bottom left</option>
-            <option value="bottom-right">Bottom right</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-        <label class="modal-field">Start numbering at page
-          <input id="pageNumberStartInput" type="number" min="1" max="51" step="1">
-        </label>
-      </div>
-      <p class="modal-hint">Pages before this are left unnumbered; numbering then restarts at 1 on the page you enter.</p>
-      <div class="margin-grid">
-        <label class="modal-field">Page number font
-          <select id="pageNumberFontInput">
-            <option value="Arial" style="font-family:Arial">Arial</option>
-            <option value="Georgia" style="font-family:Georgia">Georgia</option>
-            <option value="'Times New Roman'" style="font-family:'Times New Roman'">Times New Roman</option>
-            <option value="'Courier New'" style="font-family:'Courier New'">Courier New</option>
-            <option value="Verdana" style="font-family:Verdana">Verdana</option>
-            <option value="'Trebuchet MS'" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
-            <option value="'Comic Sans MS'" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
-          </select>
-        </label>
-        <label class="modal-field">Page number font size
-          <input id="pageNumberFontSizeInput" type="number" min="6" max="72" step="1">
-        </label>
-      </div>
-      <div class="margin-grid">
-        <label class="modal-field">Shape around page number
-          <select id="pageNumberShapeInput">
-            <option value="none">None</option>
-            <option value="circle">Circle</option>
-            <option value="rectangle">Rectangle</option>
-          </select>
-        </label>
-        <div class="modal-field">Page number colour
-          <div id="pageNumberColorPalette" class="color-palette" role="radiogroup" aria-label="Page number colour"></div>
-        </div>
-      </div>
-      <p class="modal-hint">In Word files a circle comes out as a box, as Word can't outline a page number with a circle.</p>
       <p id="pageSetupError" class="error-message" style="display:none"></p>
       <div class="modal-actions">
         <button type="button" id="pageSetupCancel">Cancel</button>
