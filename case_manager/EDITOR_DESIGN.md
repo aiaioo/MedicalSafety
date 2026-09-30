@@ -66,7 +66,7 @@ never has to construct API URLs itself beyond simple concatenation, and Jinja's
   group — Upload source, then Page setup, then Download as PDF / Download as Word), the
   document title `<input>`, an explicit **Save** button + autosave status text, an
   `#uploadSourceStatus` status span, and the source picker (`<select id="sourceSelect">`
-  + "Annotate source »" link).
+  + "Annotate documents »" link).
 - `.doc-toolbar` (`#formatToolbar`) — a Google-Docs-style formatting toolbar: font
   family/size selects, paragraph style select (Normal/H1/H2/H3), bold/italic/underline,
   text color + highlight color pickers, alignment buttons (inline SVG icons), bullet/
@@ -258,7 +258,7 @@ on a centered snippet) doesn't trigger a spurious save.
 
 `sourceSelect` determines which source document's snippets/annotations show in the
 sidebar — independent from (but often initialized from) the report's own
-`source_doc`/`source_type`. Changing it: updates the "Annotate source »" link, reloads
+`source_doc`/`source_type`. Changing it: updates the "Annotate documents »" link, reloads
 the sidebar via `GET /api/doc/<id>/snippets?type=...`, and marks the report dirty (since
 `source_doc`/`source_type` are themselves persisted fields on the report).
 
