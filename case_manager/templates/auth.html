@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ 'Sign up' if mode == 'signup' else 'Sign in' }}</title>
+<title>{{ 'Sign up' if mode == 'signup' else 'Sign in' }} — {{ site_name }}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -11,6 +11,7 @@
 <div class="auth-page">
   <form class="modal auth-card" method="post"
         action="{{ url_for('auth.signup' if mode == 'signup' else 'auth.signin') }}">
+    <p class="auth-site-name">{{ site_name }}</p>
     <h3>{{ 'Create an account' if mode == 'signup' else 'Sign in' }}</h3>
     <input type="hidden" name="next" value="{{ next }}">
     <label class="modal-field">Email

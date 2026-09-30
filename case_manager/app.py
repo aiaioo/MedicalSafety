@@ -427,6 +427,18 @@ def default_cause_for_display():
     return {"id": cause_id, "title": cause["title"] or cause_id} if cause else None
 
 
+# The site's display name follows the domain the visitor used (the same app
+# and database serve every domain); unknown hosts, e.g. localhost, get the default.
+SITE_NAMES = {"medicalsafety.in": "Medical Safety", "caseplan.in": "Case Plan"}
+DEFAULT_SITE_NAME = "Case Plan"
+
+
+@app.context_processor
+def inject_site_name():
+    host = request.host.split(":")[0].lower().removeprefix("www.")
+    return {"site_name": SITE_NAMES.get(host, DEFAULT_SITE_NAME)}
+
+
 @app.context_processor
 def inject_cause_picker():
     """The title bar's cause picker (templates/_cause_picker.html): the
