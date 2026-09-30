@@ -91,7 +91,13 @@
       <button type="button" class="mode-btn" data-mode="freehand">Freehand</button>
       <button type="button" class="mode-btn" data-mode="snippet">Snippet</button>
     </div>
-    <label class="color-label">Color <input id="colorPicker" type="color" value="#e02424"></label>
+    <div class="color-pop-wrap">
+      <button type="button" id="colorBtn" aria-haspopup="true" aria-expanded="false">Color <span class="color-current" id="colorCurrent"></span></button>
+      <input id="colorPicker" type="hidden" value="#e02424">
+      <div id="colorPopover" class="color-popover" hidden>
+        <div id="annotationColorPalette" class="color-palette" role="radiogroup" aria-label="Annotation colour"></div>
+      </div>
+    </div>
     <button type="button" id="undoBtn">Undo</button>
     <button type="button" id="clearBtn">Clear</button>
     <button type="button" id="downloadBtn">Download annotated PDF</button>
@@ -126,6 +132,7 @@ try { localStorage.setItem("lastSourceUrl", location.pathname + location.search)
 })();
 </script>
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
+<script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>
 {% endif %}
 </body>

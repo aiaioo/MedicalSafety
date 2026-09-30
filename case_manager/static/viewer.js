@@ -22,6 +22,27 @@
   const snippetListEl = document.getElementById("snippetList");
   const snippetsHeading = document.getElementById("snippetsHeading");
   const colorPicker = document.getElementById("colorPicker");
+  const colorBtn = document.getElementById("colorBtn");
+  const colorPopover = document.getElementById("colorPopover");
+  const colorCurrent = document.getElementById("colorCurrent");
+  const selectColorSwatch = PageNumberPalette.mount(
+    document.getElementById("annotationColorPalette"),
+    (c) => { setColor(c); setColorPopoverOpen(false); });
+  function setColor(c) {
+    colorPicker.value = c;
+    colorCurrent.style.background = c;
+    selectColorSwatch(c);
+  }
+  function setColorPopoverOpen(open) {
+    colorPopover.hidden = !open;
+    colorBtn.setAttribute("aria-expanded", open);
+  }
+  colorBtn.addEventListener("click", () => setColorPopoverOpen(colorPopover.hidden));
+  document.addEventListener("mousedown", (e) => {
+    if (!colorPopover.hidden && !colorPopover.contains(e.target) && !colorBtn.contains(e.target)) setColorPopoverOpen(false);
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setColorPopoverOpen(false); });
+  setColor(colorPicker.value);
   const pageInput = document.getElementById("pageInput");
   const modeHint = document.getElementById("modeHint");
   const prevLink = document.getElementById("prevLink");
