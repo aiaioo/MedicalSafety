@@ -1244,6 +1244,12 @@
         <a href="${s.url}" download>Download</a>
         <button type="button" class="del-snippet">Delete</button>
       </div>`;
+    if ("created_by_email" in s) {
+      const by = document.createElement("div");
+      by.className = "snippet-creator";
+      by.textContent = "Created by " + (s.created_by_email || "Unknown user");
+      card.appendChild(by);
+    }
     const delBtn = card.querySelector(".del-snippet");
     delBtn.addEventListener("click", () => {
       if (!delBtn.classList.contains("confirming")) {

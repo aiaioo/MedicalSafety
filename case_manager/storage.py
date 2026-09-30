@@ -375,24 +375,20 @@ def set_page_annotations(document_id: str, page: int, annotations: list) -> None
 # Snippets (cropped page images)
 # ---------------------------------------------------------------------------
 
-def list_snippets(document_id: str, page: int | None = None) -> list[dict]:
+def list_snippets(document_id: str, page: int | None = None, include_creator: bool = False) -> list[dict]:
+    """`include_creator` adds "created_by_email" (None if unknown); leave it
+    off anywhere the result could reach an export or a non-owner."""
     with _cursor() as cur:
-        if page is None:
-            cur.execute(
-                """
-                SELECT id, page_number, filename, rect_x, rect_y, rect_w, rect_h, annotated, created_at
-                FROM snippets WHERE document_id = %s ORDER BY created_at
-                """,
-                (document_id,),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT id, page_number, filename, rect_x, rect_y, rect_w, rect_h, annotated, created_at
-                FROM snippets WHERE document_id = %s AND page_number = %s ORDER BY created_at
-                """,
-                (document_id, page),
-            )
+        cur.execute(
+            """
+            SELECT s.id, s.page_number, s.filename, s.rect_x, s.rect_y, s.rect_w, s.rect_h, s.annotated,
+                   s.created_at, u.email AS creator_email
+            FROM snippets s LEFT JOIN users u ON u.id = s.created_by
+            WHERE s.document_id = %s AND (%s::int IS NULL OR s.page_number = %s)
+            ORDER BY s.created_at
+            """,
+            (document_id, page, page),
+        )
         rows = cur.fetchall()
     return [
         {
@@ -402,12 +398,14 @@ def list_snippets(document_id: str, page: int | None = None) -> list[dict]:
             "rect": {"x": r["rect_x"], "y": r["rect_y"], "w": r["rect_w"], "h": r["rect_h"]},
             "annotated": r["annotated"],
             "created_at": _iso(r["created_at"]),
+            **({"created_by_email": r["creator_email"]} if include_creator else {}),
         }
         for r in rows
     ]
 
 
-def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png_bytes: bytes) -> dict:
+def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png_bytes: bytes,
+                   created_by: int | None = None) -> dict:
     location = _document_location(document_id)
     if location is None:
         raise StorageError(f"No document with id {document_id!r}")
@@ -422,11 +420,11 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
         cur.execute(
             """
             INSERT INTO snippets (id, document_id, page_number, filename, rect_x, rect_y, rect_w, rect_h,
-                                   annotated, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   annotated, created_at, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (snippet_id, document_id, page, filename, rect["x"], rect["y"], rect["w"], rect["h"],
-             annotated, created_at),
+             annotated, created_at, created_by),
         )
     return {"id": snippet_id, "page": page, "filename": filename, "rect": rect, "annotated": annotated,
             "created_at": created_at}

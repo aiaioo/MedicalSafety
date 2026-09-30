@@ -877,3 +877,4 @@ a.tag:hover { background: #d7deec; }
 .collab-delete { border: none; background: none; padding: 4px; border-radius: 4px; color: #8a92a5; cursor: pointer; line-height: 0; }
 .collab-delete:hover { color: #c0392b; background: #fbeceb; }
 .collab-delete:disabled { opacity: 0.5; cursor: default; }
+.snippet-creator { font-size: 11px; color: #666; margin-top: 2px; }

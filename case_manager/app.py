@@ -1966,7 +1966,8 @@ def api_create_snippet(doc_id, page):
         pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
         png_bytes = pix.tobytes("png")
 
-    entry = storage.create_snippet(doc_id, page, {"x": x, "y": y, "w": w, "h": h}, bool(annotations), png_bytes)
+    entry = storage.create_snippet(doc_id, page, {"x": x, "y": y, "w": w, "h": h}, bool(annotations), png_bytes,
+                                  created_by=g.user.id)
 
     result = dict(entry)
     result["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)
@@ -2033,10 +2034,11 @@ def api_download_original(doc_id):
 def api_list_snippets(doc_id):
     check_doc_id(doc_id)
     normalize_type(request.args.get("type", "pdf"))
-    require_role("source", doc_id)
+    role = require_role("source", doc_id)
     page = request.args.get("page", type=int)
 
-    meta = storage.list_snippets(doc_id, page=page)
+    # Who made a snippet is for the owner's side panel only.
+    meta = storage.list_snippets(doc_id, page=page, include_creator=(role == "owner"))
     raw_type = request.args.get("type", "pdf")
     for m in meta:
         m["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=m["filename"], type=raw_type)

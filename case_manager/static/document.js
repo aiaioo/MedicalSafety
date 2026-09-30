@@ -1806,6 +1806,12 @@
             <span class="tag">${label} &middot; p${s.page}</span>
             <button type="button" class="insert-snippet">Insert</button>
           </div>`;
+        if ("created_by_email" in s) {
+          const by = document.createElement("div");
+          by.className = "snippet-creator";
+          by.textContent = "Created by " + (s.created_by_email || "Unknown user");
+          card.appendChild(by);
+        }
         card.querySelector(".insert-snippet").addEventListener("click", () => {
           const pageInfo = pages[s.page - 1];
           let sizeStyle = "";
