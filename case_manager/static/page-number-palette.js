@@ -22,8 +22,8 @@ window.PageNumberPalette = (function () {
     ...hueRow(85, 30),
     ...[0, 30, 60, 120, 180, 240, 285, 320].map((hue) => hslToHex(hue, 100, 50)),
     ...hueRow(85, 45),
-    ...hueRow(70, 82),
     ...hueRow(85, 65),
+    ...hueRow(70, 82),
     ...hueRow(40, 40),
     ...hueRow(40, 65),
   ];
