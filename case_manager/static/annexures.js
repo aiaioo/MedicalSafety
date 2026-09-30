@@ -13,7 +13,6 @@
   const pnFont = document.getElementById("pageNumberFontInput");
   const pnSize = document.getElementById("pageNumberFontSizeInput");
   const pnShape = document.getElementById("pageNumberShapeInput");
-  const pnPalette = document.getElementById("pageNumberColorPalette");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
   let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
@@ -239,7 +238,7 @@
   }
 
   const markSelectedSwatch = () => selectSwatch(state.pageNumbers.color);
-  const selectSwatch = PageNumberPalette.mount(pnPalette, (c) => {
+  const selectSwatch = PageNumberPalette.mountPopover("pageNumberColor", (c) => {
     state.pageNumbers = { ...state.pageNumbers, color: c };
     markSelectedSwatch();
     commit();

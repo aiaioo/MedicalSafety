@@ -68,7 +68,12 @@
           </select>
         </label>
         <div class="modal-field">Page number colour
-          <div id="pageNumberColorPalette" class="color-palette" role="radiogroup" aria-label="Page number colour"></div>
+          <div class="color-pop-wrap">
+            <button type="button" class="color-pick-btn" id="pageNumberColorBtn" aria-haspopup="true" aria-expanded="false">Color <span class="color-current" id="pageNumberColorCurrent"></span></button>
+            <div id="pageNumberColorPopover" class="color-popover" hidden>
+              <div id="pageNumberColorPalette" class="color-palette" role="radiogroup" aria-label="Page number colour"></div>
+            </div>
+          </div>
         </div>
         <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Counts pages of the whole annexure.</p>
       </div>

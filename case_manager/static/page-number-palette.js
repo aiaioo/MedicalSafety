@@ -49,5 +49,25 @@ window.PageNumberPalette = (function () {
     return select;
   }
 
-  return { mount };
+  // A "Color" button that opens `mount`'s palette in a popover. `ids` is the id
+  // prefix of <prefix>Btn / <prefix>Popover / <prefix>Palette / <prefix>Current.
+  // Returns select(color): marks the swatch and updates the button's chip.
+  function mountPopover(prefix, onPick) {
+    const btn = document.getElementById(prefix + "Btn");
+    const popover = document.getElementById(prefix + "Popover");
+    const current = document.getElementById(prefix + "Current");
+    const setOpen = (open) => {
+      popover.hidden = !open;
+      btn.setAttribute("aria-expanded", open);
+    };
+    const markSwatch = mount(document.getElementById(prefix + "Palette"), (c) => { setOpen(false); onPick(c); });
+    btn.addEventListener("click", () => setOpen(popover.hidden));
+    document.addEventListener("mousedown", (e) => {
+      if (!popover.hidden && !popover.contains(e.target) && !btn.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+    return (color) => { current.style.background = color; markSwatch(color); };
+  }
+
+  return { mount, mountPopover };
 })();

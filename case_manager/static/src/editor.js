@@ -72,7 +72,6 @@ import { Pagination, repaginate } from "./pagination.js";
   const pageNumberFontInput = document.getElementById("pageNumberFontInput");
   const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
   const pageNumberShapeInput = document.getElementById("pageNumberShapeInput");
-  const pageNumberColorPalette = document.getElementById("pageNumberColorPalette");
   const pageSetupError = document.getElementById("pageSetupError");
   const pageSetupCancel = document.getElementById("pageSetupCancel");
   const pageSetupApply = document.getElementById("pageSetupApply");
@@ -476,7 +475,7 @@ import { Pagination, repaginate } from "./pagination.js";
   }
 
   // Page numbers live in the sidebar and apply as soon as a control changes.
-  const selectPageNumberSwatch = PageNumberPalette.mount(pageNumberColorPalette, (c) => {
+  const selectPageNumberSwatch = PageNumberPalette.mountPopover("pageNumberColor", (c) => {
     pageNumbers = { ...pageNumbers, color: c };
     selectPageNumberSwatch(c);
     applyPageNumbers();
