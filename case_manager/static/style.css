@@ -847,3 +847,30 @@ a.tag:hover { background: #d7deec; }
 .color-none-box { width: 18px; height: 18px; border: 1px solid rgba(0, 0, 0, 0.3); border-radius: 3px; background: linear-gradient(to top right, transparent calc(50% - 1px), #c0392b, transparent calc(50% + 1px)), #fff; }
 .color-pick-btn { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; border: 1px solid #cfd4e0; background: #f7f8fa; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
 .modal-field .color-popover { width: 100%; }
+
+/* Collaborations (templates/collaborations.html) and the title-bar bell. */
+.notify-bell { position: relative; display: inline-flex; align-items: center; color: #5f6368; text-decoration: none; padding: 4px; }
+.notify-bell:hover { color: #2266dd; }
+.notify-badge { position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 8px; background: #c0392b; color: white; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.collab-page { max-width: 760px; margin: 24px auto 64px; padding: 0 20px; }
+.collab-invite { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 4px 19px 16px; margin-bottom: 24px; }
+.collab-invite input[type=email], .collab-invite input[type=text] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
+.collab-captcha-row { display: flex; align-items: center; gap: 10px; }
+.collab-list { display: flex; flex-direction: column; gap: 12px; }
+.collab-card { border: 1px solid #e0e2e8; border-radius: 10px; background: white; padding: 12px 16px; }
+.collab-card.is-new { border-color: #2266dd; box-shadow: 0 0 0 2px rgba(34,102,221,0.15); }
+.collab-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.collab-email { font-weight: 600; word-break: break-all; }
+.collab-status { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 10px; background: #eef1f7; color: #46536b; }
+.collab-status.received { background: #fff4d6; color: #7a5b00; }
+.collab-status.confirmed { background: #e2f5e7; color: #1d6b34; }
+.collab-when { font-size: 12px; color: #8a92a5; margin-left: auto; }
+.collab-actions { display: flex; gap: 8px; margin-top: 10px; }
+.collab-access h4 { margin: 14px 0 4px; font-size: 13px; color: #46536b; }
+.collab-access ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.collab-access .kind { font-weight: 600; text-transform: capitalize; }
+.collab-role { font-size: 11px; color: #8a92a5; }
+.collab-edit-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+.collab-edit-row span.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-edit-row select { padding: 3px 6px; border: 1px solid #cfd4e0; border-radius: 4px; }

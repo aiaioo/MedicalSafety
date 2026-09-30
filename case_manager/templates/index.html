@@ -20,7 +20,10 @@
 <header class="docbar" style="position: relative;">
   <span class="account-bar">Signed in as {{ g.user.email }}</span>
   <div class="docbar-center"><span class="doc-name doc-name-static">Case Plan</span>{% include "_cause_picker.html" %}</div>
-  <form method="post" action="{{ url_for('auth.signout') }}" style="margin-left: auto; margin-bottom: 0;"><button type="submit" class="btn">Sign out</button></form>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+    {% include "_notifications.html" %}
+    <form method="post" action="{{ url_for('auth.signout') }}" style="margin-bottom: 0;"><button type="submit" class="btn">Sign out</button></form>
+  </div>
 </header>
 
 <div class="container">
@@ -66,6 +69,13 @@
   <section class="index-section">
     <p class="empty">Upload document PDFs or Word files and mark them up with boxes, freehand and snippets.</p>
     <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
+  </section>
+
+  <h1>Collaborations</h1>
+
+  <section class="index-section">
+    <p class="empty">Invite other users to collaborate and choose what you share with them.</p>
+    <p><a class="btn" href="{{ url_for('collaborations_view') }}">Open collaborations workspace</a></p>
   </section>
 
   <label style="display: block; margin: 0.5rem 0;"><input type="checkbox" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>

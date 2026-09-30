@@ -1077,15 +1077,16 @@ def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_ro
     return items
 
 
-def list_allegations(cause_ids: Collection[str]) -> list[dict]:
+def list_allegations(cause_ids: Collection[str], allegation_ids: Collection[str] = ()) -> list[dict]:
     """In display order (allegations/allegation_order.json's old job is now
     just ORDER BY order_index -- see set_allegation_order). Only those under
-    `cause_ids` -- callers pass the causes the user may see."""
+    `cause_ids` or named in `allegation_ids` -- callers pass the causes and
+    allegations the user may see."""
     with _cursor() as cur:
         cur.execute(
             "SELECT id, title, description, cause_id, created_at, updated_at FROM allegations "
-            "WHERE cause_id = ANY(%s) ORDER BY order_index",
-            (list(cause_ids),),
+            "WHERE cause_id = ANY(%s) OR id = ANY(%s) ORDER BY order_index",
+            (list(cause_ids), list(allegation_ids)),
         )
         allegation_rows = cur.fetchall()
         cur.execute("SELECT allegation_id, id, kind, text, report_id FROM allegation_evidence ORDER BY position")
@@ -1288,6 +1289,7 @@ _ACCESS_TABLES = {
     "case": ("user_cases", "case_id"),
     "report": ("user_reports", "report_id"),
     "source": ("user_sources", "document_id"),
+    "allegation": ("user_allegations", "allegation_id"),
 }
 
 
@@ -1335,6 +1337,195 @@ def can_view_snippet_images(user_id: int, document_id: str) -> bool:
             (user_id, document_id, user_id, document_id),
         )
         return cur.fetchone()["ok"]
+
+
+# ---------------------------------------------------------------------------
+# Collaborations (db/migrations/015_collaborations.sql): one row per pair of
+# users, created by an invitation and confirmed when the invitee accepts.
+# Between confirmed collaborators, an owner shares objects by adding
+# viewer/editor rows to the access tables above.
+# ---------------------------------------------------------------------------
+
+# kind -> (object table, display-title column)
+_OBJECT_TITLES = {
+    "cause": ("causes", "title"),
+    "case": ("cases", "name"),
+    "allegation": ("allegations", "title"),
+    "report": ("reports", "name"),
+    "source": ("documents", "title"),
+}
+SHARE_ROLES = ("viewer", "editor")
+SHARE_KINDS = tuple(_OBJECT_TITLES)
+
+
+def find_collaboration(user_a: int, user_b: int) -> dict | None:
+    """The collaboration between two users, whoever invited whom."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, inviter_id, invitee_id, status FROM collaborations "
+            "WHERE (inviter_id = %s AND invitee_id = %s) OR (inviter_id = %s AND invitee_id = %s)",
+            (user_a, user_b, user_b, user_a),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def create_collaboration(inviter_id: int, invitee_id: int) -> int | None:
+    """Id of the new pending invitation, or None if these two already have one."""
+    try:
+        with _cursor() as cur:
+            cur.execute(
+                "INSERT INTO collaborations (inviter_id, invitee_id) VALUES (%s, %s) RETURNING id",
+                (inviter_id, invitee_id),
+            )
+            return cur.fetchone()["id"]
+    except psycopg2.errors.UniqueViolation:
+        return None
+
+
+def get_collaboration(collaboration_id: int) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT id, inviter_id, invitee_id, status FROM collaborations WHERE id = %s", (collaboration_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def list_collaborations(user_id: int) -> list[dict]:
+    """Every collaboration this user is part of, most recent activity first:
+    {"id", "other_id", "email", "status" ("sent" / "received" / "confirmed"),
+    "at", "is_new"}. `is_new` marks an invitation just received, or an
+    acceptance the user has yet to see."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.inviter_id, c.status, c.inviter_seen,
+                   COALESCE(c.responded_at, c.created_at) AS at,
+                   o.id AS other_id, o.email
+            FROM collaborations c
+            JOIN users o ON o.id = CASE WHEN c.inviter_id = %s THEN c.invitee_id ELSE c.inviter_id END
+            WHERE c.inviter_id = %s OR c.invitee_id = %s
+            ORDER BY at DESC, c.id DESC
+            """,
+            (user_id, user_id, user_id),
+        )
+        rows = cur.fetchall()
+    items = []
+    for r in rows:
+        mine = r["inviter_id"] == user_id
+        status = "confirmed" if r["status"] == "confirmed" else ("sent" if mine else "received")
+        items.append({
+            "id": r["id"], "other_id": r["other_id"], "email": r["email"], "status": status, "at": _iso(r["at"]),
+            "is_new": status == "received" or (status == "confirmed" and mine and not r["inviter_seen"]),
+        })
+    return items
+
+
+def accept_collaboration(collaboration_id: int, user_id: int) -> bool:
+    """Confirms a pending invitation addressed to `user_id`."""
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE collaborations SET status = 'confirmed', responded_at = now() "
+            "WHERE id = %s AND invitee_id = %s AND status = 'pending'",
+            (collaboration_id, user_id),
+        )
+        return cur.rowcount == 1
+
+
+def delete_pending_collaboration(collaboration_id: int, user_id: int) -> bool:
+    """Withdraws an invitation the user sent, or declines one they received."""
+    with _cursor() as cur:
+        cur.execute(
+            "DELETE FROM collaborations WHERE id = %s AND status = 'pending' AND (inviter_id = %s OR invitee_id = %s)",
+            (collaboration_id, user_id, user_id),
+        )
+        return cur.rowcount == 1
+
+
+def count_notifications(user_id: int) -> int:
+    """Invitations awaiting this user's answer, plus their invitations that
+    were accepted and they haven't looked at yet."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) AS n FROM collaborations
+            WHERE (invitee_id = %s AND status = 'pending')
+               OR (inviter_id = %s AND status = 'confirmed' AND NOT inviter_seen)
+            """,
+            (user_id, user_id),
+        )
+        return cur.fetchone()["n"]
+
+
+def mark_acceptances_seen(user_id: int) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE collaborations SET inviter_seen = TRUE WHERE inviter_id = %s AND status = 'confirmed' AND NOT inviter_seen",
+            (user_id,),
+        )
+
+
+def list_owned_objects(user_id: int) -> dict[str, list[dict]]:
+    """kind -> [{"id", "title"}] of everything this user owns (and so can share)."""
+    result = {}
+    with _cursor() as cur:
+        for kind, (table, column) in _ACCESS_TABLES.items():
+            obj_table, title_col = _OBJECT_TITLES[kind]
+            cur.execute(
+                f"SELECT o.id, o.{title_col} AS title FROM {obj_table} o "  # noqa: S608 (fixed names)
+                f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner' "
+                f"ORDER BY lower(o.{title_col}), o.id",
+                (user_id,),
+            )
+            result[kind] = [{"id": r["id"], "title": r["title"] or r["id"]} for r in cur.fetchall()]
+    return result
+
+
+def list_shared_objects(owner_id: int, collaborator_id: int) -> dict[str, list[dict]]:
+    """kind -> [{"id", "title", "role"}]: the objects `owner_id` owns that
+    `collaborator_id` holds a (non-owner) role on."""
+    result = {}
+    with _cursor() as cur:
+        for kind, (table, column) in _ACCESS_TABLES.items():
+            obj_table, title_col = _OBJECT_TITLES[kind]
+            cur.execute(
+                f"SELECT o.id, o.{title_col} AS title, c.role FROM {obj_table} o "  # noqa: S608 (fixed names)
+                f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner' "
+                f"JOIN {table} c ON c.{column} = o.id AND c.user_id = %s AND c.role <> 'owner' "
+                f"ORDER BY lower(o.{title_col}), o.id",
+                (owner_id, collaborator_id),
+            )
+            result[kind] = [{"id": r["id"], "title": r["title"] or r["id"], "role": r["role"]} for r in cur.fetchall()]
+    return result
+
+
+def set_shared_objects(owner_id: int, collaborator_id: int, grants: dict[str, dict[str, str]]) -> None:
+    """Makes the collaborator's roles on the owner's objects of each kind
+    named in `grants` ({kind: {object_id: "viewer" | "editor"}}) exactly
+    those: objects not listed lose the collaborator's access. Only objects
+    the owner owns are touched, and a role of "owner" is never granted,
+    changed or removed."""
+    with _cursor() as cur:
+        for kind, wanted in grants.items():
+            table, column = _ACCESS_TABLES[kind]
+            cur.execute(f"SELECT {column} AS id FROM {table} WHERE user_id = %s AND role = 'owner'", (owner_id,))  # noqa: S608
+            owned = {r["id"] for r in cur.fetchall()}
+            keep = [oid for oid in wanted if oid in owned]
+            cur.execute(
+                f"DELETE FROM {table} WHERE user_id = %s AND role <> 'owner' "  # noqa: S608
+                f"AND {column} = ANY(%s) AND NOT ({column} = ANY(%s))",
+                (collaborator_id, list(owned), keep),
+            )
+            for oid in keep:
+                cur.execute(
+                    f"INSERT INTO {table} (user_id, {column}, role) VALUES (%s, %s, %s) "  # noqa: S608
+                    f"ON CONFLICT (user_id, {column}) DO UPDATE SET role = EXCLUDED.role WHERE {table}.role <> 'owner'",
+                    (collaborator_id, oid, wanted[oid]),
+                )
+
+
+def grant_owner(kind: str, object_id: str, user_id: int) -> None:
+    with _cursor() as cur:
+        _grant(cur, user_id, kind, object_id, "owner")
 
 
 # ---------------------------------------------------------------------------

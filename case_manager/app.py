@@ -176,7 +176,7 @@ def handle_document_error(err):
 # can't be probed for.
 # ---------------------------------------------------------------------------
 ROLE_RANK = {"viewer": 1, "editor": 2, "owner": 3}
-ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source": "document"}
+ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source": "document", "allegation": "allegation"}
 
 
 def has_role(kind, object_id, min_role):
@@ -193,6 +193,24 @@ def require_role(kind, object_id, min_role="viewer"):
         action = "delete" if min_role == "owner" else "change"
         raise DocumentError(f"You don't have permission to {action} this {label}", 403)
     return role
+
+
+def require_allegation_role(allegation, min_role="viewer"):
+    """An allegation is governed by the better of the user's role on its
+    cause and their role on the allegation itself (a collaborator may be
+    given one without the other)."""
+    roles = [storage.get_role(g.user.id, "cause", allegation["cause_id"]),
+             storage.get_role(g.user.id, "allegation", allegation["id"])]
+    best = max((r for r in roles if r), key=ROLE_RANK.get, default=None)
+    if best is None:
+        raise DocumentError(f"No allegation with id {allegation['id']!r}", 404)
+    if ROLE_RANK[best] < ROLE_RANK[min_role]:
+        raise DocumentError("You don't have permission to change this allegation", 403)
+    return best
+
+
+def visible_allegations():
+    return storage.list_allegations(storage.accessible_ids(g.user.id, "cause"), storage.accessible_ids(g.user.id, "allegation"))
 
 
 def require_link_target(fields, what):
@@ -1463,6 +1481,14 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None):
     return buf.getvalue()
 
 
+@app.context_processor
+def inject_notifications():
+    """The title bar's notification bell (templates/_notifications.html)."""
+    if not getattr(g, "user", None):
+        return {}
+    return {"notification_count": storage.count_notifications(g.user.id)}
+
+
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
@@ -1607,6 +1633,120 @@ def causes_view():
 @app.route("/cases")
 def cases_view():
     return render_template("cases.html")
+
+
+# ---------------------------------------------------------------------------
+# Collaborations: invite another user by email; once they accept, share
+# objects you own with them (viewer or editor) -- see
+# db/migrations/015_collaborations.sql.
+# ---------------------------------------------------------------------------
+
+STATUS_LABELS = {"sent": "Invitation Sent", "received": "Invitation Received", "confirmed": "Confirmed"}
+
+
+def own_collaboration(collaboration_id, *, confirmed=False):
+    """The collaboration with this id, provided the user is a party to it
+    (else the usual 404), plus the other party's id."""
+    row = storage.get_collaboration(collaboration_id)
+    if row is None or g.user.id not in (row["inviter_id"], row["invitee_id"]):
+        raise DocumentError("No such collaboration", 404)
+    if confirmed and row["status"] != "confirmed":
+        raise DocumentError("That collaboration hasn't been accepted yet", 400)
+    other_id = row["invitee_id"] if row["inviter_id"] == g.user.id else row["inviter_id"]
+    return row, other_id
+
+
+@app.route("/collaborations")
+def collaborations_view():
+    return render_template("collaborations.html")
+
+
+@app.route("/api/collaborations/captcha")
+def api_collaborations_captcha():
+    return jsonify(auth.new_captcha())
+
+
+@app.route("/api/collaborations", methods=["GET", "POST"])
+def api_collaborations():
+    if request.method == "GET":
+        cards = storage.list_collaborations(g.user.id)
+        for card in cards:
+            card["status_label"] = STATUS_LABELS[card["status"]]
+            if card["status"] == "confirmed":
+                card["shared_by_me"] = storage.list_shared_objects(g.user.id, card["other_id"])
+                card["shared_with_me"] = storage.list_shared_objects(card["other_id"], g.user.id)
+            del card["other_id"]
+        return jsonify({"collaborations": cards, "shareable": storage.list_owned_objects(g.user.id)})
+
+    body = request.get_json(silent=True) or {}
+    email = auth.normalize_email(body.get("email"))
+    # The challenge is checked (and used up) first, so an unsolved one can't
+    # be used to find out which emails are registered.
+    if not auth.captcha_passed(str(body.get("captcha_id") or ""), str(body.get("captcha_answer") or "")):
+        raise DocumentError("The characters you typed didn't match the image. Please try the new one.", 400)
+    if not auth.EMAIL_RE.match(email) or len(email) > auth.EMAIL_MAX_CHARS:
+        raise DocumentError("Please enter a valid email address.", 400)
+    invitee = storage.get_user_by_email(email)
+    if invitee is None:
+        raise DocumentError("That email address is not currently associated with a user of this website.", 404)
+    if invitee["id"] == g.user.id:
+        raise DocumentError("You can't invite yourself to collaborate.", 400)
+    existing = storage.find_collaboration(g.user.id, invitee["id"])
+    if existing is not None:
+        if existing["status"] == "confirmed":
+            raise DocumentError("You are already collaborating with that user.", 409)
+        if existing["inviter_id"] == g.user.id:
+            raise DocumentError("You have already invited that user.", 409)
+        raise DocumentError("That user has already invited you -- accept their invitation below.", 409)
+    if storage.create_collaboration(g.user.id, invitee["id"]) is None:
+        raise DocumentError("You have already invited that user.", 409)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/collaborations/seen", methods=["POST"])
+def api_collaborations_seen():
+    """The user has looked at the page: their accepted invitations stop
+    counting as notifications."""
+    storage.mark_acceptances_seen(g.user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/collaboration/<int:collaboration_id>", methods=["DELETE"])
+def api_collaboration_item(collaboration_id):
+    """Withdraws an invitation you sent, or declines one you received."""
+    own_collaboration(collaboration_id)
+    if not storage.delete_pending_collaboration(collaboration_id, g.user.id):
+        raise DocumentError("Only a pending invitation can be withdrawn or declined", 400)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/collaboration/<int:collaboration_id>/accept", methods=["POST"])
+def api_collaboration_accept(collaboration_id):
+    row, _ = own_collaboration(collaboration_id)
+    if row["invitee_id"] != g.user.id or not storage.accept_collaboration(collaboration_id, g.user.id):
+        raise DocumentError("There is no invitation here for you to accept", 400)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/collaboration/<int:collaboration_id>/access", methods=["PUT"])
+def api_collaboration_access(collaboration_id):
+    """Sets which of the user's own objects the collaborator can see/edit:
+    {"cause": {"<id>": "viewer" | "editor", ...}, "case": {...}, ...}. Each
+    kind given is replaced wholesale; a kind left out is untouched."""
+    _, other_id = own_collaboration(collaboration_id, confirmed=True)
+    body = request.get_json(silent=True) or {}
+    grants = {}
+    for kind in storage.SHARE_KINDS:
+        if kind not in body:
+            continue
+        wanted = body[kind]
+        if not isinstance(wanted, dict) or any(
+            not isinstance(oid, str) or role not in storage.SHARE_ROLES for oid, role in wanted.items()
+        ):
+            raise DocumentError(f"Invalid access list for {kind}", 400)
+        grants[kind] = wanted
+    storage.set_shared_objects(g.user.id, other_id, grants)
+    return jsonify({"shared_by_me": storage.list_shared_objects(g.user.id, other_id)})
 
 
 # ---------------------------------------------------------------------------
@@ -2382,7 +2522,7 @@ def api_allegations():
         if request.args.get("default_cause"):
             only_cause = resolve_default_cause_id(create=False)
             return jsonify(storage.list_allegations({only_cause}) if only_cause else [])
-        return jsonify(storage.list_allegations(storage.accessible_ids(g.user.id, "cause")))
+        return jsonify(visible_allegations())
 
     body = request.get_json(silent=True) or {}
     # An allegation's cause is mandatory: an explicit cause_id wins (the user
@@ -2407,6 +2547,7 @@ def api_allegations():
         "updated_at": now,
     }
     storage.save_allegation(allegation_id, data)
+    storage.grant_owner("allegation", allegation_id, g.user.id)
     return jsonify({"id": allegation_id, **data})
 
 
@@ -2416,8 +2557,7 @@ def api_allegation_item(allegation_id):
     existing = storage.get_allegation(allegation_id)
     if existing is None:
         raise DocumentError(f"No allegation with id {allegation_id!r}", 404)
-    # An allegation is governed by the role on its cause.
-    require_role("cause", existing["cause_id"], "viewer" if request.method == "GET" else "editor")
+    require_allegation_role(existing, "viewer" if request.method == "GET" else "editor")
 
     if request.method == "GET":
         return jsonify(existing)
@@ -2461,7 +2601,7 @@ def api_allegations_order():
     if not isinstance(raw_order, list):
         raise DocumentError("order must be a list of allegation ids", 400)
     candidates = [aid for aid in raw_order[:2000] if isinstance(aid, str) and DOC_ID_RE.match(aid)]
-    visible = {x["id"] for x in storage.list_allegations(storage.accessible_ids(g.user.id, "cause"))}
+    visible = {x["id"] for x in visible_allegations()}
     full_order = storage.set_allegation_order([aid for aid in candidates if aid in visible])
     order = [aid for aid in full_order if aid in visible]  # never echo ids the user can't see
     return jsonify({"order": order})

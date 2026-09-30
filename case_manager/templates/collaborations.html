@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collaborations</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="collabApp"
+     data-list-url="{{ url_for('api_collaborations') }}"
+     data-captcha-url="{{ url_for('api_collaborations_captcha') }}"
+     data-seen-url="{{ url_for('api_collaborations_seen') }}"
+     data-item-url-base="{{ url_for('api_collaboration_item', collaboration_id=0) }}"
+>
+  <header class="docbar" style="position: relative;">
+    <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <div class="docbar-center"><span class="doc-name doc-name-static">Collaborations</span></div>
+    <div style="margin-left: auto;">{% include "_notifications.html" %}</div>
+  </header>
+
+  <main class="collab-page">
+    <form class="collab-invite" id="inviteForm" autocomplete="off">
+      <h3>Invite someone to collaborate</h3>
+      <label class="modal-field">Their email address
+        <input type="email" id="inviteEmail" required maxlength="254">
+      </label>
+      <label class="modal-field">Type the characters you see
+        <span class="collab-captcha-row">
+          <img class="auth-captcha" id="captchaImg" alt="Captcha: distorted letters and digits" width="200" height="70">
+          <button type="button" class="btn" id="captchaRefresh" title="Show a different image">&#8635;</button>
+        </span>
+        <input type="text" id="captchaAnswer" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" required>
+      </label>
+      <p class="error-message" id="inviteError" role="alert" style="display:none"></p>
+      <p id="inviteOk" style="display:none; color:#1d6b34"></p>
+      <button type="submit" class="btn" id="inviteBtn">Invite to collaborate</button>
+    </form>
+
+    <h2>Collaborators</h2>
+    <p class="empty" id="collabEmpty" style="display:none">No collaborators yet. Invite someone above.</p>
+    <div class="collab-list" id="collabList"></div>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='collaborations.js') }}"></script>
+</body>
+</html>
