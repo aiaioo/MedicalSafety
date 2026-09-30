@@ -10,9 +10,9 @@
   .collapsible { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden;
     transition: grid-template-rows 0.3s ease, opacity 0.3s ease, visibility 0s linear 0.3s; }
   .collapsible.open { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
-  .advanced-box { background: #e7ebf3; border-radius: 12px; padding: 4px 20px 0; margin: 16px 0 32px; }
+  .advanced-box { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 4px 19px; display: flow-root; margin: 16px 0 32px; }
   .advanced-box h1:first-child { margin-top: 16px; }
-  .collapsible-inner { overflow: hidden; min-height: 0; }
+  .collapsible-inner { overflow: hidden; min-height: 0; margin: 0 -20px; }
   @media (prefers-reduced-motion: reduce) { .collapsible { transition: none; } }
 </style>
 </head>
