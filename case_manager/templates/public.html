@@ -8,8 +8,12 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
   .public-page { max-width: 1500px; margin: 0 auto; padding: 0 20px 48px; }
-  .public-layout { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
-  .public-main { flex: 1; min-width: 0; }
+  /* The legal-tools panel only shares a row with the hero -- it's usually
+     much shorter than the page's articles, so keeping it out of a
+     full-height sidebar column means the article sections below can use
+     the full page width instead of leaving that space empty under it. */
+  .public-top-row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  .public-hero-col { flex: 1; min-width: 0; }
   .public-hero { padding: 48px 0 28px; }
   .public-hero h1 { font-size: 30px; margin: 0 0 6px; }
   .public-hero p { color: #6b7280; margin: 0; }
@@ -20,21 +24,18 @@
   /* The shared .article-card-grid/.article-card rules (thumbnail + summary)
      live in style.css -- the articles workspace's own landing grid uses
      the same classes, so a webpage looks the same wherever it's listed.
-     The overrides below just make the public page's own cards bigger:
-     each at least ~30% of the page width on large screens, with larger
-     type -- the content-creator workspace's denser grid is untouched. */
-  .public-main .article-card-grid { grid-template-columns: repeat(auto-fit, minmax(30%, 1fr)); gap: 24px; }
-  .public-main .article-card .thumbnail { height: 220px; }
-  .public-main .article-card .card-body { padding: 20px 22px; }
-  .public-main .article-card .title { font-size: 19px; margin-bottom: 8px; }
-  .public-main .article-card .summary { font-size: 15px; line-height: 1.5; -webkit-line-clamp: 4; }
-  .public-main .article-card .meta { font-size: 13px; }
-  @media (max-width: 900px) {
-    .public-main .article-card-grid { grid-template-columns: 1fr; }
-  }
+     The overrides below make the public page's own cards about 50% wider
+     than that default (220px -> 330px) with larger type, using auto-fill
+     (not auto-fit) so a section with only one or two articles doesn't
+     stretch them to fill the whole row. */
+  .public-page .article-card-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 24px; }
+  .public-page .article-card .thumbnail { height: 200px; }
+  .public-page .article-card .card-body { padding: 20px 22px; }
+  .public-page .article-card .title { font-size: 19px; margin-bottom: 8px; }
+  .public-page .article-card .summary { font-size: 15px; line-height: 1.5; -webkit-line-clamp: 4; }
+  .public-page .article-card .meta { font-size: 13px; }
 
-  /* The "legal tools" panel: pinned to the top of the right-hand column,
-     never stretched to the full column height. */
+  /* The "legal tools" panel: pinned to the top, beside the hero. */
   .legal-tools { width: 260px; flex-shrink: 0; margin-top: 48px; background: #fcfcfd;
     border: 1px solid #d5dae3; border-radius: 12px; padding: 18px 20px; }
   .legal-tools h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
@@ -52,47 +53,22 @@
   .legal-tools-article:hover { text-decoration: underline; }
 
   @media (max-width: 720px) {
-    .public-layout { flex-direction: column; }
-    .legal-tools { width: 100%; margin-top: 0; order: -1; }
+    .public-top-row { flex-direction: column; }
+    .legal-tools { width: 100%; margin-top: 0; }
+  }
+  @media (max-width: 480px) {
+    .public-page .article-card-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <main class="public-page">
-  <div class="public-layout">
-    <div class="public-main">
+  <div class="public-top-row">
+    <div class="public-hero-col">
       <div class="public-hero">
         <h1>{{ website.name }}</h1>
         {% if website.tagline %}<p>{{ website.tagline }}</p>{% endif %}
       </div>
-
-      {% set any_articles = sections | selectattr("articles") | list %}
-      {% if not any_articles %}
-      <p class="public-empty">Nothing has been published here yet.</p>
-      {% endif %}
-
-      {% for section in sections %}
-      {% if section.articles %}
-      <section class="public-section">
-        <h2>{{ section.title }}</h2>
-        {% if section.description %}<p class="public-section-description">{{ section.description }}</p>{% endif %}
-        <div class="article-card-grid">
-          {% for a in section.articles %}
-          <a class="article-card" href="{{ url_for('public_article', article_id=a.id) }}">
-            {% if a.thumbnail_image_id %}
-            <img class="thumbnail" src="{{ url_for('api_article_image', article_id=a.id, image_id=a.thumbnail_image_id, thumb=1) }}" alt="">
-            {% endif %}
-            <div class="card-body">
-              <div class="title">{{ a.title }}</div>
-              {% if a.summary %}<p class="summary">{{ a.summary }}</p>{% endif %}
-              <div class="meta">Updated {{ a.updated_at[:10] }}</div>
-            </div>
-          </a>
-          {% endfor %}
-        </div>
-      </section>
-      {% endif %}
-      {% endfor %}
     </div>
 
     <aside class="legal-tools">
@@ -126,6 +102,34 @@
       {% endif %}
     </aside>
   </div>
+
+  {% set any_articles = sections | selectattr("articles") | list %}
+  {% if not any_articles %}
+  <p class="public-empty">Nothing has been published here yet.</p>
+  {% endif %}
+
+  {% for section in sections %}
+  {% if section.articles %}
+  <section class="public-section">
+    <h2>{{ section.title }}</h2>
+    {% if section.description %}<p class="public-section-description">{{ section.description }}</p>{% endif %}
+    <div class="article-card-grid">
+      {% for a in section.articles %}
+      <a class="article-card" href="{{ url_for('public_article', article_id=a.id) }}">
+        {% if a.thumbnail_image_id %}
+        <img class="thumbnail" src="{{ url_for('api_article_image', article_id=a.id, image_id=a.thumbnail_image_id, thumb=1) }}" alt="">
+        {% endif %}
+        <div class="card-body">
+          <div class="title">{{ a.title }}</div>
+          {% if a.summary %}<p class="summary">{{ a.summary }}</p>{% endif %}
+          <div class="meta">Updated {{ a.updated_at[:10] }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+  {% endfor %}
 </main>
 </body>
 </html>
