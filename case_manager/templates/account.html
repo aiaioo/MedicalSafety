@@ -18,8 +18,8 @@
 <header class="docbar" style="position: relative;">
   <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
   <div class="docbar-center"><span class="doc-name doc-name-static">My account</span></div>
-  {% if g.user.is_content_creator or g.user.is_admin %}
   <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+    <a class="btn" href="{{ url_for('public_view') }}">View public site</a>
     {% if g.user.is_content_creator %}<a class="btn" href="{{ url_for('articles_view') }}">Content</a>{% endif %}
     {% if g.user.is_admin %}
     <a class="btn" href="{{ url_for('admin_view') }}">Administrator</a>
@@ -27,7 +27,6 @@
     <a class="btn" href="{{ url_for('admin_view') }}">Websites</a>
     {% endif %}
   </div>
-  {% endif %}
 </header>
 
 <main class="account-page">
