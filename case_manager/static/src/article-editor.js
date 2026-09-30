@@ -155,17 +155,9 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
     return "Draft • no section yet";
   }
 
-  function renderArticleCard(a, container, onDeleted) {
-    const card = document.createElement("a");
-    card.className = "report-card";
-    card.href = `/articles?article=${encodeURIComponent(a.id)}`;
-    card.innerHTML = `
-      <button type="button" class="report-card-delete card-delete-btn" title="Delete webpage">✕</button>
-      <div class="report-card-name">${escapeHtml(a.title || a.id)}</div>
-      <div class="report-card-meta">${escapeHtml(statusLabel(a))}</div>
-      <div class="report-card-meta">Updated ${escapeHtml(fmtDate(a.updated_at))}</div>`;
-    card.querySelector(".report-card-delete").addEventListener("click", (e) => e.preventDefault());
-    wireConfirmDelete(card.querySelector(".report-card-delete"), async () => {
+  function wireCardDelete(card, deleteBtn, a, onDeleted) {
+    deleteBtn.addEventListener("click", (e) => e.preventDefault());
+    wireConfirmDelete(deleteBtn, async () => {
       try {
         const res = await fetch(`/api/article/${encodeURIComponent(a.id)}`, { method: "DELETE" });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
@@ -175,6 +167,38 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
         window.alert("Could not delete webpage: " + err.message);
       }
     });
+  }
+
+  // `withThumbnail`: the main landing grid looks like a public listing card
+  // (thumbnail + summary, see templates/public.html); the compact "Open a
+  // webpage" modal list just shows the title and status.
+  function renderArticleCard(a, container, onDeleted, withThumbnail) {
+    const card = document.createElement("a");
+    card.href = `/articles?article=${encodeURIComponent(a.id)}`;
+    if (withThumbnail) {
+      card.className = "article-card";
+      const thumbnail = a.thumbnail_image_id
+        ? `<img class="thumbnail" src="/media/article-images/${encodeURIComponent(a.id)}/${encodeURIComponent(a.thumbnail_image_id)}" alt="">`
+        : "";
+      card.innerHTML = `
+        <button type="button" class="article-card-delete card-delete-btn" title="Delete webpage">✕</button>
+        ${thumbnail}
+        <div class="card-body">
+          <div class="title">${escapeHtml(a.title || a.id)}</div>
+          ${a.summary ? `<p class="summary">${escapeHtml(a.summary)}</p>` : ""}
+          <div class="meta">${escapeHtml(statusLabel(a))}</div>
+          <div class="meta">Updated ${escapeHtml(fmtDate(a.updated_at))}</div>
+        </div>`;
+      wireCardDelete(card, card.querySelector(".article-card-delete"), a, onDeleted);
+    } else {
+      card.className = "report-card";
+      card.innerHTML = `
+        <button type="button" class="report-card-delete card-delete-btn" title="Delete webpage">✕</button>
+        <div class="report-card-name">${escapeHtml(a.title || a.id)}</div>
+        <div class="report-card-meta">${escapeHtml(statusLabel(a))}</div>
+        <div class="report-card-meta">Updated ${escapeHtml(fmtDate(a.updated_at))}</div>`;
+      wireCardDelete(card, card.querySelector(".report-card-delete"), a, onDeleted);
+    }
     container.appendChild(card);
   }
 
@@ -198,7 +222,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
           if (!openDocList.querySelector(".report-card")) {
             openDocList.innerHTML = '<p class="empty">No webpages yet.</p>';
           }
-        });
+        }, false);
       }
     } catch (e) {
       openDocList.innerHTML = '<p class="empty">Failed to load webpages.</p>';
@@ -217,8 +241,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       landingEmptyHint.style.display = list.length ? "none" : "block";
       for (const a of list) {
         renderArticleCard(a, articleListLanding, () => {
-          landingEmptyHint.style.display = articleListLanding.querySelector(".report-card") ? "none" : "block";
-        });
+          landingEmptyHint.style.display = articleListLanding.querySelector(".article-card") ? "none" : "block";
+        }, true);
       }
     } catch (e) {
       console.error(e);

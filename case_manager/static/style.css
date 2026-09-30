@@ -460,6 +460,26 @@ a.tag:hover { background: #d7deec; }
 .report-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
 .report-list .report-card { padding: 10px 14px; }
 
+/* Cards with a thumbnail and a summary, shared by the public content page
+   (templates/public.html) and the articles workspace's own landing grid
+   (templates/articles.html, static/src/article-editor.js) so a webpage
+   looks the same wherever it's listed. */
+.article-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.article-card {
+  display: block; position: relative; border: 1px solid #e0e2e8; border-radius: 10px; overflow: hidden;
+  text-decoration: none; color: inherit; background: #fff; transition: box-shadow 0.15s, border-color 0.15s;
+}
+.article-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.08); border-color: #cfd4e0; }
+.article-card .thumbnail { width: 100%; height: 140px; object-fit: cover; display: block; background: #f3f4f7; }
+.article-card .card-body { padding: 14px 16px; }
+.article-card .title { font-weight: 600; margin-bottom: 4px; word-break: break-word; margin-right: 22px; }
+.article-card .summary {
+  font-size: 13px; color: #6b7280; margin: 4px 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+.article-card .meta { font-size: 12px; color: #8a92a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.article-card-delete { position: absolute; top: 8px; right: 8px; }
+
 /* ---- modals ---- */
 .modal-overlay {
   display: none; position: fixed; inset: 0; background: rgba(20,22,30,0.4); z-index: 200;

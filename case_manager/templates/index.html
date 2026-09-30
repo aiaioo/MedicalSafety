@@ -18,10 +18,11 @@
 </head>
 <body>
 <header class="docbar" style="position: relative;">
-  <span class="account-bar">Signed in as {{ g.user.email }}{% if g.user and not g.user.is_guest %} &middot; <a href="{{ url_for('account_view') }}">My account</a>{% endif %}</span>
+  <span class="account-bar">Signed in as {{ g.user.email }}</span>
   <div class="docbar-center"><span class="doc-name doc-name-static">Case Plan</span>{% include "_cause_picker.html" %}</div>
   <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
     {% include "_notifications.html" %}
+    {% if g.user and not g.user.is_guest %}<a class="btn" href="{{ url_for('account_view') }}">My account</a>{% endif %}
     <form method="post" action="{{ url_for('auth.signout') }}" style="margin-bottom: 0;"><button type="submit" class="btn">Sign out</button></form>
   </div>
 </header>
