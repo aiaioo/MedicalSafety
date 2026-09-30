@@ -788,6 +788,7 @@ a.tag:hover { background: #d7deec; }
   .topbar .doc-title { flex: 1 1 100%; min-width: 0; }
   .topbar .doc-title .doc-name { flex: 1 1 100px; min-width: 0; max-width: none; }
 }
+.cause-label { font-size: 13px; color: #8a92a5; margin-left: 10px; margin-right: 4px; white-space: nowrap; }
 .cause-picker { font-size: 13px; padding: 4px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f7f8fa; color: #46536b; max-width: 200px; }
 .cause-static { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }

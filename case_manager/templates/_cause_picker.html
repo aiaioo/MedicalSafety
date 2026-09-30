@@ -2,6 +2,7 @@
     Choosing one makes it the default and reloads. (An open report doesn't
     include this: its cause is fixed, so reports.html shows it as text.) -#}
 {% if picker_causes %}
+<label class="cause-label" for="causePicker">Cause:</label>
 <select id="causePicker" class="cause-picker" title="Default cause"
         data-url="{{ url_for('api_default_cause') }}"
         data-reload="1">
