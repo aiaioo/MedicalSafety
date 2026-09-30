@@ -15,28 +15,6 @@
     <a class="btn docbar-lead" href="{{ url_for('documents_view') }}">Reports</a>
     <div class="docbar-center"><span class="docbar-title">Documents</span>{% include "_cause_picker.html" %}</div>
   </header>
-  <div class="modal-overlay" id="pageSetupModal">
-    <div class="modal">
-      <h3>Page setup</h3>
-      <p class="modal-hint">Font and size used by the Text tool for new text boxes.</p>
-      <label class="modal-field">Font
-        <select id="textFontSelect">
-          <option value="Helvetica">Helvetica (sans-serif)</option>
-          <option value="Times">Times (serif)</option>
-          <option value="Courier">Courier (monospace)</option>
-        </select>
-      </label>
-      <label class="modal-field">Font size (pt)
-        <input id="textSizeInput" type="number" min="4" max="72" step="1">
-      </label>
-      <p id="pageSetupError" class="error-message" style="display:none"></p>
-      <div class="modal-actions">
-        <button type="button" id="pageSetupCancel">Cancel</button>
-        <button type="button" id="pageSetupApply">Apply</button>
-      </div>
-    </div>
-  </div>
-
   <main class="viewer-layout">
     <div class="editor-container">
       <div class="doc-landing">
@@ -135,6 +113,28 @@
     <button type="button" id="clearBtn">Clear</button>
     <span id="modeHint" class="hint"></span>
     <span id="statusMsg" class="status-msg"></span>
+  </div>
+
+  <div class="modal-overlay" id="pageSetupModal">
+    <div class="modal">
+      <h3>Page setup</h3>
+      <p class="modal-hint">Font and size used by the Text tool for new text boxes.</p>
+      <label class="modal-field">Font
+        <select id="textFontSelect">
+          <option value="Helvetica">Helvetica (sans-serif)</option>
+          <option value="Times">Times (serif)</option>
+          <option value="Courier">Courier (monospace)</option>
+        </select>
+      </label>
+      <label class="modal-field">Font size (pt)
+        <input id="textSizeInput" type="number" min="4" max="72" step="1">
+      </label>
+      <p id="pageSetupError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="pageSetupCancel">Cancel</button>
+        <button type="button" id="pageSetupApply">Apply</button>
+      </div>
+    </div>
   </div>
 
   <main class="viewer-layout">
