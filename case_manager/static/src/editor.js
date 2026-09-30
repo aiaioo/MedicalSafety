@@ -898,8 +898,10 @@ import { Pagination, repaginate } from "./pagination.js";
   const highlightPicker = mountColorPopover("highlight", (c) => editor.chain().focus().setHighlight({ color: c }).run());
   const highlightColorInput = highlightPicker.input;
   const highlightColorSwatch = highlightPicker.swatch;
-  document.getElementById("clearHighlightBtn").addEventListener("click", () => {
+  document.getElementById("noHighlightBtn").addEventListener("click", () => {
     editor.chain().focus().unsetHighlight().run();
+    document.getElementById("highlightColorPopover").hidden = true;
+    document.getElementById("highlightColorBtn").setAttribute("aria-expanded", false);
   });
 
   // Toolbar dropdowns/buttons otherwise only ever *write* to the editor (on
@@ -933,6 +935,7 @@ import { Pagination, repaginate } from "./pagination.js";
     } else {
       highlightColorSwatch.style.background = "transparent";
       highlightColorSwatch.style.outline = "1px solid #b8bfcf";
+      highlightPicker.select(null);
     }
 
     let headingLevel = null;

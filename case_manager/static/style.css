@@ -834,3 +834,5 @@ a.tag:hover { background: #d7deec; }
 .page-number-label .page-number-shaped { height: 1.6em; min-width: 1.6em; line-height: 1.6em; padding: 0 0.3em; }
 
 .annex-toggle { display: block; margin: 12px 0 4px; font-size: 13px; color: #46536b; cursor: pointer; }
+.color-popover .color-none { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 8px; padding: 4px 6px; font-size: 13px; text-align: left; }
+.color-none-box { width: 18px; height: 18px; border: 1px solid rgba(0, 0, 0, 0.3); border-radius: 3px; background: linear-gradient(to top right, transparent calc(50% - 1px), #c0392b, transparent calc(50% + 1px)), #fff; }
