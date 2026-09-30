@@ -30,6 +30,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import storage
 
 SESSION_COOKIE = "cm_session"
+KEY_SESSION_COOKIE = "cm_key_session"  # someone using secret keys without an account
 SESSION_LIFETIME = timedelta(days=14)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 EMAIL_MAX_CHARS = 254
@@ -40,16 +41,21 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 # the sign-in page (or, for /api/ routes, answers 401).
 PUBLIC_ENDPOINTS = {"auth.signin", "auth.signup", "auth.unlock", "static"}
 
-# Guests (people using a secret key without an account) reach only the
+# Key holders (people using a secret key without an account) have no users
+# row and no sign-in: a key session (see storage.create_key_session) stands in,
+# presented as a User with the negative of its id (which the eff_user_* views
+# understand -- see db/migrations/019_key_sessions.sql). They reach only the
 # objects their keys cover: never the home page, collaborations, account
 # settings, key management, or creating new top-level causes.
-GUEST_LIFETIME = timedelta(days=7)
+KEY_SESSION_LIFETIME = timedelta(days=7)
 GUEST_BLOCKED_ENDPOINTS = {
     "index", "collaborations_view", "api_collaborations", "api_collaborations_captcha",
     "api_collaborations_seen", "api_collaboration_item", "api_collaboration_accept",
     "api_collaboration_access", "api_set_show_advanced", "api_default_cause", "api_keys", "api_key_item",
 }
-GUEST_BLOCKED_POSTS = {"api_causes"}
+GUEST_BLOCKED_POSTS = {
+    "api_causes", "api_upload_document", "api_reports", "api_allegation_cases", "api_allegations",
+}
 
 # A page addressed by one of these query parameters is that object's URL, so
 # a signed-out visitor to it is offered the key prompt if it has any keys.
@@ -95,13 +101,13 @@ class User:
     email: str
     password_hash: str
     show_advanced: bool = False
-    is_guest: bool = False
+    is_guest: bool = False  # a key session, not a registered user
 
     @classmethod
     def from_row(cls, row: dict) -> User:
         return cls(
             id=row["id"], email=row["email"], password_hash=row["password_hash"],
-            show_advanced=row.get("show_advanced", False), is_guest=row.get("is_guest", False),
+            show_advanced=row.get("show_advanced", False),
         )
 
     @staticmethod
@@ -190,9 +196,9 @@ def _cookie_secure() -> bool:
     return request.is_secure or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 
-def _start_session(user: User, next_url: str, lifetime: timedelta = SESSION_LIFETIME):
+def _start_session(user: User, next_url: str):
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + lifetime
+    expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
     storage.create_session(user.id, _hash_token(token), expires_at)
     resp = redirect(next_url)
     resp.set_cookie(
@@ -220,6 +226,12 @@ def load_user_and_require_signin():
         row = storage.get_session_user(_hash_token(token))
         if row is not None:
             g.user = User.from_row(row)
+
+    if g.user is None:
+        key_token = request.cookies.get(KEY_SESSION_COOKIE)
+        key_session = storage.get_key_session(_hash_token(key_token)) if key_token else None
+        if key_session is not None:
+            g.user = User(id=-key_session, email="", password_hash="", is_guest=True)
 
     if g.user is not None and g.user.is_guest and (
         request.endpoint in GUEST_BLOCKED_ENDPOINTS
@@ -285,12 +297,18 @@ def unlock():
     if not found["active"]:
         return _render_unlock(kind, object_id, next_url, KEY_DEACTIVATED_MESSAGE, 403)
 
-    if g.user is not None:  # already a guest: add this key to their session
-        storage.redeem_key(g.user.id, kind, entered)
+    if g.user is not None:  # already holding keys: add this one to their session
+        storage.redeem_key(-g.user.id, kind, entered)
         return redirect(next_url)
-    guest = User.from_row(storage.create_guest())
-    storage.redeem_key(guest.id, kind, entered)
-    return _start_session(guest, next_url, GUEST_LIFETIME)
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + KEY_SESSION_LIFETIME
+    storage.redeem_key(storage.create_key_session(_hash_token(token), expires_at), kind, entered)
+    resp = redirect(next_url)
+    resp.set_cookie(
+        KEY_SESSION_COOKIE, token, expires=expires_at,
+        httponly=True, samesite="Lax", secure=_cookie_secure(),
+    )
+    return resp
 
 
 @bp.route("/signup", methods=["GET", "POST"])
@@ -353,6 +371,10 @@ def signout():
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         storage.delete_session(_hash_token(token))
+    key_token = request.cookies.get(KEY_SESSION_COOKIE)
+    if key_token:
+        storage.delete_key_session(_hash_token(key_token))
     resp = redirect(url_for("auth.signin"))
     resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="Lax", secure=_cookie_secure())
+    resp.delete_cookie(KEY_SESSION_COOKIE, httponly=True, samesite="Lax", secure=_cookie_secure())
     return resp

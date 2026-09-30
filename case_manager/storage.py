@@ -1203,7 +1203,7 @@ def create_user(email: str, password_hash: str) -> dict | None:
 
 def get_user_by_email(email: str) -> dict | None:
     with _cursor() as cur:
-        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s) AND NOT is_guest", (email,))
+        cur.execute("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(%s)", (email,))
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -1225,7 +1225,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_guest FROM user_sessions s JOIN users u ON u.id = s.user_id
+            SELECT u.id, u.email, u.password_hash, u.show_advanced FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
             (token_hash,),
@@ -1547,7 +1547,7 @@ def set_shared_objects(owner_id: int, collaborator_id: int, grants: dict[str, di
 # ---------------------------------------------------------------------------
 # Secret keys (db/migrations/018_secret_keys.sql): an owner shares an object
 # with whoever holds one of its keys. Entering a key records a redemption for
-# the (guest) user; the eff_user_* views turn redemptions of active keys into
+# the key session; the eff_user_* views turn redemptions of active keys into
 # viewer/editor access, which cascades to child objects like any other role.
 # ---------------------------------------------------------------------------
 
@@ -1559,7 +1559,6 @@ _KEY_TABLES = {
     "source": ("document_keys", "document_id"),
 }
 KEY_PERMISSIONS = ("viewer", "editor")
-GUEST_LIFETIME_DAYS = 7
 
 
 def create_key(owner_id: int, kind: str, object_id: str, permission: str) -> dict:
@@ -1631,42 +1630,51 @@ def find_key(kind: str, object_id: str, key: str) -> dict | None:
     return dict(row) if row else None
 
 
-def redeem_key(user_id: int, kind: str, key: str) -> None:
+def redeem_key(session_id: int, kind: str, key: str) -> None:
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO key_redemptions (user_id, kind, key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-            (user_id, kind, key),
+            "INSERT INTO key_redemptions (session_id, kind, key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            (session_id, kind, key),
         )
 
 
-def has_deactivated_key(user_id: int, kind: str, object_id: str) -> bool:
-    """Whether this user got into the object with a key its owner has since
-    switched off."""
+def has_deactivated_key(session_id: int, kind: str, object_id: str) -> bool:
+    """Whether this key session got into the object with a key its owner has
+    since switched off."""
     table, column = _KEY_TABLES[kind]
     with _cursor() as cur:
         cur.execute(
             f"SELECT EXISTS(SELECT 1 FROM key_redemptions r JOIN {table} k ON k.key = r.key "  # noqa: S608
-            f"WHERE r.user_id = %s AND r.kind = %s AND k.{column} = %s AND NOT k.active) AS ok",
-            (user_id, kind, object_id),
+            f"WHERE r.session_id = %s AND r.kind = %s AND k.{column} = %s AND NOT k.active) AS ok",
+            (session_id, kind, object_id),
         )
         return cur.fetchone()["ok"]
 
 
-def create_guest() -> dict:
-    """A throwaway, password-less user for someone using a key without an
-    account. Guests whose sessions have all expired are swept out here."""
+def create_key_session(token_hash: str, expires_at: datetime) -> int:
+    """Starts a session for someone using keys without an account -- no user
+    row; the keys they enter are recorded against it. Expired key sessions
+    (and their redemptions) are swept out here."""
     with _cursor() as cur:
+        cur.execute("DELETE FROM key_sessions WHERE expires_at <= now()")
         cur.execute(
-            "DELETE FROM users WHERE is_guest AND NOT EXISTS "
-            "(SELECT 1 FROM user_sessions s WHERE s.user_id = users.id AND s.expires_at > now())"
+            "INSERT INTO key_sessions (token_hash, expires_at) VALUES (%s, %s) RETURNING id",
+            (token_hash, expires_at),
         )
-        email = f"guest-{secrets.token_hex(8)}@guest.invalid"
-        cur.execute(
-            "INSERT INTO users (email, password_hash, storage_dir, is_guest) VALUES (%s, '!', %s, TRUE) "
-            "RETURNING id, email, password_hash, show_advanced, is_guest",
-            (email, owner_dir_name(email)),
-        )
-        return dict(cur.fetchone())
+        return cur.fetchone()["id"]
+
+
+def get_key_session(token_hash: str) -> int | None:
+    """Id of a still-unexpired key session, else None."""
+    with _cursor() as cur:
+        cur.execute("SELECT id FROM key_sessions WHERE token_hash = %s AND expires_at > now()", (token_hash,))
+        row = cur.fetchone()
+    return row["id"] if row else None
+
+
+def delete_key_session(token_hash: str) -> None:
+    with _cursor() as cur:
+        cur.execute("DELETE FROM key_sessions WHERE token_hash = %s", (token_hash,))
 
 
 def grant_owner(kind: str, object_id: str, user_id: int) -> None:

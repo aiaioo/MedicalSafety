@@ -182,7 +182,7 @@ ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source":
 def raise_no_access(kind, object_id, message):
     """The 404 for an object the user can't reach -- except that a guest
     whose key for it has been switched off is told so."""
-    if g.user.is_guest and storage.has_deactivated_key(g.user.id, kind, object_id):
+    if g.user.is_guest and storage.has_deactivated_key(-g.user.id, kind, object_id):
         raise DocumentError(auth.KEY_DEACTIVATED_MESSAGE, 403)
     raise DocumentError(message, 404)
 
@@ -2037,7 +2037,7 @@ def api_create_snippet(doc_id, page):
         png_bytes = pix.tobytes("png")
 
     entry = storage.create_snippet(doc_id, page, {"x": x, "y": y, "w": w, "h": h}, bool(annotations), png_bytes,
-                                  created_by=g.user.id)
+                                  created_by=None if g.user.is_guest else g.user.id)
 
     result = dict(entry)
     result["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)
