@@ -26,6 +26,12 @@ import storage
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_ANNOTATION_COLOR = "#e02424"
+# Text-box annotations: fitz base-14 font names, line height and inner padding
+# (points) -- static/viewer.js uses the same values so the box wraps identically.
+TEXT_ANNOTATION_FONTS = {"Helvetica": "helv", "Times": "tiro", "Courier": "cour"}
+TEXT_ANNOTATION_DEFAULT_SIZE = 12
+TEXT_ANNOTATION_LINE_HEIGHT = 1.2
+TEXT_ANNOTATION_PAD = 3
 
 # Report page margins, in points — left/right/header/footer. Defaults match the
 # geometry render_report_pdf has always used (fitz mediabox inset of
@@ -598,6 +604,24 @@ def sanitize_annotations(raw, max_count=500, max_points=2000):
                     continue
             if len(clean_pts) >= 2:
                 out.append({"kind": "freehand", "color": color, "points": clean_pts})
+
+        elif item.get("kind") == "text":
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            try:
+                x, y, w, h = (_clamp01(item[k]) for k in ("x", "y", "w", "h"))
+                size = float(item.get("size", TEXT_ANNOTATION_DEFAULT_SIZE))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            font = item.get("font")
+            if font not in TEXT_ANNOTATION_FONTS:
+                font = "Helvetica"
+            size = min(72.0, max(4.0, size))
+            out.append({"kind": "text", "color": color, "x": x, "y": y, "w": w, "h": h,
+                        "text": text[:5000], "font": font, "size": size})
     return out
 
 
@@ -627,6 +651,26 @@ def draw_annotations_on_page(page, annotations, page_rect):
             ]
             shape.draw_polyline(pts)
             shape.finish(color=color, width=line_width, closePath=False)
+        elif a["kind"] == "text":
+            r = fitz.Rect(
+                page_rect.x0 + a["x"] * page_rect.width,
+                page_rect.y0 + a["y"] * page_rect.height,
+                page_rect.x0 + (a["x"] + a["w"]) * page_rect.width,
+                page_rect.y0 + (a["y"] + a["h"]) * page_rect.height,
+            )
+            shape.draw_rect(r)
+            shape.finish(color=color, width=line_width * 0.5)
+            inner = fitz.Rect(r.x0 + TEXT_ANNOTATION_PAD, r.y0 + TEXT_ANNOTATION_PAD,
+                              r.x1 - TEXT_ANNOTATION_PAD, r.y1 - TEXT_ANNOTATION_PAD)
+            # A negative return means the text overflowed; grow the box downwards
+            # (the client normally already sized it to fit).
+            for _ in range(20):
+                rc = shape.insert_textbox(
+                    inner, a["text"], fontname=TEXT_ANNOTATION_FONTS[a["font"]], fontsize=a["size"],
+                    color=color, lineheight=TEXT_ANNOTATION_LINE_HEIGHT)
+                if rc >= 0:
+                    break
+                inner.y1 += a["size"] * TEXT_ANNOTATION_LINE_HEIGHT
     shape.commit()
 
 

@@ -200,6 +200,14 @@ a.tag:hover { background: #d7deec; }
 .menu-dropdown button:disabled { color: #b0b4bd; cursor: default; }
 .menu-dropdown button:disabled:hover { background: none; }
 .menu-dropdown hr { border: none; border-top: 1px solid #e0e2e8; margin: 4px 0; }
+.toolbar .file-menu .menu-trigger { border: none; background: none; padding: 6px 10px; font-size: 14px; }
+.toolbar .file-menu .menu-trigger:hover { background: #f1f3f4; }
+.toolbar .file-menu .menu-dropdown button { border: none; background: none; padding: 8px 12px; }
+.toolbar .file-menu .menu-dropdown button:hover:not(:disabled) { background: #f1f3f4; }
+.text-annotation-editor {
+  position: absolute; box-sizing: border-box; margin: 0; border: none; outline: 2px solid #2266dd;
+  background: rgba(255, 255, 255, 0.85); resize: none; overflow: hidden; line-height: 1.2; z-index: 5;
+}
 
 .doc-name {
   border: 1px solid transparent; background: transparent; border-radius: 4px;

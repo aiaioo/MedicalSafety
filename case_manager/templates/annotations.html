@@ -15,6 +15,28 @@
     <a class="btn docbar-lead" href="{{ url_for('documents_view') }}">Reports</a>
     <div class="docbar-center"><span class="docbar-title">Documents</span>{% include "_cause_picker.html" %}</div>
   </header>
+  <div class="modal-overlay" id="pageSetupModal">
+    <div class="modal">
+      <h3>Page setup</h3>
+      <p class="modal-hint">Font and size used by the Text tool for new text boxes.</p>
+      <label class="modal-field">Font
+        <select id="textFontSelect">
+          <option value="Helvetica">Helvetica (sans-serif)</option>
+          <option value="Times">Times (serif)</option>
+          <option value="Courier">Courier (monospace)</option>
+        </select>
+      </label>
+      <label class="modal-field">Font size (pt)
+        <input id="textSizeInput" type="number" min="4" max="72" step="1">
+      </label>
+      <p id="pageSetupError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="pageSetupCancel">Cancel</button>
+        <button type="button" id="pageSetupApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
   <main class="viewer-layout">
     <div class="editor-container">
       <div class="doc-landing">
@@ -83,12 +105,23 @@
   </header>
 
   <div class="toolbar">
+    <nav class="file-menu">
+      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
+      <div class="menu-dropdown" id="fileMenuDropdown">
+        <button type="button" id="pageSetupBtn">Page setup&hellip;</button>
+        <hr>
+        <button type="button" id="downloadBtn">Download annotated PDF</button>
+        <button type="button" id="downloadPagesBtn" disabled>Download annotated pages only</button>
+        <button type="button" id="downloadOriginalBtn">Download original PDF</button>
+      </div>
+    </nav>
     <div class="mode-group" role="group" aria-label="Drawing mode">
       <button type="button" class="mode-btn active" data-mode="select" title="Select tool: click an annotation to select it, then press Delete" aria-label="Select">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -3px"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
       </button>
       <button type="button" class="mode-btn" data-mode="rect">Rectangle</button>
       <button type="button" class="mode-btn" data-mode="freehand">Freehand</button>
+      <button type="button" class="mode-btn" data-mode="text">Text</button>
       <button type="button" class="mode-btn" data-mode="snippet">Snippet</button>
     </div>
     <div class="color-pop-wrap">
@@ -100,9 +133,6 @@
     </div>
     <button type="button" id="undoBtn">Undo</button>
     <button type="button" id="clearBtn">Clear</button>
-    <button type="button" id="downloadBtn">Download annotated PDF</button>
-    <button type="button" id="downloadPagesBtn" disabled>Download annotated pages only</button>
-    <button type="button" id="downloadOriginalBtn">Download original PDF</button>
     <span id="modeHint" class="hint"></span>
     <span id="statusMsg" class="status-msg"></span>
   </div>
