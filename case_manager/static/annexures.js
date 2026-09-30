@@ -1,6 +1,8 @@
 (function () {
   const appEl = document.getElementById("app");
   const url = appEl.dataset.annexureUrl;
+  // Viewers can read the annexure but not change it (the server rejects their saves with a 403).
+  const canEdit = !!appEl.dataset.canEdit;
   const container = document.getElementById("viewerContainer");
   const listEl = document.getElementById("annexList");
   const addSelect = document.getElementById("addSelect");
@@ -140,7 +142,7 @@
     for (const d of state.documents) {
       const item = document.createElement("div");
       item.className = "annex-item";
-      item.draggable = true;
+      item.draggable = canEdit;
       item.dataset.doc = d.id;
       const pages = d.snippet_pages.length ? `snippets on p${d.snippet_pages.join(", p")}` : "added manually";
       item.innerHTML = `<span class="annex-grip" aria-hidden="true">&#8942;&#8942;</span>` +
@@ -163,6 +165,13 @@
       const modeSel = item.querySelector(".annex-mode");
       const rangeIn = item.querySelector(".annex-range");
       modeSel.value = d.page_mode;
+      if (!canEdit) {
+        modeSel.disabled = true;
+        rangeIn.disabled = true;
+        item.querySelector(".annex-delete").disabled = true;
+        listEl.appendChild(item);
+        continue;
+      }
       modeSel.addEventListener("change", () => {
         d.page_mode = modeSel.value;
         rangeIn.hidden = d.page_mode !== "custom";
@@ -223,7 +232,8 @@
     addSelect.innerHTML = state.available.length
       ? state.available.map((d) => `<option value="${esc(d.id)}">${esc(d.title)}</option>`).join("")
       : '<option value="">&mdash; no other documents &mdash;</option>';
-    addBtn.disabled = !state.available.length;
+    addBtn.disabled = !canEdit || !state.available.length;
+    addSelect.disabled = !canEdit;
   }
 
   function renderPageNumberInputs() {
@@ -293,6 +303,12 @@
     state.documents.push({ ...d, snippet_pages: [], locked: false, page_mode: "all", page_range: "" });
     commit();
   });
+
+  if (!canEdit) {
+    document.querySelectorAll(".sidebar select, .sidebar input, .sidebar .color-pick-btn").forEach((el) => {
+      el.disabled = true;
+    });
+  }
 
   (async function init() {
     try {

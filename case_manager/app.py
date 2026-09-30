@@ -1668,6 +1668,7 @@ def annexures_view():
         report_id=report_id,
         report_name=report["name"],
         annexure_url=url_for("api_report_annexure", report_id=report_id),
+        can_edit=has_role("report", report_id, "editor"),
     )
 
 
