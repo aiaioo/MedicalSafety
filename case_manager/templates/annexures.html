@@ -13,10 +13,7 @@
     <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
     <a class="btn docbar-lead" href="{{ url_for('documents_view') }}?report={{ report_id }}">&laquo; Report</a>
     <div class="docbar-center"><span class="docbar-title">Annexure</span><span class="cause-picker cause-static" title="{{ report_name }}">{{ report_name }}</span></div>
-    <label class="toggle-label" style="margin-left: auto;" title="Off: only the pages the report's snippets were taken from">
-      <input type="checkbox" id="allPagesToggle" checked> Include all pages
-    </label>
-    <a class="btn" id="downloadBtn" href="{{ url_for('api_report_annexure_export', report_id=report_id) }}">Download annexure as PDF</a>
+    <a class="btn" style="margin-left: auto;" id="downloadBtn" href="{{ url_for('api_report_annexure_export', report_id=report_id) }}">Download annexure as PDF</a>
     <span id="statusMsg" class="status-msg" style="margin-left: 12px;"></span>
   </header>
 

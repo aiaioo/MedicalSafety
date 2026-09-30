@@ -1915,25 +1915,27 @@ def api_report(report_id):
     return jsonify(data)
 
 
-def _annexure_payload(report_id, doc_ids, all_pages):
-    """The annexure as the page shows it: the saved order, with every document
-    the report's snippets come from present (appended if missing -- they can't
-    be left out) and each one's snippet pages; documents the user can no
-    longer view are dropped."""
+def _annexure_payload(report_id, saved):
+    """The annexure as the page shows it: the saved [{"id", "all_pages"}] order,
+    with every document the report's snippets come from present (appended if
+    missing -- they can't be left out) and each one's snippet pages; documents
+    the user can no longer view are dropped. all_pages is only meaningful for a
+    document with snippet pages to narrow to; any other includes every page."""
     snippet_pages = storage.report_snippet_pages(report_id)
     docs = {d["id"]: d for d in list_source_docs()}
-    order = [d for d in doc_ids if d in docs]
-    order += [d for d in snippet_pages if d in docs and d not in order]
+    order = [d for d in saved if d["id"] in docs]
+    order += [{"id": d, "all_pages": True} for d in snippet_pages
+              if d in docs and d not in {o["id"] for o in order}]
     return {
-        "all_pages": all_pages,
         "documents": [
-            {"id": d, "title": docs[d]["title"], "type": docs[d]["type"],
-             "snippet_pages": snippet_pages.get(d, []), "locked": d in snippet_pages}
-            for d in order
+            {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
+             "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
+             "all_pages": o["all_pages"] or o["id"] not in snippet_pages}
+            for o in order
         ],
         "available": [
             {"id": d["id"], "title": d["title"], "type": d["type"]}
-            for d in docs.values() if d["id"] not in order
+            for d in docs.values() if d["id"] not in {o["id"] for o in order}
         ],
     }
 
@@ -1947,19 +1949,19 @@ def api_report_annexure(report_id):
     saved = storage.get_annexure(report_id)
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
-        ids = body.get("documents")
-        if not isinstance(ids, list):
-            raise DocumentError("documents must be a list of document ids", 400)
-        seen = []
-        for d in ids:
+        items = body.get("documents")
+        if not isinstance(items, list):
+            raise DocumentError("documents must be a list of {id, all_pages}", 400)
+        saved = []
+        for item in items:
+            d = item.get("id") if isinstance(item, dict) else None
             check_doc_id(d)
-            if d not in seen and has_role("source", d, "viewer") and storage.document_exists(d):
-                seen.append(d)
-        saved = {"documents": seen, "all_pages": bool(body.get("all_pages", True))}
-        payload = _annexure_payload(report_id, saved["documents"], saved["all_pages"])
-        storage.save_annexure(report_id, [d["id"] for d in payload["documents"]], saved["all_pages"])
+            if all(d != x["id"] for x in saved) and has_role("source", d, "viewer") and storage.document_exists(d):
+                saved.append({"id": d, "all_pages": bool(item.get("all_pages", True))})
+        payload = _annexure_payload(report_id, saved)
+        storage.save_annexure(report_id, [{"id": d["id"], "all_pages": d["all_pages"]} for d in payload["documents"]])
         return jsonify(payload)
-    return jsonify(_annexure_payload(report_id, saved["documents"], saved["all_pages"]))
+    return jsonify(_annexure_payload(report_id, saved))
 
 
 @app.route("/api/report/<report_id>/annexure/export")
@@ -1971,7 +1973,7 @@ def api_report_annexure_export(report_id):
     if report is None:
         raise DocumentError(f"No report with id {report_id!r}", 404)
     saved = storage.get_annexure(report_id)
-    payload = _annexure_payload(report_id, saved["documents"], saved["all_pages"])
+    payload = _annexure_payload(report_id, saved)
     if not payload["documents"]:
         raise DocumentError("The annexure is empty — add a document before downloading", 400)
 
@@ -1980,7 +1982,7 @@ def api_report_annexure_export(report_id):
         for d in payload["documents"]:
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
             with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
-                if saved["all_pages"] or not d["snippet_pages"]:
+                if d["all_pages"]:
                     pages = range(src.page_count)
                 else:
                     pages = [p - 1 for p in d["snippet_pages"] if p <= src.page_count]

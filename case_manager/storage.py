@@ -567,27 +567,23 @@ def report_snippet_pages(report_id: str) -> dict[str, list[int]]:
     return pages
 
 
-def get_annexure(report_id: str) -> dict:
-    """{"documents": [document ids in annexure order], "all_pages": bool}."""
+def get_annexure(report_id: str) -> list[dict]:
+    """[{"id": document id, "all_pages": bool}] in annexure order."""
     with _cursor() as cur:
-        cur.execute("SELECT annexure_all_pages FROM reports WHERE id = %s", (report_id,))
-        row = cur.fetchone()
         cur.execute(
-            "SELECT document_id FROM report_annexure_documents WHERE report_id = %s ORDER BY position",
+            "SELECT document_id, all_pages FROM report_annexure_documents WHERE report_id = %s ORDER BY position",
             (report_id,),
         )
-        docs = [r["document_id"] for r in cur.fetchall()]
-    return {"documents": docs, "all_pages": row["annexure_all_pages"] if row else True}
+        return [{"id": r["document_id"], "all_pages": r["all_pages"]} for r in cur.fetchall()]
 
 
-def save_annexure(report_id: str, document_ids: list[str], all_pages: bool) -> None:
+def save_annexure(report_id: str, documents: list[dict]) -> None:
     with _cursor() as cur:
-        cur.execute("UPDATE reports SET annexure_all_pages = %s WHERE id = %s", (all_pages, report_id))
         cur.execute("DELETE FROM report_annexure_documents WHERE report_id = %s", (report_id,))
-        for position, document_id in enumerate(document_ids):
+        for position, d in enumerate(documents):
             cur.execute(
-                "INSERT INTO report_annexure_documents (report_id, document_id, position) VALUES (%s, %s, %s)",
-                (report_id, document_id, position),
+                "INSERT INTO report_annexure_documents (report_id, document_id, position, all_pages) VALUES (%s, %s, %s, %s)",
+                (report_id, d["id"], position, d["all_pages"]),
             )
 
 

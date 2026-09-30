@@ -5,10 +5,9 @@
   const listEl = document.getElementById("annexList");
   const addSelect = document.getElementById("addSelect");
   const addBtn = document.getElementById("addBtn");
-  const allPagesToggle = document.getElementById("allPagesToggle");
   const statusMsg = document.getElementById("statusMsg");
 
-  let state = { documents: [], available: [], all_pages: true };
+  let state = { documents: [], available: [] };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -32,11 +31,11 @@
     return infoCache.get(key);
   }
 
-  // Pages of `d` that are part of the annexure. A document with no snippets in
-  // the report (one the user added) has no "snippet pages" to narrow to, so it
-  // always contributes all its pages.
+  // Pages of `d` that are part of the annexure: all of them, or (toggle off,
+  // only possible for a document with snippets in the report) just the pages
+  // the snippets were taken from.
   function pagesFor(d, pageCount) {
-    if (state.all_pages || !d.snippet_pages.length) return Array.from({ length: pageCount }, (_, i) => i + 1);
+    if (d.all_pages) return Array.from({ length: pageCount }, (_, i) => i + 1);
     return d.snippet_pages.filter((p) => p <= pageCount);
   }
 
@@ -101,7 +100,9 @@
       const pages = d.snippet_pages.length ? `snippets on p${d.snippet_pages.join(", p")}` : "added manually";
       item.innerHTML = `<span class="annex-grip" aria-hidden="true">&#8942;&#8942;</span>` +
         `<span class="annex-name"><a href="#" class="annex-jump" title="Scroll to this document">${esc(d.title)}</a>` +
-        `<span class="report-card-meta">${esc(pages)}</span></span>` +
+        `<span class="report-card-meta">${esc(pages)}</span>` +
+        `<label class="toggle-label" title="Off: only the pages the report's snippets were taken from">` +
+        `<input type="checkbox" class="annex-all-pages" ${d.all_pages ? "checked" : ""} ${d.snippet_pages.length ? "" : "disabled"}> Include all pages</label></span>` +
         `<button type="button" class="annex-delete" ${d.locked ? "disabled" : ""} ` +
         `title="${d.locked ? "Snippets from this document are used in the report" : "Remove from annexure"}" aria-label="Remove ${esc(d.title)}">` +
         `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><path d="M6 4V2.5h4V4"/><path d="M4 4l.7 9.5h6.6L12 4"/><path d="M6.5 6.5v5M9.5 6.5v5"/></svg></button>`;
@@ -109,6 +110,10 @@
         e.preventDefault();
         const h = container.querySelector(`.annex-doc-heading[data-doc="${CSS.escape(d.id)}"]`);
         if (h) container.scrollTo({ top: h.offsetTop - container.offsetTop - 12, behavior: "smooth" });
+      });
+      item.querySelector(".annex-all-pages").addEventListener("change", (e) => {
+        d.all_pages = e.target.checked;
+        commit();
       });
       item.querySelector(".annex-delete").addEventListener("click", () => {
         if (d.locked) return;
@@ -158,7 +163,6 @@
   }
 
   function render(pagesToo) {
-    allPagesToggle.checked = state.all_pages;
     renderList();
     renderAddPicker();
     if (pagesToo) renderPages();
@@ -170,7 +174,7 @@
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: state.documents.map((d) => d.id), all_pages: state.all_pages }),
+        body: JSON.stringify({ documents: state.documents.map((d) => ({ id: d.id, all_pages: d.all_pages })) }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
@@ -183,12 +187,7 @@
     const d = state.available.find((x) => x.id === addSelect.value);
     if (!d) return;
     state.available = state.available.filter((x) => x.id !== d.id);
-    state.documents.push({ ...d, snippet_pages: [], locked: false });
-    commit();
-  });
-
-  allPagesToggle.addEventListener("change", () => {
-    state.all_pages = allPagesToggle.checked;
+    state.documents.push({ ...d, snippet_pages: [], locked: false, all_pages: true });
     commit();
   });
 
