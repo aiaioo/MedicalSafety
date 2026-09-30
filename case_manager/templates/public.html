@@ -8,16 +8,27 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
   .public-page { max-width: 1500px; margin: 0 auto; padding: 0 20px 48px; }
-  /* The legal-tools panel only shares a row with the hero -- it's usually
-     much shorter than the page's articles, so keeping it out of a
-     full-height sidebar column means the article sections below can use
-     the full page width instead of leaving that space empty under it. */
-  .public-top-row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
-  .public-hero-col { flex: 1; min-width: 0; }
+  /* One grid holds the hero, the legal-tools panel and every section's
+     cards (the section wrappers are display:contents), so the cards flow
+     in the columns beside the panel first and then continue underneath it.
+     The panel sits in the last column, spanning the rows down to the end
+     of the first section's first card row. */
+  .public-flow { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 24px; align-items: start; grid-auto-flow: row dense; }
+  .public-hero-col { grid-column: 1 / -2; }
+  .public-flow > .legal-tools { grid-column: -2 / -1; grid-row: 1 / span 3; }
+  .public-flow .public-section, .public-flow .article-card-grid { display: contents; }
+  .public-flow .public-section > h2, .public-flow .public-section > .public-section-description,
+  .public-flow .public-empty { grid-column: 1 / -1; }
+  .public-flow .public-section.beside-panel > h2,
+  .public-flow .public-section.beside-panel > .public-section-description { grid-column: 1 / -2; }
+  .public-flow .article-card { align-self: stretch; }
   .public-hero { padding: 48px 0 28px; }
   .public-hero h1 { font-size: 30px; margin: 0 0 6px; }
   .public-hero p { color: #6b7280; margin: 0; }
   .public-section { margin: 36px 0; }
+  .public-flow .public-section > h2 { margin: 12px 0 0; }
+  .public-flow .public-section-description { margin: -16px 0 0; }
   .public-section h2 { font-size: 20px; font-weight: 600; border-bottom: 1px solid #e0e2e8; padding-bottom: 8px; margin-bottom: 4px; }
   .public-section-description { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
   .public-empty { color: #8a92a5; }
@@ -28,7 +39,7 @@
      than that default (220px -> 330px) with larger type, using auto-fill
      (not auto-fit) so a section with only one or two articles doesn't
      stretch them to fill the whole row. */
-  .public-page .article-card-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 24px; }
+  .public-page .article-card-grid { gap: 24px; }
   .public-page .article-card .thumbnail { height: 200px; }
   .public-page .article-card .card-body { padding: 20px 22px; }
   .public-page .article-card .title { font-size: 19px; margin-bottom: 8px; }
@@ -36,7 +47,7 @@
   .public-page .article-card .meta { font-size: 13px; }
 
   /* The "legal tools" panel: pinned to the top, beside the hero. */
-  .legal-tools { width: 260px; flex-shrink: 0; margin-top: 48px; background: #fcfcfd;
+  .legal-tools { margin-top: 48px; background: #fcfcfd; box-sizing: border-box;
     border: 1px solid #d5dae3; border-radius: 12px; padding: 18px 20px; }
   .legal-tools h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
     color: #46536b; margin: 0 0 6px; }
@@ -52,18 +63,18 @@
   .legal-tools-article { font-size: 13px; color: #2266dd; text-decoration: none; }
   .legal-tools-article:hover { text-decoration: underline; }
 
-  @media (max-width: 720px) {
-    .public-top-row { flex-direction: column; }
-    .legal-tools { width: 100%; margin-top: 0; }
-  }
-  @media (max-width: 480px) {
-    .public-page .article-card-grid { grid-template-columns: 1fr; }
+  @media (max-width: 760px) {
+    .public-flow { grid-template-columns: 1fr; }
+    .public-hero-col, .public-flow > .legal-tools,
+    .public-flow .public-section.beside-panel > h2,
+    .public-flow .public-section.beside-panel > .public-section-description { grid-column: 1 / -1; }
+    .public-flow > .legal-tools { grid-row: auto; margin-top: 0; }
   }
 </style>
 </head>
 <body>
 <main class="public-page">
-  <div class="public-top-row">
+  <div class="public-flow">
     <div class="public-hero-col">
       <div class="public-hero">
         <h1>{{ website.name }}</h1>
@@ -101,16 +112,17 @@
       </div>
       {% endif %}
     </aside>
-  </div>
 
   {% set any_articles = sections | selectattr("articles") | list %}
   {% if not any_articles %}
   <p class="public-empty">Nothing has been published here yet.</p>
   {% endif %}
 
+  {% set ns = namespace(first=true) %}
   {% for section in sections %}
   {% if section.articles %}
-  <section class="public-section">
+  <section class="public-section{% if ns.first %} beside-panel{% endif %}">
+    {% set ns.first = false %}
     <h2>{{ section.title }}</h2>
     {% if section.description %}<p class="public-section-description">{{ section.description }}</p>{% endif %}
     <div class="article-card-grid">
@@ -130,6 +142,7 @@
   </section>
   {% endif %}
   {% endfor %}
+  </div>
 </main>
 </body>
 </html>
