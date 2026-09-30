@@ -12,7 +12,6 @@
   .article-placement-tag { font-size: 12px; color: #46536b; background: #eef1f6; border-radius: 999px; padding: 3px 10px; }
   .article-meta { color: #8a92a5; font-size: 13px; margin-bottom: 16px; }
   .article-summary { font-size: 17px; color: #46536b; margin: 0 0 24px; }
-  .article-thumbnail { max-width: 100%; border-radius: 10px; margin-bottom: 24px; display: block; }
   .article-body { font-size: 16px; line-height: 1.65; color: #1c1c1c; }
   .article-body h1 { font-size: 28px; margin: 1em 0 0.4em; }
   .article-body h2 { font-size: 22px; margin: 1em 0 0.4em; }
@@ -39,9 +38,6 @@
   </div>
   <h1>{{ article.title }}</h1>
   <p class="article-meta">Updated {{ article.updated_at[:10] }}</p>
-  {% if article.thumbnail_image_id %}
-  <img class="article-thumbnail" src="{{ url_for('api_article_image', article_id=article.id, image_id=article.thumbnail_image_id) }}" alt="">
-  {% endif %}
   {% if article.summary %}<p class="article-summary">{{ article.summary }}</p>{% endif %}
   <div class="article-body">{{ body_html | safe }}</div>
 </main>
