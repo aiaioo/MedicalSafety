@@ -1713,10 +1713,14 @@ def api_collaborations_seen():
 
 @app.route("/api/collaboration/<int:collaboration_id>", methods=["DELETE"])
 def api_collaboration_item(collaboration_id):
-    """Withdraws an invitation you sent, or declines one you received."""
-    own_collaboration(collaboration_id)
-    if not storage.delete_pending_collaboration(collaboration_id, g.user.id):
-        raise DocumentError("Only a pending invitation can be withdrawn or declined", 400)
+    """Withdraws an invitation you sent, declines one you received, or ends
+    a confirmed collaboration -- which also removes everything either of you
+    had shared with the other."""
+    row, other_id = own_collaboration(collaboration_id)
+    if row["status"] == "confirmed":
+        storage.end_collaboration(collaboration_id, g.user.id, other_id)
+    else:
+        storage.delete_pending_collaboration(collaboration_id, g.user.id)
     return jsonify({"ok": True})
 
 

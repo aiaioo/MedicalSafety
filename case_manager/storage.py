@@ -214,7 +214,7 @@ def list_documents(user_id: int) -> list[dict]:
             """
             SELECT d.id, d.doc_type, d.title, us.role, {links},
                    (SELECT count(*) FROM snippets s WHERE s.document_id = d.id) AS snippet_count
-            FROM documents d JOIN user_sources us ON us.document_id = d.id AND us.user_id = %s
+            FROM documents d JOIN eff_user_sources us ON us.document_id = d.id AND us.user_id = %s
             ORDER BY d.id
             """.format(links=_LINKED_IDS_SQL.format(table_prefix="source", key="document_id", alias="d")),
             (user_id,),
@@ -514,7 +514,7 @@ def list_reports(user_id: int) -> list[dict]:
                    r.created_at, r.updated_at, ur.role, {links},
                    (SELECT count(*) FROM report_snippets rs WHERE rs.report_id = r.id) AS snippet_count
             FROM reports r
-            JOIN user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
+            JOIN eff_user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
             LEFT JOIN documents d ON d.id = r.source_document_id
             """.format(links=_LINKED_IDS_SQL.format(table_prefix="report", key="report_id", alias="r")),
             (user_id,),
@@ -735,7 +735,7 @@ def list_cases(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.created_at, c.updated_at, uc.role
-            FROM cases c JOIN user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
+            FROM cases c JOIN eff_user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
             """,
             (user_id,),
         )
@@ -1306,19 +1306,20 @@ def _grant(cur, user_id: int, kind: str, object_id: str, role: str) -> None:
 
 def get_role(user_id: int, kind: str, object_id: str) -> str | None:
     """"owner" / "editor" / "viewer", or None if this user has no access to
-    that object (including when it doesn't exist)."""
+    that object (including when it doesn't exist). Counts access inherited
+    from parent objects -- see db/migrations/016_inherited_access.sql."""
     table, column = _ACCESS_TABLES[kind]
     with _cursor() as cur:
-        cur.execute(f"SELECT role FROM {table} WHERE user_id = %s AND {column} = %s", (user_id, object_id))  # noqa: S608
+        cur.execute(f"SELECT role FROM eff_{table} WHERE user_id = %s AND {column} = %s", (user_id, object_id))  # noqa: S608
         row = cur.fetchone()
     return row["role"] if row else None
 
 
 def accessible_ids(user_id: int, kind: str) -> set[str]:
-    """Ids of every object of this kind the user has any role on."""
+    """Ids of every object of this kind the user has any role on (direct or inherited)."""
     table, column = _ACCESS_TABLES[kind]
     with _cursor() as cur:
-        cur.execute(f"SELECT {column} AS id FROM {table} WHERE user_id = %s", (user_id,))  # noqa: S608
+        cur.execute(f"SELECT {column} AS id FROM eff_{table} WHERE user_id = %s", (user_id,))  # noqa: S608
         return {r["id"] for r in cur.fetchall()}
 
 
@@ -1330,8 +1331,8 @@ def can_view_snippet_images(user_id: int, document_id: str) -> bool:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT EXISTS(SELECT 1 FROM user_sources WHERE user_id = %s AND document_id = %s)
-                OR EXISTS(SELECT 1 FROM reports r JOIN user_reports ur ON ur.report_id = r.id
+            SELECT EXISTS(SELECT 1 FROM eff_user_sources WHERE user_id = %s AND document_id = %s)
+                OR EXISTS(SELECT 1 FROM reports r JOIN eff_user_reports ur ON ur.report_id = r.id
                           WHERE ur.user_id = %s AND r.source_document_id = %s) AS ok
             """,
             (user_id, document_id, user_id, document_id),
@@ -1441,6 +1442,21 @@ def delete_pending_collaboration(collaboration_id: int, user_id: int) -> bool:
         return cur.rowcount == 1
 
 
+def end_collaboration(collaboration_id: int, user_a: int, user_b: int) -> None:
+    """Ends a confirmed collaboration and, with it, all sharing between the
+    two: every role either holds on the other's objects is removed, in one
+    transaction with the collaboration itself."""
+    with _cursor() as cur:
+        for kind, (table, column) in _ACCESS_TABLES.items():
+            for owner, other in ((user_a, user_b), (user_b, user_a)):
+                cur.execute(
+                    f"DELETE FROM {table} WHERE user_id = %s AND role <> 'owner' "  # noqa: S608 (fixed names)
+                    f"AND {column} IN (SELECT {column} FROM {table} WHERE user_id = %s AND role = 'owner')",
+                    (other, owner),
+                )
+        cur.execute("DELETE FROM collaborations WHERE id = %s AND status = 'confirmed'", (collaboration_id,))
+
+
 def count_notifications(user_id: int) -> int:
     """Invitations awaiting this user's answer, plus their invitations that
     were accepted and they haven't looked at yet."""
@@ -1481,20 +1497,26 @@ def list_owned_objects(user_id: int) -> dict[str, list[dict]]:
 
 
 def list_shared_objects(owner_id: int, collaborator_id: int) -> dict[str, list[dict]]:
-    """kind -> [{"id", "title", "role"}]: the objects `owner_id` owns that
-    `collaborator_id` holds a (non-owner) role on."""
+    """kind -> [{"id", "title", "role", "direct"}]: the objects `owner_id`
+    owns that `collaborator_id` can reach without owning. "role" is their
+    effective role; "direct" the role granted on the object itself, or None
+    when it's reached only through a parent."""
     result = {}
     with _cursor() as cur:
         for kind, (table, column) in _ACCESS_TABLES.items():
             obj_table, title_col = _OBJECT_TITLES[kind]
             cur.execute(
-                f"SELECT o.id, o.{title_col} AS title, c.role FROM {obj_table} o "  # noqa: S608 (fixed names)
+                f"SELECT o.id, o.{title_col} AS title, e.role, d.role AS direct FROM {obj_table} o "  # noqa: S608 (fixed names)
                 f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner' "
-                f"JOIN {table} c ON c.{column} = o.id AND c.user_id = %s AND c.role <> 'owner' "
+                f"JOIN eff_{table} e ON e.{column} = o.id AND e.user_id = %s AND e.role <> 'owner' "
+                f"LEFT JOIN {table} d ON d.{column} = o.id AND d.user_id = %s "
                 f"ORDER BY lower(o.{title_col}), o.id",
-                (owner_id, collaborator_id),
+                (owner_id, collaborator_id, collaborator_id),
             )
-            result[kind] = [{"id": r["id"], "title": r["title"] or r["id"], "role": r["role"]} for r in cur.fetchall()]
+            result[kind] = [
+                {"id": r["id"], "title": r["title"] or r["id"], "role": r["role"], "direct": r["direct"]}
+                for r in cur.fetchall()
+            ]
     return result
 
 

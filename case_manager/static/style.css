@@ -874,3 +874,6 @@ a.tag:hover { background: #d7deec; }
 .collab-edit-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
 .collab-edit-row span.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collab-edit-row select { padding: 3px 6px; border: 1px solid #cfd4e0; border-radius: 4px; }
+.collab-delete { border: none; background: none; padding: 4px; border-radius: 4px; color: #8a92a5; cursor: pointer; line-height: 0; }
+.collab-delete:hover { color: #c0392b; background: #fbeceb; }
+.collab-delete:disabled { opacity: 0.5; cursor: default; }

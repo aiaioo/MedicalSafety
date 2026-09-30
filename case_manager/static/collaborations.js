@@ -87,7 +87,8 @@
       any = true;
       const ul = el("ul");
       items.forEach(function (o) {
-        ul.appendChild(el("li", {}, [o.title + " ", el("span", {className: "collab-role", textContent: "(" + o.role + ")"})]));
+        const note = o.direct ? o.role : o.role + ", inherited from a parent";
+        ul.appendChild(el("li", {}, [o.title + " ", el("span", {className: "collab-role", textContent: "(" + note + ")"})]));
       });
       box.appendChild(el("div", {}, [el("span", {className: "kind", textContent: KIND_LABELS[kind]}), ul]));
     });
@@ -101,7 +102,7 @@
     const byKind = {};
     KINDS.forEach(function (kind) {
       byKind[kind] = {};
-      (card.shared_by_me[kind] || []).forEach(function (o) { byKind[kind][o.id] = o.role; });
+      (card.shared_by_me[kind] || []).forEach(function (o) { byKind[kind][o.id] = o; });
       const objs = shareable[kind] || [];
       if (!objs.length) return;
       wrap.appendChild(el("h4", {textContent: KIND_LABELS[kind]}));
@@ -112,9 +113,14 @@
           el("option", {value: "viewer", textContent: "Can view"}),
           el("option", {value: "editor", textContent: "Can edit"}),
         ]);
-        sel.value = byKind[kind][o.id] || "";
+        const cur = byKind[kind][o.id];
+        sel.value = (cur && cur.direct) || "";
         selects[kind].push({id: o.id, select: sel});
-        wrap.appendChild(el("div", {className: "collab-edit-row"}, [el("span", {className: "title", textContent: o.title, title: o.title}), sel]));
+        const row = el("div", {className: "collab-edit-row"}, [el("span", {className: "title", textContent: o.title, title: o.title}), sel]);
+        if (cur && cur.role !== cur.direct) {
+          row.insertBefore(el("span", {className: "collab-role", textContent: "inherits: " + cur.role}), sel);
+        }
+        wrap.appendChild(row);
       });
     });
     if (!Object.keys(selects).length) wrap.appendChild(el("p", {className: "empty", textContent: "You don't own anything to share yet."}));
@@ -171,6 +177,14 @@
       };
       show();
       root.appendChild(body);
+      const del = el("button", {className: "collab-delete", type: "button", title: "Remove collaborator", "aria-label": "Remove collaborator " + card.email});
+      del.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><path d="M6 4V2.5h4V4"/><path d="M3.8 4l.7 9.5h7L12.2 4"/><path d="M6.7 6.5v5M9.3 6.5v5"/></svg>';
+      del.addEventListener("click", function () {
+        if (confirm("Remove " + card.email + " as a collaborator?\n\nEverything you have shared with them, and everything they have shared with you, will be withdrawn.")) {
+          act(del, itemUrl(card.id), "DELETE");
+        }
+      });
+      head.appendChild(del);
       const edit = el("button", {className: "btn", type: "button", textContent: "Edit access"});
       edit.addEventListener("click", function () {
         actions.style.display = "none";
