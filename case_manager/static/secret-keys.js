@@ -66,9 +66,21 @@
       clearTimeout(del._confirmTimer);
       act(del, function () { return api(itemUrl(kind, k.id), "DELETE"); });
     });
+    const perm = el("select", {title: "Change permission", "aria-label": "Permission for this key"}, [
+      el("option", {value: "viewer", textContent: "Can view"}),
+      el("option", {value: "editor", textContent: "Can edit"}),
+    ]);
+    perm.value = k.permission;
+    perm.addEventListener("change", function () {
+      perm.disabled = true;
+      showError("");
+      api(itemUrl(kind, k.id), "PATCH", {permission: perm.value})
+        .then(refresh)
+        .catch(function (e) { showError(e.message); perm.value = k.permission; perm.disabled = false; });
+    });
     return el("div", {className: "key-row" + (k.active ? "" : " inactive")}, [
       el("span", {className: "key-title", textContent: k.title, title: k.title}),
-      el("span", {className: "collab-role", textContent: (k.permission === "editor" ? "Can edit" : "Can view") + (k.active ? "" : " – deactivated")}),
+      perm,
       el("code", {className: "key-value", textContent: k.key}),
       el("a", {className: "key-link", href: k.url, textContent: "link", title: k.url}),
       el("span", {className: "collab-actions"}, [copyLink, copy, del]),

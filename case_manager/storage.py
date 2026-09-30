@@ -1599,17 +1599,21 @@ def set_key_active(owner_id: int, kind: str, key_id: int, active: bool) -> bool:
         return cur.rowcount == 1
 
 
-def delete_key(owner_id: int, kind: str, key_id: int) -> bool:
-    """Deletes the key, so the object is no longer shared by it, and forgets
-    everyone's redemptions of it."""
+def set_key_permission(owner_id: int, kind: str, key_id: int, permission: str) -> bool:
     table, _ = _KEY_TABLES[kind]
     with _cursor() as cur:
-        cur.execute(f"DELETE FROM {table} WHERE id = %s AND owner_id = %s RETURNING key", (key_id, owner_id))  # noqa: S608
-        row = cur.fetchone()
-        if row is None:
-            return False
-        cur.execute("DELETE FROM key_redemptions WHERE kind = %s AND key = %s", (kind, row["key"]))
-        return True
+        cur.execute(f"UPDATE {table} SET permission = %s WHERE id = %s AND owner_id = %s", (permission, key_id, owner_id))  # noqa: S608
+        return cur.rowcount == 1
+
+
+def delete_key(owner_id: int, kind: str, key_id: int) -> bool:
+    """Deletes the key, so the object is no longer shared by it. Redemptions
+    of it are kept (they no longer grant anything) so its holders can be told
+    the key was deleted -- see has_deleted_key."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"DELETE FROM {table} WHERE id = %s AND owner_id = %s", (key_id, owner_id))  # noqa: S608
+        return cur.rowcount == 1
 
 
 def object_has_keys(kind: str, object_id: str) -> bool:
@@ -1631,9 +1635,11 @@ def find_key(kind: str, object_id: str, key: str) -> dict | None:
 
 
 def redeem_key(session_id: int, kind: str, key: str) -> None:
+    table, column = _KEY_TABLES[kind]
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO key_redemptions (session_id, kind, key) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            f"INSERT INTO key_redemptions (session_id, kind, key, object_id) "  # noqa: S608
+            f"SELECT %s, %s, key, {column} FROM {table} WHERE key = %s ON CONFLICT DO NOTHING",
             (session_id, kind, key),
         )
 
@@ -1646,6 +1652,19 @@ def has_deactivated_key(session_id: int, kind: str, object_id: str) -> bool:
         cur.execute(
             f"SELECT EXISTS(SELECT 1 FROM key_redemptions r JOIN {table} k ON k.key = r.key "  # noqa: S608
             f"WHERE r.session_id = %s AND r.kind = %s AND k.{column} = %s AND NOT k.active) AS ok",
+            (session_id, kind, object_id),
+        )
+        return cur.fetchone()["ok"]
+
+
+def has_deleted_key(session_id: int, kind: str, object_id: str) -> bool:
+    """Whether this key session got into the object with a key its owner has
+    since deleted."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(
+            f"SELECT EXISTS(SELECT 1 FROM key_redemptions r WHERE r.session_id = %s AND r.kind = %s "  # noqa: S608
+            f"AND r.object_id = %s AND NOT EXISTS(SELECT 1 FROM {table} k WHERE k.key = r.key)) AS ok",
             (session_id, kind, object_id),
         )
         return cur.fetchone()["ok"]

@@ -148,10 +148,11 @@ UPLOAD_EXTENSIONS = {".pdf": "pdf"}
 
 
 class DocumentError(Exception):
-    def __init__(self, message, status=404):
+    def __init__(self, message, status=404, unlock=None):
         super().__init__(message)
         self.message = message
         self.status = status
+        self.unlock = unlock  # (kind, object id) whose key prompt to offer with the message
 
 
 @app.errorhandler(storage.DeleteBlocked)
@@ -163,6 +164,9 @@ def handle_delete_blocked(err):
 def handle_document_error(err):
     if request.path.startswith("/api/"):
         return jsonify({"error": err.message}), err.status
+    if err.unlock:
+        next_url = request.full_path if request.query_string else request.path
+        return auth.render_unlock(*err.unlock, next_url, err.message, err.status)
     return render_template("error.html", message=err.message), err.status
 
 
@@ -181,9 +185,14 @@ ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source":
 
 def raise_no_access(kind, object_id, message):
     """The 404 for an object the user can't reach -- except that a guest
-    whose key for it has been switched off is told so."""
-    if g.user.is_guest and storage.has_deactivated_key(-g.user.id, kind, object_id):
-        raise DocumentError(auth.KEY_DEACTIVATED_MESSAGE, 403)
+    whose key for it has been switched off or deleted is told so."""
+    if g.user.is_guest:
+        if storage.has_deactivated_key(-g.user.id, kind, object_id):
+            raise DocumentError(auth.KEY_DEACTIVATED_MESSAGE, 403)
+        if storage.has_deleted_key(-g.user.id, kind, object_id):
+            # Offer the key prompt too, if the object has other keys to try.
+            unlock = (kind, object_id) if storage.object_has_keys(kind, object_id) else None
+            raise DocumentError(auth.KEY_DELETED_MESSAGE, 403, unlock=unlock)
     raise DocumentError(message, 404)
 
 
@@ -1846,10 +1855,16 @@ def api_key_item(kind, key_id):
     if request.method == "DELETE":
         done = storage.delete_key(g.user.id, kind, key_id)
     else:
-        active = (request.get_json(silent=True) or {}).get("active")
-        if not isinstance(active, bool):
-            raise DocumentError("active must be true or false", 400)
-        done = storage.set_key_active(g.user.id, kind, key_id, active)
+        body = request.get_json(silent=True) or {}
+        if "permission" in body:
+            if body["permission"] not in storage.KEY_PERMISSIONS:
+                raise DocumentError("Permission must be viewer or editor", 400)
+            done = storage.set_key_permission(g.user.id, kind, key_id, body["permission"])
+        else:
+            active = body.get("active")
+            if not isinstance(active, bool):
+                raise DocumentError("active must be true or false", 400)
+            done = storage.set_key_active(g.user.id, kind, key_id, active)
     if not done:
         raise DocumentError("No such key", 404)
     return jsonify({"ok": True})

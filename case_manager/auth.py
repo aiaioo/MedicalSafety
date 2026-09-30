@@ -73,6 +73,10 @@ KEY_DEACTIVATED_MESSAGE = (
     "This key has been temporarily deactivated by the owner. "
     "Please message the owner for access or a new key."
 )
+KEY_DELETED_MESSAGE = (
+    "Your key has been deleted by the owner. "
+    "Please message the owner for access or a new key."
+)
 
 
 # The "are you human?" image on the sign-up form. Each challenge's answer is
@@ -264,7 +268,7 @@ def _keyed_target() -> tuple[str, str] | None:
     return param_kind[1], object_id
 
 
-def _render_unlock(kind: str, object_id: str, next_url: str, error: str = "", status: int = 200):
+def render_unlock(kind: str, object_id: str, next_url: str, error: str = "", status: int = 200):
     return render_template(
         "unlock.html", kind=kind, object_id=object_id, next=next_url, error=error, captcha=new_captcha(),
     ), status
@@ -283,19 +287,19 @@ def unlock():
     if g.user is not None and not g.user.is_guest:
         return redirect(next_url)  # signed-in users use their own access
     if request.method == "GET":
-        return _render_unlock(kind, object_id, next_url)
+        return render_unlock(kind, object_id, next_url)
 
     if not storage.record_signup_attempt("unlock:" + _client_key(), SIGNUP_ATTEMPT_LIMIT, SIGNUP_ATTEMPT_WINDOW_SECONDS):
-        return _render_unlock(kind, object_id, next_url, "Too many attempts from your network. Please try again later.", 429)
+        return render_unlock(kind, object_id, next_url, "Too many attempts from your network. Please try again later.", 429)
     # The captcha is checked (and used up) first, so keys can't be guessed without solving one per try.
     if not captcha_passed(request.form.get("captcha_id") or "", request.form.get("captcha_answer") or ""):
-        return _render_unlock(kind, object_id, next_url, "The characters you typed didn't match the image. Please try the new one.", 400)
+        return render_unlock(kind, object_id, next_url, "The characters you typed didn't match the image. Please try the new one.", 400)
     entered = (request.form.get("key") or "").strip()
     found = storage.find_key(kind, object_id, entered) if len(entered) == KEY_LENGTH else None
     if found is None:
-        return _render_unlock(kind, object_id, next_url, "That key isn't valid for this page.", 403)
+        return render_unlock(kind, object_id, next_url, "That key isn't valid for this page.", 403)
     if not found["active"]:
-        return _render_unlock(kind, object_id, next_url, KEY_DEACTIVATED_MESSAGE, 403)
+        return render_unlock(kind, object_id, next_url, KEY_DEACTIVATED_MESSAGE, 403)
 
     if g.user is not None:  # already holding keys: add this one to their session
         storage.redeem_key(-g.user.id, kind, entered)
