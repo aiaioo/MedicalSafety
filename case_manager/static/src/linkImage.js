@@ -43,6 +43,12 @@ export function normalizeLinkUrl(raw) {
 export function setupLinkAndImage({ editor, imageUploadUrl, canEdit = true, setStatus, onChange, onImageUploaded }) {
   document.getElementById("linkBtn").addEventListener("click", () => {
     if (!canEdit) return;
+    // A link needs text to attach to: with just a cursor (and not inside an
+    // existing link, which can be edited or removed) there's nothing to link.
+    if (editor.state.selection.empty && !editor.isActive("link")) {
+      window.alert("Please select the text you want to turn into a link first, then click Link.");
+      return;
+    }
     let value = editor.getAttributes("link").href || "";
     for (;;) {
       const answer = window.prompt("Link URL (leave blank to remove the link):", value);
