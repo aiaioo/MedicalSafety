@@ -1940,10 +1940,21 @@ def update_section(section_id: str, title: str, description: str, position: int)
 
 def delete_section(section_id: str) -> None:
     with _cursor() as cur:
-        # An article can't stay published under a section that no longer
-        # exists -- ON DELETE SET NULL clears section_id, but published must
-        # be cleared explicitly too, here, in the same transaction.
-        cur.execute("UPDATE articles SET published = FALSE WHERE section_id = %s", (section_id,))
+        # An article that would be left with no section at all can't stay
+        # published -- articles still placed in at least one other section
+        # keep their published flag. This has to run before the DELETE,
+        # while article_sections still holds this section's rows (deleting
+        # the section cascades and removes them).
+        cur.execute(
+            """
+            UPDATE articles SET published = FALSE WHERE id IN (
+                SELECT article_id FROM article_sections WHERE section_id = %s
+            ) AND id NOT IN (
+                SELECT article_id FROM article_sections WHERE section_id <> %s
+            )
+            """,
+            (section_id, section_id),
+        )
         cur.execute("DELETE FROM website_sections WHERE id = %s", (section_id,))
 
 
@@ -1954,26 +1965,52 @@ def delete_section(section_id: str) -> None:
 # collaboratively edited.
 # ---------------------------------------------------------------------------
 
+def _set_article_sections(cur, article_id: str, section_ids: list[str]) -> None:
+    """Makes this article's section placements exactly `section_ids`
+    (de-duplicated, order-preserving) -- called from create_article/
+    save_article inside the same transaction as the article row write."""
+    cur.execute("DELETE FROM article_sections WHERE article_id = %s", (article_id,))
+    for section_id in dict.fromkeys(section_ids):
+        cur.execute(
+            "INSERT INTO article_sections (article_id, section_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (article_id, section_id),
+        )
+
+
 def list_articles(user_id: int) -> list[dict]:
-    """This author's own articles, most recently updated first."""
+    """This author's own articles, most recently updated first, each with
+    "sections": [{"section_title", "website_name"}, ...] for every section
+    it's placed in (possibly across several websites, possibly none)."""
     with _cursor() as cur:
         cur.execute(
-            """
-            SELECT a.id, a.title, a.section_id, a.published, a.created_at, a.updated_at,
-                   ws.title AS section_title, w.name AS website_name
-            FROM articles a
-            LEFT JOIN website_sections ws ON ws.id = a.section_id
-            LEFT JOIN websites w ON w.id = ws.website_id
-            WHERE a.author_id = %s
-            ORDER BY a.updated_at DESC
-            """,
+            "SELECT id, title, summary, published, thumbnail_image_id, created_at, updated_at FROM articles "
+            "WHERE author_id = %s ORDER BY updated_at DESC",
             (user_id,),
         )
         rows = cur.fetchall()
+        if not rows:
+            return []
+        cur.execute(
+            """
+            SELECT asec.article_id, ws.title AS section_title, w.name AS website_name
+            FROM article_sections asec
+            JOIN website_sections ws ON ws.id = asec.section_id
+            JOIN websites w ON w.id = ws.website_id
+            WHERE asec.article_id = ANY(%s)
+            ORDER BY w.name, ws.position
+            """,
+            ([r["id"] for r in rows],),
+        )
+        section_rows = cur.fetchall()
+    by_article: dict[str, list] = {}
+    for s in section_rows:
+        by_article.setdefault(s["article_id"], []).append(
+            {"section_title": s["section_title"], "website_name": s["website_name"]}
+        )
     return [
         {
-            "id": r["id"], "title": r["title"], "section_id": r["section_id"], "published": r["published"],
-            "section_title": r["section_title"], "website_name": r["website_name"],
+            "id": r["id"], "title": r["title"], "summary": r["summary"], "published": r["published"],
+            "thumbnail_image_id": r["thumbnail_image_id"], "sections": by_article.get(r["id"], []),
             "created_at": _iso(r["created_at"]), "updated_at": _iso(r["updated_at"]),
         }
         for r in rows
@@ -1987,16 +2024,19 @@ def article_exists(article_id: str) -> bool:
 def get_article(article_id: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
-            "SELECT id, title, doc, section_id, published, author_id, created_at, updated_at FROM articles WHERE id = %s",
+            "SELECT id, title, doc, summary, published, thumbnail_image_id, author_id, created_at, updated_at "
+            "FROM articles WHERE id = %s",
             (article_id,),
         )
         row = cur.fetchone()
-    if row is None:
-        return None
+        if row is None:
+            return None
+        cur.execute("SELECT section_id FROM article_sections WHERE article_id = %s", (article_id,))
+        section_ids = [r["section_id"] for r in cur.fetchall()]
     return {
-        "id": row["id"], "title": row["title"], "doc": row["doc"], "section_id": row["section_id"],
-        "published": row["published"], "author_id": row["author_id"],
-        "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
+        "id": row["id"], "title": row["title"], "doc": row["doc"], "summary": row["summary"],
+        "published": row["published"], "thumbnail_image_id": row["thumbnail_image_id"], "section_ids": section_ids,
+        "author_id": row["author_id"], "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
     }
 
 
@@ -2004,24 +2044,27 @@ def create_article(article_id: str, data: dict, author_id: int) -> None:
     with _cursor() as cur:
         cur.execute(
             """
-            INSERT INTO articles (id, title, doc, section_id, published, author_id, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO articles (id, title, doc, summary, published, thumbnail_image_id, author_id, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (article_id, data["title"], psycopg2.extras.Json(data["doc"]), data.get("section_id"),
-             data.get("published", False), author_id, data["created_at"], data["updated_at"]),
+            (article_id, data["title"], psycopg2.extras.Json(data["doc"]), data.get("summary", ""),
+             data.get("published", False), data.get("thumbnail_image_id"), author_id,
+             data["created_at"], data["updated_at"]),
         )
+        _set_article_sections(cur, article_id, data.get("section_ids") or [])
 
 
 def save_article(article_id: str, data: dict) -> None:
     with _cursor() as cur:
         cur.execute(
             """
-            UPDATE articles SET title = %s, doc = %s, section_id = %s, published = %s, updated_at = %s
+            UPDATE articles SET title = %s, doc = %s, summary = %s, published = %s, thumbnail_image_id = %s, updated_at = %s
             WHERE id = %s
             """,
-            (data["title"], psycopg2.extras.Json(data["doc"]), data.get("section_id"),
-             data.get("published", False), data["updated_at"], article_id),
+            (data["title"], psycopg2.extras.Json(data["doc"]), data.get("summary", ""),
+             data.get("published", False), data.get("thumbnail_image_id"), data["updated_at"], article_id),
         )
+        _set_article_sections(cur, article_id, data.get("section_ids") or [])
 
 
 def delete_article(article_id: str) -> None:
@@ -2044,17 +2087,25 @@ def get_article_image(image_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def list_article_images(article_id: str) -> list[dict]:
+    """{"id"} of every image uploaded into this article, oldest first --
+    for the editor's thumbnail picker (see app.py's api_article_images)."""
+    with _cursor() as cur:
+        cur.execute("SELECT id FROM article_images WHERE article_id = %s ORDER BY created_at", (article_id,))
+        return [{"id": r["id"]} for r in cur.fetchall()]
+
+
 # ---------------------------------------------------------------------------
 # The public side: published articles grouped by section, for the content
 # aggregation page (see app.py's public_view) -- draft articles (published =
-# FALSE, or no section) never appear here.
+# FALSE, or placed in no section) never appear here.
 # ---------------------------------------------------------------------------
 
 def public_sections(website_id: str) -> list[dict]:
     """This website's ordinary sections (excluding its "legal tools" one,
     see public_legal_tools_section) in display order, each with its
-    description and its published articles ({"id", "title", "updated_at"},
-    newest first)."""
+    description and its published articles ({"id", "title", "summary",
+    "thumbnail_image_id", "updated_at"}, newest first)."""
     with _cursor() as cur:
         cur.execute(
             "SELECT id, title, description FROM website_sections WHERE website_id = %s AND kind = 'section' ORDER BY position, id",
@@ -2063,8 +2114,10 @@ def public_sections(website_id: str) -> list[dict]:
         sections = cur.fetchall()
         cur.execute(
             """
-            SELECT a.id, a.title, a.section_id, a.updated_at FROM articles a
-            JOIN website_sections ws ON ws.id = a.section_id AND ws.website_id = %s AND ws.kind = 'section'
+            SELECT a.id, a.title, a.summary, a.thumbnail_image_id, a.updated_at, asec.section_id
+            FROM articles a
+            JOIN article_sections asec ON asec.article_id = a.id
+            JOIN website_sections ws ON ws.id = asec.section_id AND ws.website_id = %s AND ws.kind = 'section'
             WHERE a.published
             ORDER BY a.position, a.updated_at DESC
             """,
@@ -2073,9 +2126,10 @@ def public_sections(website_id: str) -> list[dict]:
         articles = cur.fetchall()
     by_section: dict[str, list] = {}
     for a in articles:
-        by_section.setdefault(a["section_id"], []).append(
-            {"id": a["id"], "title": a["title"] or a["id"], "updated_at": _iso(a["updated_at"])}
-        )
+        by_section.setdefault(a["section_id"], []).append({
+            "id": a["id"], "title": a["title"] or a["id"], "summary": a["summary"],
+            "thumbnail_image_id": a["thumbnail_image_id"], "updated_at": _iso(a["updated_at"]),
+        })
     return [
         {"id": s["id"], "title": s["title"], "description": s["description"], "articles": by_section.get(s["id"], [])}
         for s in sections
@@ -2096,34 +2150,57 @@ def public_legal_tools_section(website_id: str) -> dict | None:
         if section is None:
             return None
         cur.execute(
-            "SELECT id, title, updated_at FROM articles WHERE section_id = %s AND published ORDER BY position, updated_at DESC",
+            """
+            SELECT a.id, a.title, a.summary, a.thumbnail_image_id, a.updated_at
+            FROM articles a JOIN article_sections asec ON asec.article_id = a.id
+            WHERE asec.section_id = %s AND a.published
+            ORDER BY a.position, a.updated_at DESC
+            """,
             (section["id"],),
         )
         articles = cur.fetchall()
     return {
         "id": section["id"], "title": section["title"], "description": section["description"],
-        "articles": [{"id": a["id"], "title": a["title"] or a["id"], "updated_at": _iso(a["updated_at"])} for a in articles],
+        "articles": [
+            {"id": a["id"], "title": a["title"] or a["id"], "summary": a["summary"],
+             "thumbnail_image_id": a["thumbnail_image_id"], "updated_at": _iso(a["updated_at"])}
+            for a in articles
+        ],
     }
 
 
 def get_published_article(article_id: str) -> dict | None:
-    """The article plus its section/website, only if it's actually
-    published -- the read-only public view uses this, never get_article."""
+    """The article plus every section/website it's placed in, only if it's
+    actually published -- the read-only public view uses this, never
+    get_article. None if published but (e.g. through a race with a section
+    being deleted) it ended up placed in no section at all."""
     with _cursor() as cur:
         cur.execute(
-            """
-            SELECT a.id, a.title, a.doc, a.updated_at, ws.title AS section_title, w.id AS website_id, w.name AS website_name
-            FROM articles a
-            JOIN website_sections ws ON ws.id = a.section_id
-            JOIN websites w ON w.id = ws.website_id
-            WHERE a.id = %s AND a.published
-            """,
+            "SELECT id, title, doc, summary, thumbnail_image_id, updated_at FROM articles WHERE id = %s AND published",
             (article_id,),
         )
         row = cur.fetchone()
-    if row is None:
+        if row is None:
+            return None
+        cur.execute(
+            """
+            SELECT ws.title AS section_title, w.id AS website_id, w.name AS website_name
+            FROM article_sections asec
+            JOIN website_sections ws ON ws.id = asec.section_id
+            JOIN websites w ON w.id = ws.website_id
+            WHERE asec.article_id = %s
+            ORDER BY w.name, ws.position
+            """,
+            (article_id,),
+        )
+        placements = cur.fetchall()
+    if not placements:
         return None
     return {
-        "id": row["id"], "title": row["title"], "doc": row["doc"], "updated_at": _iso(row["updated_at"]),
-        "section_title": row["section_title"], "website_id": row["website_id"], "website_name": row["website_name"],
+        "id": row["id"], "title": row["title"], "doc": row["doc"], "summary": row["summary"],
+        "thumbnail_image_id": row["thumbnail_image_id"], "updated_at": _iso(row["updated_at"]),
+        "placements": [
+            {"section_title": p["section_title"], "website_id": p["website_id"], "website_name": p["website_name"]}
+            for p in placements
+        ],
     }

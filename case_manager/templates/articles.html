@@ -133,22 +133,33 @@
     {% if article_id %}
     <aside class="sidebar">
       <h3>Publish</h3>
-      <label class="modal-field">Section
-        <select id="sectionSelect">
-          <option value="">&mdash; draft (no section) &mdash;</option>
-          {% for w in websites %}
-          <optgroup label="{{ w.name }}">
-            {% for s in w.sections %}
-            <option value="{{ s.id }}">{{ s.title }}{{ " (shown in the public page's sign-in panel)" if s.kind == "legal_tools" }}</option>
-            {% endfor %}
-          </optgroup>
-          {% endfor %}
-        </select>
+      <label class="modal-field">Summary (shown in the public page's listings)
+        <textarea id="summaryInput" maxlength="300" rows="3" placeholder="A short description shown wherever this webpage is listed"></textarea>
       </label>
+      <div class="modal-field">
+        <span>Sections</span>
+        <p class="empty" style="margin: 2px 0 6px;">Pick any number, across any website -- this webpage appears under all of them.</p>
+        <div id="sectionChecklist" class="section-checklist">
+          {% for w in websites %}
+          <div class="section-checklist-group">
+            <div class="section-checklist-website">{{ w.name }}</div>
+            {% for s in w.sections %}
+            <label class="section-checklist-item">
+              <input type="checkbox" class="section-checkbox" value="{{ s.id }}">
+              {{ s.title }}{{ " (sign-in panel)" if s.kind == "legal_tools" }}
+            </label>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
       <label class="modal-field" style="display:flex; align-items:center; gap:8px;">
         <input type="checkbox" id="publishedInput"> Published
       </label>
-      <p class="empty" style="margin: 8px 0 0;">A webpage only appears on the public site once it's assigned a section and marked Published.</p>
+      <p class="empty" style="margin: 4px 0 0;">A webpage only appears on the public site once it's placed in at least one section and marked Published.</p>
+      <h3 class="annex-section-divider">Thumbnail</h3>
+      <p class="empty" style="margin: 0 0 8px;">Pick one of the images already inserted into this webpage.</p>
+      <div id="thumbnailPicker" class="thumbnail-picker"></div>
     </aside>
     {% endif %}
   </main>

@@ -470,11 +470,25 @@ a.tag:hover { background: #d7deec; }
   box-shadow: 0 8px 30px rgba(0,0,0,0.28); }
 .modal h3 { margin-top: 0; }
 .modal-field { display: block; margin: 14px 0; font-size: 13px; color: #46536b; }
-.modal-field input, .modal-field select {
+.modal-field input, .modal-field select, .modal-field textarea {
   display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: 14px;
-  border: 1px solid #cfd4e0; border-radius: 4px;
+  border: 1px solid #cfd4e0; border-radius: 4px; box-sizing: border-box; font-family: inherit;
 }
 .modal-hint { font-size: 12px; color: #6b7280; margin: 4px 0 14px; }
+
+/* Articles workspace sidebar: the multi-website section checklist and the
+   thumbnail picker (see templates/articles.html, static/src/article-editor.js). */
+.section-checklist { max-height: 220px; overflow-y: auto; border: 1px solid #e0e2e8; border-radius: 6px; padding: 8px 10px; }
+.section-checklist-group + .section-checklist-group { margin-top: 10px; }
+.section-checklist-website { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #8a92a5; margin-bottom: 4px; }
+.section-checklist-item { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
+.section-checklist-item input { width: auto; margin: 0; }
+.thumbnail-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumbnail-option { padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; cursor: pointer;
+  width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  font-size: 11px; color: #6b7280; background: #f3f4f7; }
+.thumbnail-option img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumbnail-option.selected { border-color: #2266dd; }
 .margin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .modal-wide { width: 520px; }
 .list-cascade-field { display: flex; align-items: center; gap: 8px; }

@@ -21,8 +21,10 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
   const titleInput = document.getElementById("titleInput");
   const saveBtn = document.getElementById("saveBtn");
   const saveStatusEl = document.getElementById("saveStatus");
-  const sectionSelect = document.getElementById("sectionSelect");
+  const summaryInput = document.getElementById("summaryInput");
   const publishedInput = document.getElementById("publishedInput");
+  const thumbnailPicker = document.getElementById("thumbnailPicker");
+  let thumbnailImageId = "";
 
   const fileMenuBtn = document.getElementById("fileMenuBtn");
   const fileMenuDropdown = document.getElementById("fileMenuDropdown");
@@ -147,8 +149,9 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
   }
 
   function statusLabel(a) {
-    if (a.published && a.section_title) return `Published • ${a.website_name} › ${a.section_title}`;
-    if (a.section_title) return `Draft • ${a.website_name} › ${a.section_title}`;
+    const places = (a.sections || []).map((s) => `${s.website_name} › ${s.section_title}`).join(", ");
+    if (a.published && places) return `Published • ${places}`;
+    if (places) return `Draft • ${places}`;
     return "Draft • no section yet";
   }
 
@@ -307,11 +310,55 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       if (!res.ok) throw new Error(data.error || "Upload failed");
       editor.chain().focus().setImage({ src: data.url, alt: file.name }).run();
       setStatus("");
+      await loadThumbnailChoices();
     } catch (e) {
       setStatus("Image upload failed: " + e.message, true);
     }
     markDirty();
   });
+
+  // ---------------------------------------------------------------------
+  // Thumbnail picker: choose one of the article's own uploaded images.
+  // ---------------------------------------------------------------------
+  function renderThumbnailPicker(images) {
+    thumbnailPicker.innerHTML = "";
+    if (!images.length) {
+      thumbnailPicker.innerHTML = '<p class="empty">Insert an image into the webpage to choose a thumbnail.</p>';
+      return;
+    }
+    const none = document.createElement("button");
+    none.type = "button";
+    none.className = "thumbnail-option" + (thumbnailImageId ? "" : " selected");
+    none.textContent = "None";
+    none.title = "No thumbnail";
+    none.addEventListener("click", () => {
+      thumbnailImageId = "";
+      renderThumbnailPicker(images);
+      markDirty();
+    });
+    thumbnailPicker.appendChild(none);
+    for (const img of images) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "thumbnail-option" + (img.id === thumbnailImageId ? " selected" : "");
+      btn.innerHTML = `<img src="${img.url}" alt="">`;
+      btn.addEventListener("click", () => {
+        thumbnailImageId = img.id;
+        renderThumbnailPicker(images);
+        markDirty();
+      });
+      thumbnailPicker.appendChild(btn);
+    }
+  }
+
+  async function loadThumbnailChoices() {
+    try {
+      const res = await fetch(`/api/article/${encodeURIComponent(articleId)}/images`);
+      renderThumbnailPicker(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   // ---------------------------------------------------------------------
   // Formatting toolbar (same behaviour as the report editor's)
@@ -463,15 +510,30 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
   // ---------------------------------------------------------------------
   // Publish sidebar
   // ---------------------------------------------------------------------
-  function syncPublishedEnabled() {
-    publishedInput.disabled = !sectionSelect.value;
-    if (!sectionSelect.value) publishedInput.checked = false;
+  const sectionCheckboxes = Array.from(document.querySelectorAll(".section-checkbox"));
+
+  function selectedSectionIds() {
+    return sectionCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
   }
-  sectionSelect.addEventListener("change", () => {
-    syncPublishedEnabled();
-    markDirty();
-  });
+  function setSelectedSectionIds(ids) {
+    const set = new Set(ids);
+    sectionCheckboxes.forEach((cb) => {
+      cb.checked = set.has(cb.value);
+    });
+  }
+  function syncPublishedEnabled() {
+    const any = selectedSectionIds().length > 0;
+    publishedInput.disabled = !any;
+    if (!any) publishedInput.checked = false;
+  }
+  sectionCheckboxes.forEach((cb) =>
+    cb.addEventListener("change", () => {
+      syncPublishedEnabled();
+      markDirty();
+    })
+  );
   publishedInput.addEventListener("change", markDirty);
+  summaryInput.addEventListener("input", markDirty);
 
   // ---------------------------------------------------------------------
   // Autosave / save
@@ -499,8 +561,10 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
     const payload = {
       title: titleInput.value.trim() || "Untitled webpage",
       doc: editor.getJSON(),
-      section_id: sectionSelect.value,
+      summary: summaryInput.value,
+      section_ids: selectedSectionIds(),
       published: publishedInput.checked,
+      thumbnail_image_id: thumbnailImageId,
     };
     try {
       const res = await fetch(articleUrl, {
@@ -534,7 +598,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       const blob = new Blob(
         [JSON.stringify({
           title: titleInput.value.trim() || "Untitled webpage", doc: editor.getJSON(),
-          section_id: sectionSelect.value, published: publishedInput.checked,
+          summary: summaryInput.value, section_ids: selectedSectionIds(),
+          published: publishedInput.checked, thumbnail_image_id: thumbnailImageId,
         })],
         { type: "application/json" }
       );
@@ -567,16 +632,18 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       const res = await fetch(articleUrl);
       const data = await res.json();
       titleInput.value = data.title || "";
-      sectionSelect.value = data.section_id || "";
-      if (sectionSelect.value !== (data.section_id || "")) sectionSelect.value = "";
+      summaryInput.value = data.summary || "";
+      setSelectedSectionIds(data.section_ids || []);
       publishedInput.checked = !!data.published;
       syncPublishedEnabled();
+      thumbnailImageId = data.thumbnail_image_id || "";
       const loadChain = editor.chain().setMeta("addToHistory", false);
       if (data.doc && data.doc.type === "doc") loadChain.setContent(data.doc);
       else loadChain.setContent("");
       loadChain.run();
       dirty = false;
       setStatus("");
+      await loadThumbnailChoices(); // after thumbnailImageId is set, so the right one renders selected
     } catch (e) {
       setStatus("Failed to load webpage: " + e.message, true);
     } finally {

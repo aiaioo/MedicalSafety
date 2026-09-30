@@ -3000,6 +3000,9 @@ def api_admin_section(section_id):
 # ---------------------------------------------------------------------------
 
 ARTICLE_IMAGE_MAX_PIXELS = 1600
+ARTICLE_IMAGE_MAX_BYTES = 200 * 1024  # a webpage's images should be quick to download
+ARTICLE_SUMMARY_MAX_CHARS = 300
+ARTICLE_MAX_SECTIONS = 50  # generous; just a sanity cap on the client's list
 
 
 def require_article(article_id):
@@ -3012,15 +3015,33 @@ def require_article(article_id):
     return article
 
 
-def valid_section_id(raw):
-    """A section id from the client, or None for "no section" (draft) --
-    anything else must name a section that actually exists."""
-    section_id = str(raw or "").strip()
-    if not section_id:
+def valid_section_ids(raw):
+    """The section ids from the client -- possibly across several
+    websites, possibly none (an unpublished draft) -- de-duplicated;
+    anything listed must name a section that actually exists."""
+    if not isinstance(raw, list):
+        return []
+    section_ids = []
+    for item in raw[:ARTICLE_MAX_SECTIONS]:
+        section_id = str(item or "").strip()
+        if not section_id or section_id in section_ids:
+            continue
+        if not storage.section_exists(section_id):
+            raise DocumentError(f"No section with id {section_id!r}", 400)
+        section_ids.append(section_id)
+    return section_ids
+
+
+def valid_thumbnail_image_id(raw, article_id):
+    """An image id from the client, or None for "no thumbnail" -- anything
+    else must be one of this article's own uploaded images."""
+    image_id = str(raw or "").strip()
+    if not image_id:
         return None
-    if not storage.section_exists(section_id):
-        raise DocumentError(f"No section with id {section_id!r}", 400)
-    return section_id
+    image = storage.get_article_image(image_id)
+    if image is None or image["article_id"] != article_id:
+        raise DocumentError(f"No image with id {image_id!r} in this webpage", 400)
+    return image_id
 
 
 @app.route("/articles")
@@ -3045,7 +3066,8 @@ def api_articles():
     article_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
     data = {
-        "title": title, "doc": {"type": "doc", "content": []}, "section_id": None, "published": False,
+        "title": title, "doc": {"type": "doc", "content": []}, "summary": "",
+        "section_ids": [], "published": False, "thumbnail_image_id": None,
         "created_at": now, "updated_at": now,
     }
     storage.create_article(article_id, data, g.user.id)
@@ -3067,16 +3089,51 @@ def api_article(article_id):
     title = str(body.get("title", existing.get("title", ""))).strip()[:200]
     if not title:
         raise DocumentError("A title is required", 400)
-    section_id = valid_section_id(body.get("section_id", existing.get("section_id")))
-    published = bool(body.get("published")) and section_id is not None
+    summary = str(body.get("summary", existing.get("summary", ""))).strip()[:ARTICLE_SUMMARY_MAX_CHARS]
+    section_ids = valid_section_ids(body.get("section_ids", existing.get("section_ids")))
+    published = bool(body.get("published")) and bool(section_ids)
+    thumbnail_image_id = valid_thumbnail_image_id(
+        body.get("thumbnail_image_id", existing.get("thumbnail_image_id")), article_id,
+    )
     doc_json = sanitize_report_doc(body.get("doc", existing.get("doc")))
     data = {
-        "title": title, "doc": doc_json, "section_id": section_id, "published": published,
+        "title": title, "doc": doc_json, "summary": summary, "section_ids": section_ids,
+        "published": published, "thumbnail_image_id": thumbnail_image_id,
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     storage.save_article(article_id, data)
     return jsonify(data)
+
+
+@app.route("/api/article/<article_id>/images")
+def api_article_images(article_id):
+    require_content_creator()
+    require_article(article_id)
+    images = storage.list_article_images(article_id)
+    for image in images:
+        image["url"] = url_for("api_article_image", article_id=article_id, image_id=image["id"])
+    return jsonify(images)
+
+
+def _compress_jpeg_under(img, max_bytes):
+    """Encodes `img` as JPEG, stepping quality down and, once that's not
+    enough, shrinking it further, until the result is at or under
+    `max_bytes` -- so an inserted image stays quick to download. Always
+    terminates: dimensions shrink each round once quality bottoms out,
+    which forces the loop's exit condition within a handful of rounds."""
+    quality = 88
+    while True:
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=quality)
+        data = out.getvalue()
+        if len(data) <= max_bytes or (quality <= 35 and max(img.size) <= 320):
+            return data
+        if quality > 35:
+            quality -= 12
+        else:
+            img = img.resize((max(1, img.width * 4 // 5), max(1, img.height * 4 // 5)))
+            quality = 70
 
 
 @app.route("/api/article/<article_id>/image", methods=["POST"])
@@ -3092,10 +3149,9 @@ def api_article_image_upload(article_id):
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         raise DocumentError("That file isn't an image we can read. Please choose a JPEG, PNG or GIF image.", 400)
     img.thumbnail((ARTICLE_IMAGE_MAX_PIXELS, ARTICLE_IMAGE_MAX_PIXELS))
-    out = io.BytesIO()
-    img.save(out, "JPEG", quality=88)  # re-encoding also drops any metadata or embedded payload
+    data = _compress_jpeg_under(img, ARTICLE_IMAGE_MAX_BYTES)  # re-encoding also drops any metadata or embedded payload
     image_id = uuid.uuid4().hex[:24]
-    storage.create_article_image(article_id, image_id, "image/jpeg", out.getvalue())
+    storage.create_article_image(article_id, image_id, "image/jpeg", data)
     return jsonify({"id": image_id, "url": url_for("api_article_image", article_id=article_id, image_id=image_id)})
 
 
