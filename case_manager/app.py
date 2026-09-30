@@ -196,7 +196,10 @@ def raise_no_access(kind, object_id, message):
             # Offer the key prompt too, if the object has other keys to try.
             unlock = (kind, object_id) if storage.object_has_keys(kind, object_id) else None
             raise DocumentError(auth.KEY_DELETED_MESSAGE, 403, unlock=unlock)
-        # A key holder with no access and no key of theirs to blame: sign in.
+        # A key holder with no access and no key of theirs to blame: offer the
+        # key prompt if the object has keys, otherwise sign in.
+        if storage.object_has_keys(kind, object_id):
+            raise DocumentError(message, 404, unlock=(kind, object_id))
         raise DocumentError(message, 404, signin=True)
     raise DocumentError(message, 404)
 
