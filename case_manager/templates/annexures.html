@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annexure</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="app" data-annexure-url="{{ annexure_url }}">
+  <header class="docbar">
+    <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <a class="btn docbar-lead" href="{{ url_for('documents_view') }}?report={{ report_id }}">&laquo; Report</a>
+    <div class="docbar-center"><span class="docbar-title">Annexure</span><span class="cause-picker cause-static" title="{{ report_name }}">{{ report_name }}</span></div>
+    <label class="toggle-label" style="margin-left: auto;" title="Off: only the pages the report's snippets were taken from">
+      <input type="checkbox" id="allPagesToggle" checked> Include all pages
+    </label>
+    <a class="btn" id="downloadBtn" href="{{ url_for('api_report_annexure_export', report_id=report_id) }}">Download annexure as PDF</a>
+    <span id="statusMsg" class="status-msg" style="margin-left: 12px;"></span>
+  </header>
+
+  <main class="viewer-layout">
+    <div class="viewer-container continuous" id="viewerContainer"></div>
+    <aside class="sidebar">
+      <div class="source-picker">
+        <label class="jump">Add document
+          <select id="addSelect"></select>
+        </label>
+        <button type="button" class="btn" id="addBtn" style="display: table; margin-top: 6px;">Add</button>
+      </div>
+      <h3>Annexed documents</h3>
+      <p class="empty" style="margin-top: 0">Drag to reorder.</p>
+      <div id="annexList" class="annex-list"></div>
+    </aside>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
+<script src="{{ url_for('static', filename='annexures.js') }}"></script>
+</body>
+</html>

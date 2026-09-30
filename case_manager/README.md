@@ -31,6 +31,7 @@ psql case_manager -f db/migrations/004_signup_captchas.sql
 psql case_manager -f db/migrations/005_signup_attempts.sql
 psql case_manager -f db/migrations/006_general_cause_for_unassociated.sql
 psql case_manager -f db/migrations/007_report_snippets.sql
+psql case_manager -f db/migrations/008_report_annexures.sql
 export DATABASE_URL=postgresql:///case_manager   # defaults to this if unset
 ```
 

@@ -1494,6 +1494,22 @@ def documents_view():
     )
 
 
+@app.route("/annexures")
+def annexures_view():
+    report_id = request.args.get("annexure", "")
+    check_report_id(report_id)
+    require_role("report", report_id)
+    report = storage.get_report(report_id)
+    if report is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    return render_template(
+        "annexures.html",
+        report_id=report_id,
+        report_name=report["name"],
+        annexure_url=url_for("api_report_annexure", report_id=report_id),
+    )
+
+
 @app.route("/allegations")
 def allegations_view():
     # Allegations are global (see api_allegations below); "case" is only an
@@ -1897,6 +1913,88 @@ def api_report(report_id):
     }
     storage.save_report(report_id, data)
     return jsonify(data)
+
+
+def _annexure_payload(report_id, doc_ids, all_pages):
+    """The annexure as the page shows it: the saved order, with every document
+    the report's snippets come from present (appended if missing -- they can't
+    be left out) and each one's snippet pages; documents the user can no
+    longer view are dropped."""
+    snippet_pages = storage.report_snippet_pages(report_id)
+    docs = {d["id"]: d for d in list_source_docs()}
+    order = [d for d in doc_ids if d in docs]
+    order += [d for d in snippet_pages if d in docs and d not in order]
+    return {
+        "all_pages": all_pages,
+        "documents": [
+            {"id": d, "title": docs[d]["title"], "type": docs[d]["type"],
+             "snippet_pages": snippet_pages.get(d, []), "locked": d in snippet_pages}
+            for d in order
+        ],
+        "available": [
+            {"id": d["id"], "title": d["title"], "type": d["type"]}
+            for d in docs.values() if d["id"] not in order
+        ],
+    }
+
+
+@app.route("/api/report/<report_id>/annexure", methods=["GET", "POST"])
+def api_report_annexure(report_id):
+    check_report_id(report_id)
+    require_role("report", report_id, "viewer" if request.method == "GET" else "editor")
+    if not storage.report_exists(report_id):
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    saved = storage.get_annexure(report_id)
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        ids = body.get("documents")
+        if not isinstance(ids, list):
+            raise DocumentError("documents must be a list of document ids", 400)
+        seen = []
+        for d in ids:
+            check_doc_id(d)
+            if d not in seen and has_role("source", d, "viewer") and storage.document_exists(d):
+                seen.append(d)
+        saved = {"documents": seen, "all_pages": bool(body.get("all_pages", True))}
+        payload = _annexure_payload(report_id, saved["documents"], saved["all_pages"])
+        storage.save_annexure(report_id, [d["id"] for d in payload["documents"]], saved["all_pages"])
+        return jsonify(payload)
+    return jsonify(_annexure_payload(report_id, saved["documents"], saved["all_pages"]))
+
+
+@app.route("/api/report/<report_id>/annexure/export")
+def api_report_annexure_export(report_id):
+    """The saved annexure as one PDF: the annexed documents' pages, in order."""
+    check_report_id(report_id)
+    require_role("report", report_id)
+    report = storage.get_report(report_id)
+    if report is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    saved = storage.get_annexure(report_id)
+    payload = _annexure_payload(report_id, saved["documents"], saved["all_pages"])
+    if not payload["documents"]:
+        raise DocumentError("The annexure is empty — add a document before downloading", 400)
+
+    out = fitz.open()
+    try:
+        for d in payload["documents"]:
+            pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
+            with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
+                if saved["all_pages"] or not d["snippet_pages"]:
+                    pages = range(src.page_count)
+                else:
+                    pages = [p - 1 for p in d["snippet_pages"] if p <= src.page_count]
+                for p in pages:
+                    out.insert_pdf(src, from_page=p, to_page=p)
+        data = out.tobytes()
+    finally:
+        out.close()
+
+    resp = Response(data, mimetype="application/pdf")
+    resp.headers["Cache-Control"] = "no-store"
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
+    resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}-annexure.pdf"'
+    return resp
 
 
 @app.route("/api/report/<report_id>/export")

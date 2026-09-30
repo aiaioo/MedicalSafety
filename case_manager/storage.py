@@ -548,6 +548,49 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
             _link(cur, "report", report_id, *link)
 
 
+def report_snippet_pages(report_id: str) -> dict[str, list[int]]:
+    """{document_id: sorted page numbers} of the snippets a report embeds."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.document_id, s.page_number FROM report_snippets rs
+            JOIN snippets s ON s.id = rs.snippet_id
+            WHERE rs.report_id = %s ORDER BY s.document_id, s.page_number
+            """,
+            (report_id,),
+        )
+        rows = cur.fetchall()
+    pages: dict[str, list[int]] = {}
+    for r in rows:
+        if r["page_number"] not in pages.setdefault(r["document_id"], []):
+            pages[r["document_id"]].append(r["page_number"])
+    return pages
+
+
+def get_annexure(report_id: str) -> dict:
+    """{"documents": [document ids in annexure order], "all_pages": bool}."""
+    with _cursor() as cur:
+        cur.execute("SELECT annexure_all_pages FROM reports WHERE id = %s", (report_id,))
+        row = cur.fetchone()
+        cur.execute(
+            "SELECT document_id FROM report_annexure_documents WHERE report_id = %s ORDER BY position",
+            (report_id,),
+        )
+        docs = [r["document_id"] for r in cur.fetchall()]
+    return {"documents": docs, "all_pages": row["annexure_all_pages"] if row else True}
+
+
+def save_annexure(report_id: str, document_ids: list[str], all_pages: bool) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE reports SET annexure_all_pages = %s WHERE id = %s", (all_pages, report_id))
+        cur.execute("DELETE FROM report_annexure_documents WHERE report_id = %s", (report_id,))
+        for position, document_id in enumerate(document_ids):
+            cur.execute(
+                "INSERT INTO report_annexure_documents (report_id, document_id, position) VALUES (%s, %s, %s)",
+                (report_id, document_id, position),
+            )
+
+
 def delete_report(report_id: str) -> None:
     """Refused while an allegation's evidence cites the report (the foreign
     key would otherwise just null the citation)."""

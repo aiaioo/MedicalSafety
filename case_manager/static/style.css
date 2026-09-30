@@ -782,3 +782,23 @@ a.tag:hover { background: #d7deec; }
   font-size: 12px; line-height: 1; cursor: pointer;
 }
 .annotation-delete-icon:hover { background: #b42318; color: #fff; }
+
+/* Annexure page (annexures.html) */
+.annex-doc-heading {
+  align-self: stretch; color: #fff; font-weight: 600; font-size: 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.35); padding: 8px 0 4px; margin-top: 12px;
+}
+.annex-list { display: flex; flex-direction: column; gap: 6px; }
+.annex-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px; background: #f7f8fa;
+  border: 1px solid #e0e2e8; border-radius: 6px; cursor: grab; font-size: 13px;
+}
+.annex-item.dragging { opacity: 0.4; }
+.annex-item.drop-before { box-shadow: 0 -2px 0 #2266dd; }
+.annex-item.drop-after { box-shadow: 0 2px 0 #2266dd; }
+.annex-grip { color: #a0a6b4; letter-spacing: -3px; user-select: none; }
+.annex-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.annex-name a { color: inherit; text-decoration: none; }
+.annex-name a:hover { text-decoration: underline; }
+.annex-delete { border: none; background: none; color: #c0392b; cursor: pointer; padding: 4px; display: flex; }
+.annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
