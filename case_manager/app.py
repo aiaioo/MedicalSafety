@@ -430,13 +430,16 @@ def default_cause_for_display():
 # The site's display name follows the domain the visitor used (the same app
 # and database serve every domain); unknown hosts, e.g. localhost, get the default.
 SITE_NAMES = {"medicalsafety.in": "Medical Safety", "caseplan.in": "Case Plan"}
+SITE_URLS = {"Medical Safety": "https://medicalsafety.in", "Case Plan": "https://caseplan.in"}
 DEFAULT_SITE_NAME = "Case Plan"
 
 
 @app.context_processor
 def inject_site_name():
     host = request.host.split(":")[0].lower().removeprefix("www.")
-    return {"site_name": SITE_NAMES.get(host, DEFAULT_SITE_NAME)}
+    name = SITE_NAMES.get(host, DEFAULT_SITE_NAME)
+    other = next(n for n in SITE_URLS if n != name)
+    return {"site_name": name, "other_site_name": other, "other_site_url": SITE_URLS[other]}
 
 
 @app.context_processor

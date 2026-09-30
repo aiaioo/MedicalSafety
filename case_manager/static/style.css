@@ -919,3 +919,4 @@ a.tag:hover { background: #d7deec; }
 /* Annexure page for viewers: the right panel is read-only. */
 #app.annex-readonly .annex-grip { visibility: hidden; }
 #app.annex-readonly .annex-delete { display: none; }
+.site-also { margin: 14px 0 0; font-size: 12px; color: #667; text-align: center; }

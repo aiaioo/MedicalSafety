@@ -50,6 +50,7 @@
       New here? <a href="{{ url_for('auth.signup', next=next) }}">Create an account</a>
       {% endif %}
     </p>
+    {% include "_also_called.html" %}
   </form>
 </div>
 {% if mode == 'signup' %}
