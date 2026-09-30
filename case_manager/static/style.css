@@ -802,3 +802,5 @@ a.tag:hover { background: #d7deec; }
 .annex-name a:hover { text-decoration: underline; }
 .annex-delete { border: none; background: none; color: #c0392b; cursor: pointer; padding: 4px; display: flex; }
 .annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
+.annex-name select, .annex-name .annex-range { margin-top: 4px; font-size: 12px; padding: 3px 4px; }
+.annex-range.invalid { border-color: #c0392b; outline-color: #c0392b; }

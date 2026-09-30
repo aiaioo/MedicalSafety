@@ -568,13 +568,15 @@ def report_snippet_pages(report_id: str) -> dict[str, list[int]]:
 
 
 def get_annexure(report_id: str) -> list[dict]:
-    """[{"id": document id, "all_pages": bool}] in annexure order."""
+    """[{"id": document id, "page_mode": "all" | "snippets" | "custom",
+    "page_range": str}] in annexure order."""
     with _cursor() as cur:
         cur.execute(
-            "SELECT document_id, all_pages FROM report_annexure_documents WHERE report_id = %s ORDER BY position",
+            "SELECT document_id, page_mode, page_range FROM report_annexure_documents WHERE report_id = %s ORDER BY position",
             (report_id,),
         )
-        return [{"id": r["document_id"], "all_pages": r["all_pages"]} for r in cur.fetchall()]
+        return [{"id": r["document_id"], "page_mode": r["page_mode"], "page_range": r["page_range"]}
+                for r in cur.fetchall()]
 
 
 def save_annexure(report_id: str, documents: list[dict]) -> None:
@@ -582,8 +584,8 @@ def save_annexure(report_id: str, documents: list[dict]) -> None:
         cur.execute("DELETE FROM report_annexure_documents WHERE report_id = %s", (report_id,))
         for position, d in enumerate(documents):
             cur.execute(
-                "INSERT INTO report_annexure_documents (report_id, document_id, position, all_pages) VALUES (%s, %s, %s, %s)",
-                (report_id, d["id"], position, d["all_pages"]),
+                "INSERT INTO report_annexure_documents (report_id, document_id, position, page_mode, page_range) VALUES (%s, %s, %s, %s, %s)",
+                (report_id, d["id"], position, d["page_mode"], d["page_range"]),
             )
 
 

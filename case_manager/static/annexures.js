@@ -31,12 +31,28 @@
     return infoCache.get(key);
   }
 
-  // Pages of `d` that are part of the annexure: all of them, or (toggle off,
-  // only possible for a document with snippets in the report) just the pages
-  // the snippets were taken from.
-  function pagesFor(d, pageCount) {
-    if (d.all_pages) return Array.from({ length: pageCount }, (_, i) => i + 1);
-    return d.snippet_pages.filter((p) => p <= pageCount);
+  // Pages "1-3, 7" names, ascending and clipped to the document; null if invalid.
+  function parseRange(text, pageCount) {
+    if (!/^\s*\d+\s*(-\s*\d+\s*)?(,\s*\d+\s*(-\s*\d+\s*)?)*$/.test(text)) return null;
+    const pages = new Set();
+    for (const part of text.split(",")) {
+      const [lo, hi = lo] = part.split("-").map((n) => parseInt(n, 10));
+      if (lo < 1 || hi < lo) return null;
+      for (let p = lo; p <= Math.min(hi, pageCount); p++) pages.add(p);
+    }
+    return [...pages].sort((a, b) => a - b);
+  }
+
+  const isValid = (d) => d.page_mode !== "custom" || parseRange(d.page_range, 1 << 30) !== null;
+  const applied = (d) => (isValid(d) ? d : d.valid);
+  const remember = (d) => { d.valid = { page_mode: d.page_mode, page_range: d.page_range }; };
+
+  // Pages of `d` that are part of the annexure, per its page mode.
+  function pagesFor(doc, pageCount) {
+    const d = { ...doc, ...applied(doc) };
+    if (d.page_mode === "snippets") return d.snippet_pages.filter((p) => p <= pageCount);
+    if (d.page_mode === "custom") return parseRange(d.page_range, pageCount) || [];
+    return Array.from({ length: pageCount }, (_, i) => i + 1);
   }
 
   // ---- main panel: continuous scroll of every annexed document's pages ----
@@ -101,8 +117,11 @@
       item.innerHTML = `<span class="annex-grip" aria-hidden="true">&#8942;&#8942;</span>` +
         `<span class="annex-name"><a href="#" class="annex-jump" title="Scroll to this document">${esc(d.title)}</a>` +
         `<span class="report-card-meta">${esc(pages)}</span>` +
-        `<label class="toggle-label" title="Off: only the pages the report's snippets were taken from">` +
-        `<input type="checkbox" class="annex-all-pages" ${d.all_pages ? "checked" : ""} ${d.snippet_pages.length ? "" : "disabled"}> Include all pages</label></span>` +
+        `<select class="annex-mode" title="Which pages of this document to include">` +
+        `<option value="all">Include all pages</option>` +
+        `<option value="snippets" ${d.snippet_pages.length ? "" : "disabled"}>Only pages with snippets</option>` +
+        `<option value="custom">Custom page range</option></select>` +
+        `<input type="text" class="annex-range" placeholder="e.g. 1-3, 7" value="${esc(d.page_range)}" ${d.page_mode === "custom" ? "" : "hidden"}></span>` +
         `<button type="button" class="annex-delete" ${d.locked ? "disabled" : ""} ` +
         `title="${d.locked ? "Snippets from this document are used in the report" : "Remove from annexure"}" aria-label="Remove ${esc(d.title)}">` +
         `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><path d="M6 4V2.5h4V4"/><path d="M4 4l.7 9.5h6.6L12 4"/><path d="M6.5 6.5v5M9.5 6.5v5"/></svg></button>`;
@@ -111,10 +130,25 @@
         const h = container.querySelector(`.annex-doc-heading[data-doc="${CSS.escape(d.id)}"]`);
         if (h) container.scrollTo({ top: h.offsetTop - container.offsetTop - 12, behavior: "smooth" });
       });
-      item.querySelector(".annex-all-pages").addEventListener("change", (e) => {
-        d.all_pages = e.target.checked;
+      const modeSel = item.querySelector(".annex-mode");
+      const rangeIn = item.querySelector(".annex-range");
+      modeSel.value = d.page_mode;
+      modeSel.addEventListener("change", () => {
+        d.page_mode = modeSel.value;
+        rangeIn.hidden = d.page_mode !== "custom";
+        if (d.page_mode === "custom") { rangeIn.focus(); if (!isValid(d)) return; }
         commit();
       });
+      // A custom range is applied once it parses; until then the last valid
+      // selection stays in effect (and is what gets saved).
+      rangeIn.addEventListener("input", () => {
+        d.page_range = rangeIn.value;
+        rangeIn.classList.toggle("invalid", !isValid(d));
+      });
+      rangeIn.addEventListener("change", () => { if (isValid(d)) commit(); });
+      rangeIn.addEventListener("keydown", (e) => { if (e.key === "Enter") rangeIn.blur(); });
+      rangeIn.addEventListener("focus", () => { item.draggable = false; });
+      rangeIn.addEventListener("blur", () => { item.draggable = true; });
       item.querySelector(".annex-delete").addEventListener("click", () => {
         if (d.locked) return;
         state.documents = state.documents.filter((x) => x.id !== d.id);
@@ -169,12 +203,16 @@
   }
 
   async function commit() {
+    state.documents.forEach((d) => { if (isValid(d)) remember(d); });
     render(true);
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: state.documents.map((d) => ({ id: d.id, all_pages: d.all_pages })) }),
+        body: JSON.stringify({ documents: state.documents.map((d) => {
+          const a = applied(d);
+          return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
+        }) }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
@@ -187,7 +225,7 @@
     const d = state.available.find((x) => x.id === addSelect.value);
     if (!d) return;
     state.available = state.available.filter((x) => x.id !== d.id);
-    state.documents.push({ ...d, snippet_pages: [], locked: false, all_pages: true });
+    state.documents.push({ ...d, snippet_pages: [], locked: false, page_mode: "all", page_range: "" });
     commit();
   });
 
@@ -196,6 +234,7 @@
       const res = await fetch(url);
       if (!res.ok) throw new Error("HTTP " + res.status);
       state = await res.json();
+      state.documents.forEach(remember);
       render(true);
     } catch (e) {
       setStatus("Failed to load annexure: " + e.message, true);

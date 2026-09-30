@@ -33,6 +33,7 @@ psql case_manager -f db/migrations/006_general_cause_for_unassociated.sql
 psql case_manager -f db/migrations/007_report_snippets.sql
 psql case_manager -f db/migrations/008_report_annexures.sql
 psql case_manager -f db/migrations/009_annexure_all_pages_per_document.sql
+psql case_manager -f db/migrations/010_annexure_page_mode.sql
 export DATABASE_URL=postgresql:///case_manager   # defaults to this if unset
 ```
 

@@ -1915,22 +1915,41 @@ def api_report(report_id):
     return jsonify(data)
 
 
+PAGE_RANGE_RE = re.compile(r"^\s*\d+\s*(-\s*\d+\s*)?(,\s*\d+\s*(-\s*\d+\s*)?)*$")
+
+
+def parse_page_range(text, page_count):
+    """Pages (1-based, ascending, unique, clipped to the document) that a
+    custom range like "1-3, 7" names; None if it isn't a valid range."""
+    if not PAGE_RANGE_RE.match(text or ""):
+        return None
+    pages = set()
+    for part in text.split(","):
+        lo, _, hi = part.partition("-")
+        lo, hi = int(lo), int(hi or lo)
+        if lo < 1 or hi < lo:
+            return None
+        pages.update(range(lo, min(hi, page_count) + 1))
+    return sorted(pages)
+
+
 def _annexure_payload(report_id, saved):
-    """The annexure as the page shows it: the saved [{"id", "all_pages"}] order,
+    """The annexure as the page shows it: the saved [{"id", "page_mode", "page_range"}] order,
     with every document the report's snippets come from present (appended if
     missing -- they can't be left out) and each one's snippet pages; documents
-    the user can no longer view are dropped. all_pages is only meaningful for a
-    document with snippet pages to narrow to; any other includes every page."""
+    the user can no longer view are dropped. "snippets" mode only makes sense for
+    a document with snippet pages; any other falls back to every page."""
     snippet_pages = storage.report_snippet_pages(report_id)
     docs = {d["id"]: d for d in list_source_docs()}
     order = [d for d in saved if d["id"] in docs]
-    order += [{"id": d, "all_pages": True} for d in snippet_pages
+    order += [{"id": d, "page_mode": "all", "page_range": ""} for d in snippet_pages
               if d in docs and d not in {o["id"] for o in order}]
     return {
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
              "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
-             "all_pages": o["all_pages"] or o["id"] not in snippet_pages}
+             "page_mode": "all" if o["page_mode"] == "snippets" and o["id"] not in snippet_pages else o["page_mode"],
+             "page_range": o["page_range"]}
             for o in order
         ],
         "available": [
@@ -1951,15 +1970,21 @@ def api_report_annexure(report_id):
         body = request.get_json(silent=True) or {}
         items = body.get("documents")
         if not isinstance(items, list):
-            raise DocumentError("documents must be a list of {id, all_pages}", 400)
+            raise DocumentError("documents must be a list of {id, page_mode, page_range}", 400)
         saved = []
         for item in items:
             d = item.get("id") if isinstance(item, dict) else None
             check_doc_id(d)
             if all(d != x["id"] for x in saved) and has_role("source", d, "viewer") and storage.document_exists(d):
-                saved.append({"id": d, "all_pages": bool(item.get("all_pages", True))})
+                mode = item.get("page_mode", "all")
+                page_range = str(item.get("page_range") or "").strip()
+                if mode not in ("all", "snippets", "custom"):
+                    raise DocumentError(f"Invalid page mode: {mode!r}", 400)
+                if mode == "custom" and parse_page_range(page_range, 1 << 30) is None:
+                    raise DocumentError(f"Invalid page range: {page_range!r} (use e.g. 1-3, 7)", 400)
+                saved.append({"id": d, "page_mode": mode, "page_range": page_range if mode == "custom" else ""})
         payload = _annexure_payload(report_id, saved)
-        storage.save_annexure(report_id, [{"id": d["id"], "all_pages": d["all_pages"]} for d in payload["documents"]])
+        storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
 
@@ -1982,12 +2007,14 @@ def api_report_annexure_export(report_id):
         for d in payload["documents"]:
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
             with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
-                if d["all_pages"]:
-                    pages = range(src.page_count)
+                if d["page_mode"] == "all":
+                    pages = range(1, src.page_count + 1)
+                elif d["page_mode"] == "snippets":
+                    pages = [p for p in d["snippet_pages"] if p <= src.page_count]
                 else:
-                    pages = [p - 1 for p in d["snippet_pages"] if p <= src.page_count]
+                    pages = parse_page_range(d["page_range"], src.page_count) or []
                 for p in pages:
-                    out.insert_pdf(src, from_page=p, to_page=p)
+                    out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
         data = out.tobytes()
     finally:
         out.close()
