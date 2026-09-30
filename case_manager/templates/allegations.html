@@ -9,6 +9,7 @@
 </head>
 <body>
 <div id="allegationsApp"
+     data-can-create="{{ '1' if can_create else '' }}"
      data-allegations-url="{{ url_for('api_allegations') }}"
      data-allegation-url-base="{{ url_for('api_allegation_item', allegation_id='__ID__') }}"
      data-allegations-order-url="{{ url_for('api_allegations_order') }}"
@@ -32,7 +33,7 @@
       <aside class="allegations-column">
         <div class="allegations-column-head">
           <h2>Allegations</h2>
-          <button type="button" class="btn" id="addAllegationBtn">+ Add allegation</button>
+          <button type="button" class="btn" id="addAllegationBtn" {{ 'disabled' if not can_create }}>+ Add allegation</button>
         </div>
         <p class="allegations-filter-bar" id="filterBar" style="display:none"></p>
         <p class="empty" id="allegationListEmpty" style="display:none">No allegations yet. Add one to get started.</p>
@@ -44,6 +45,7 @@
     </div>
   </main>
 </div>
+<script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='allegations.js') }}"></script>
 </body>
 </html>

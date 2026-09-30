@@ -9,6 +9,7 @@
 </head>
 <body>
 <div id="causesApp"
+     data-can-create="{{ '1' if can_create else '' }}"
      data-causes-url="{{ url_for('api_causes') }}"
      data-cause-url-base="{{ url_for('api_cause', cause_id='__ID__') }}"
      data-default-cause="{{ default_cause_id }}"
@@ -27,7 +28,7 @@
       <aside class="allegations-column causes-column">
         <div class="allegations-column-head">
           <h2>Causes</h2>
-          <button type="button" class="btn" id="addCauseBtn">+ New cause</button>
+          <button type="button" class="btn" id="addCauseBtn" {{ 'disabled' if not can_create }}>+ New cause</button>
         </div>
         <p class="empty" id="causeListEmpty" style="display:none">No causes yet. Add one to get started.</p>
         <div class="allegation-list" id="causeList"></div>
@@ -38,6 +39,7 @@
     </div>
   </main>
 </div>
+<script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='causes.js') }}"></script>
 </body>
 </html>

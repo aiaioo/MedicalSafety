@@ -23,7 +23,7 @@
         <div class="report-grid">
           {% for d in docs %}
           <a class="report-card" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-            <button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>
+            {% if d.role == "owner" %}<button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>{% endif %}
             <div class="report-card-name">{{ d.title }}</div>
             <div class="report-card-meta">{{ d.type }}</div>
             <div class="report-card-meta">{{ d.snippet_count }} {{ "snippet" if d.snippet_count == 1 else "snippets" }}</div>
@@ -35,7 +35,7 @@
         <p class="empty" id="landingEmptyHint">No documents yet. Upload one below, or ask a colleague to share theirs with you.</p>
         {% endif %}
         <div class="upload-form">
-          <button type="button" id="uploadSubmit" class="btn">Upload document&hellip;</button>
+          <button type="button" id="uploadSubmit" class="btn" {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
           <input type="file" id="uploadInput" accept=".pdf" hidden>
           <span id="uploadStatus" class="upload-status"></span>
         </div>

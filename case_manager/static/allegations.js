@@ -257,6 +257,10 @@
   // ---------------------------------------------------------------------
   // Allegation list (left column)
   // ---------------------------------------------------------------------
+  function canEdit(role) {
+    return role === "owner" || role === "editor";
+  }
+
   function evidenceCountLabel(allegation) {
     const inc = allegation.inculpatory.length;
     const exc = allegation.exculpatory.length;
@@ -337,6 +341,8 @@
 
     card.appendChild(buildCardSaveBtn(card, allegation.id));
 
+    if (!canEdit(allegation.role)) window.ReadOnlyLock.lock(card);
+
     return card;
   }
 
@@ -405,7 +411,7 @@
         return res.json();
       })
       .then((data) => {
-        allegations.push(data);
+        allegations.push({ ...data, role: "owner" });
         selectedId = data.id;
         renderAllegationList();
         renderDetail();
@@ -944,6 +950,7 @@
     const columnsEl = allegationDetailEl.querySelector(".evidence-columns");
     columnsEl.appendChild(buildEvidenceColumn(allegation, "inculpatory", "Inculpatory Evidence"));
     columnsEl.appendChild(buildEvidenceColumn(allegation, "exculpatory", "Exculpatory Evidence"));
+    if (!canEdit(allegation.role)) window.ReadOnlyLock.lock(allegationDetailEl);
   }
 
   // ---------------------------------------------------------------------

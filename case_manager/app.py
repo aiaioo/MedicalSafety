@@ -217,6 +217,25 @@ def require_allegation_role(allegation, min_role="viewer"):
     return best
 
 
+def allegation_roles(allegations):
+    """{allegation id: role} -- the better of the user's roles on the
+    allegation's cause and on the allegation itself (as in
+    require_allegation_role)."""
+    cause_roles = {c["id"]: c["role"] for c in storage.list_causes(g.user.id)}
+    roles = {}
+    for a in allegations:
+        candidates = [cause_roles.get(a["cause_id"])]
+        if not any(r in ("owner", "editor") for r in candidates):
+            candidates.append(storage.get_role(g.user.id, "allegation", a["id"]))
+        roles[a["id"]] = max((r for r in candidates if r), key=ROLE_RANK.get, default="viewer")
+    return roles
+
+
+def with_allegation_roles(allegations):
+    roles = allegation_roles(allegations)
+    return [{**a, "role": roles[a["id"]]} for a in allegations]
+
+
 def visible_allegations():
     return storage.list_allegations(storage.accessible_ids(g.user.id, "cause"), storage.accessible_ids(g.user.id, "allegation"))
 
@@ -234,6 +253,14 @@ def require_link_target(fields, what):
         raise DocumentError(f"Invalid {target_kind} id: {target_id!r}", 400)
     require_role(target_kind, target_id, "editor")
     return target_kind, target_id
+
+
+def can_create_items():
+    """Whether this user can create new causes' children (cases,
+    allegations, reports, uploads): anyone signed in can, since a cause is
+    made on the fly; a guest (key session) only if the key gave them a
+    cause they can edit."""
+    return not g.user.is_guest or resolve_default_cause_id(create=False) is not None
 
 
 def editable_cases():
@@ -1524,7 +1551,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        return render_template("annotations.html", doc_id="", docs=list_source_docs(resolve_default_cause_id(create=False)), default_cause=default_cause_for_display())
+        return render_template("annotations.html", doc_id="", docs=list_source_docs(resolve_default_cause_id(create=False)), default_cause=default_cause_for_display(), can_create=can_create_items())
 
     try:
         page = int(request.args.get("page", 1))
@@ -1604,6 +1631,7 @@ def documents_view():
         default_cause=default_cause_for_display(),
         report_id=report_id,
         can_edit=can_edit,
+        can_create=can_create_items(),
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
         preselect_type=preselect_type,
@@ -1636,17 +1664,17 @@ def allegations_view():
         check_report_id(filter_case_id)
         require_role("case", filter_case_id)
 
-    return render_template("allegations.html", filter_case_id=filter_case_id)
+    return render_template("allegations.html", filter_case_id=filter_case_id, can_create=can_create_items())
 
 
 @app.route("/causes")
 def causes_view():
-    return render_template("causes.html", default_cause_id=storage.get_default_cause(g.user.id) or "")
+    return render_template("causes.html", default_cause_id=storage.get_default_cause(g.user.id) or "", can_create=not g.user.is_guest)
 
 
 @app.route("/cases")
 def cases_view():
-    return render_template("cases.html")
+    return render_template("cases.html", can_create=can_create_items())
 
 
 # ---------------------------------------------------------------------------
@@ -2601,8 +2629,8 @@ def api_allegations():
         # cause (the one picked in the title bar).
         if request.args.get("default_cause"):
             only_cause = resolve_default_cause_id(create=False)
-            return jsonify(storage.list_allegations({only_cause}) if only_cause else [])
-        return jsonify(visible_allegations())
+            return jsonify(with_allegation_roles(storage.list_allegations({only_cause})) if only_cause else [])
+        return jsonify(with_allegation_roles(visible_allegations()))
 
     body = request.get_json(silent=True) or {}
     # An allegation's cause is mandatory: an explicit cause_id wins (the user
@@ -2640,7 +2668,7 @@ def api_allegation_item(allegation_id):
     require_allegation_role(existing, "viewer" if request.method == "GET" else "editor")
 
     if request.method == "GET":
-        return jsonify(existing)
+        return jsonify(with_allegation_roles([existing])[0])
 
     if request.method == "DELETE":
         storage.delete_allegation(allegation_id)

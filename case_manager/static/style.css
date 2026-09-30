@@ -904,3 +904,8 @@ a.tag:hover { background: #d7deec; }
 #app.doc-readonly #undoBtn,
 #app.doc-readonly #clearBtn,
 #app.doc-readonly #modeHint { display: none; }
+
+/* Read-only cards/panes (see static/readonly-lock.js). */
+.ro-locked input[readonly], .ro-locked textarea[readonly] { background: #f6f7f9; color: #6b7280; }
+.ro-locked button:disabled, .ro-locked select:disabled { opacity: .45; cursor: not-allowed; }
+#casesApp .btn:disabled, #causesApp .btn:disabled, #allegationsApp .btn:disabled { opacity: .45; cursor: not-allowed; }

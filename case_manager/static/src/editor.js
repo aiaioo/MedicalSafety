@@ -43,6 +43,8 @@ import { Pagination, repaginate } from "./pagination.js";
   // Viewers can open a report but not change it (the server rejects their
   // saves with a 403); the page is put into a read-only state below.
   const canEdit = !reportId || !!appEl.dataset.canEdit;
+  // Guests (secret-key sessions) can't create reports or upload documents.
+  const canCreate = !!appEl.dataset.canCreate;
 
   const editorEl = document.getElementById("editor");
   const editorPageWrap = document.getElementById("editorPageWrap");
@@ -166,6 +168,11 @@ import { Pagination, repaginate } from "./pagination.js";
     el.classList.remove("open");
   }
 
+  if (!canCreate) {
+    newDocBtn.disabled = true;
+    uploadSourceMenuBtn.disabled = true;
+  }
+
   newDocBtn.addEventListener("click", () => {
     newDocName.value = "";
     newDocError.style.display = "none";
@@ -238,13 +245,14 @@ import { Pagination, repaginate } from "./pagination.js";
     card.href = `/reports?report=${encodeURIComponent(r.id)}`;
     const sourceLabel = r.source_doc ? `${r.source_doc} (${r.source_type})` : "No source document";
     card.innerHTML = `
-      <button type="button" class="report-card-delete card-delete-btn" title="Delete report">✕</button>
+      ${r.role === "owner" ? '<button type="button" class="report-card-delete card-delete-btn" title="Delete report">✕</button>' : ""}
       <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>
       <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
       <div class="report-card-meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
       <div class="report-card-meta" title="${escapeHtml((r.cause_titles || []).join(", "))}">Cause: ${escapeHtml((r.cause_titles || []).join(", ") || "None")}</div>
       <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
-    wireConfirmDelete(card.querySelector(".report-card-delete"), async () => {
+    const deleteBtn = card.querySelector(".report-card-delete");
+    if (deleteBtn) wireConfirmDelete(deleteBtn, async () => {
       try {
         const res = await fetch(`/api/report/${encodeURIComponent(r.id)}`, { method: "DELETE" });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);

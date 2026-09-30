@@ -201,6 +201,10 @@
     }
   }
 
+  function canEdit(role) {
+    return role === "owner" || role === "editor";
+  }
+
   function causeMetaLabel(c) {
     return `${c.goal_count} goal${c.goal_count === 1 ? "" : "s"}`;
   }
@@ -245,6 +249,10 @@
     if (deleteBtn) wireConfirmDelete(deleteBtn, () => deleteCause(c.id));
 
     card.appendChild(buildCardSaveBtn(card, "card:" + c.id, c.id, () => ({ title: c.title, description: c.description })));
+
+    // Only editors may change a cause; only its owner may delete it.
+    if (!canEdit(c.role)) window.ReadOnlyLock.lock(card);
+    else if (deleteBtn && c.role !== "owner") deleteBtn.disabled = true;
 
     card.addEventListener("click", (e) => {
       if (e.target.closest("input, textarea, button")) return;
@@ -347,6 +355,7 @@
       btn.className = "card-delete-btn";
       btn.title = "Delete cause";
       btn.textContent = "✕";
+      btn.disabled = c.role !== "owner";
       head.appendChild(btn);
       wireConfirmDelete(btn, () => deleteCause(c.id));
     } else if (c.goal_count !== 0 && existingBtn) {
@@ -566,6 +575,7 @@
 
     renderGoalList();
     enableDragReorder(causeDetailEl.querySelector(".goal-list"), ".goal-card", reorderGoalsFromDom);
+    if (!canEdit(detailCause.role)) window.ReadOnlyLock.lock(causeDetailEl);
   }
 
   async function selectCause(id) {

@@ -234,6 +234,10 @@
     return cause ? cause.title || id : id;
   }
 
+  function canEdit(role) {
+    return role === "owner" || role === "editor";
+  }
+
   function caseMetaLabel(c) {
     const idBits = [c.court || "No court", c.case_number || "No case #"].join(" · ");
     const hearingLabel = `${c.hearing_count} hearing${c.hearing_count === 1 ? "" : "s"}`;
@@ -318,6 +322,10 @@
 
     card.appendChild(buildCardSaveBtn(card, "card:" + c.id, c.id, cardPartial));
 
+    // Only editors may change a case; only its owner may delete it.
+    if (!canEdit(c.role)) window.ReadOnlyLock.lock(card);
+    else if (deleteBtn && c.role !== "owner") deleteBtn.disabled = true;
+
     card.addEventListener("click", (e) => {
       if (e.target.closest("input, textarea, button, select")) return;
       selectCase(c.id);
@@ -380,6 +388,7 @@
         summary: data.summary,
         allegation_count: 0,
         hearing_count: 0,
+        role: "owner",
         created_at: data.created_at,
         updated_at: data.updated_at,
       });
@@ -702,6 +711,7 @@
       btn.className = "card-delete-btn";
       btn.title = "Delete case";
       btn.textContent = "✕";
+      btn.disabled = c.role !== "owner";
       head.appendChild(btn);
       wireConfirmDelete(btn, () => deleteCase(c.id));
     } else if (c.hearing_count !== 0 && existingBtn) {
@@ -772,6 +782,7 @@
 
     renderHearingList();
     enableDragReorder(caseDetailEl.querySelector(".hearing-list"), ".hearing-card", reorderHearingsFromDom);
+    if (!canEdit(detailCase.role)) window.ReadOnlyLock.lock(caseDetailEl);
   }
 
   async function selectCase(id) {
