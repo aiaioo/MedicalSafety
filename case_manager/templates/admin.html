@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Administration</title>
+<title>{{ "Administration" if is_admin else "Websites" }}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
@@ -20,12 +20,18 @@
   table.admin-users td.email-col { white-space: normal; word-break: break-word; }
   .role-save-status { font-size: 12px; color: #8a92a5; margin-left: 6px; }
   .website-card { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 16px 19px; margin-bottom: 20px; }
-  .website-card h3 { margin: 0 0 2px; }
-  .website-card .domain { color: #8a92a5; font-size: 13px; margin-bottom: 12px; }
-  .section-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-  .section-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
-  .add-row { display: flex; gap: 8px; margin-top: 10px; }
-  .add-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
+  .website-card .domain { color: #8a92a5; font-size: 13px; margin: 0 0 12px; }
+  .website-edit-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+  .website-edit-row .modal-field { flex: 1; min-width: 180px; margin: 0; }
+  .website-edit-row input { width: 100%; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; box-sizing: border-box; }
+  .section-row { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; }
+  .section-row-fields { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .section-row input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; box-sizing: border-box; }
+  .section-row .section-description { font-size: 12px; }
+  .section-tag { white-space: nowrap; padding-top: 6px; }
+  .add-row { display: flex; gap: 8px; margin-top: 10px; align-items: flex-start; }
+  .add-row .section-row-fields { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .add-row input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; box-sizing: border-box; }
   .new-website-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
   .new-website-form label { font-size: 12px; color: #46536b; display: flex; flex-direction: column; gap: 4px; }
   .new-website-form input { padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
@@ -34,16 +40,17 @@
 <body>
 <header class="docbar" style="position: relative;">
   <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
-  <div class="docbar-center"><span class="doc-name doc-name-static">Administration</span></div>
+  <div class="docbar-center"><span class="doc-name doc-name-static">{{ "Administration" if is_admin else "Websites" }}</span></div>
   <div style="margin-left: auto;"><a class="btn" href="{{ url_for('account_view') }}">My account</a></div>
 </header>
 
 <main class="admin-page">
   <div class="admin-tabs">
-    <button type="button" class="admin-tab active" data-tab="users">Users</button>
-    <button type="button" class="admin-tab" data-tab="websites">Websites</button>
+    {% if is_admin %}<button type="button" class="admin-tab active" data-tab="users">Users</button>{% endif %}
+    <button type="button" class="admin-tab{{ ' active' if not is_admin }}" data-tab="websites">Websites</button>
   </div>
 
+  {% if is_admin %}
   <section class="admin-panel active" id="tab-users">
     <p class="modal-hint">Everyone who has signed up, what they own, and how much of their storage they're using. Tick Admin or Content creator to grant that role.</p>
     <table class="admin-users">
@@ -73,26 +80,41 @@
     </table>
     <p id="rolesError" class="error-message" style="display:none"></p>
   </section>
+  {% endif %}
 
-  <section class="admin-panel" id="tab-websites">
-    <p class="modal-hint">Content creators publish webpages under a website's sections. Add more sections any time, or a whole new website.</p>
+  <section class="admin-panel{{ ' active' if not is_admin }}" id="tab-websites">
+    <p class="modal-hint">Content creators publish webpages under a website's sections. Edit a website's name and tagline, add or edit sections (title and description), or add a whole new website any time.</p>
     <div id="websiteList">
       {% for w in websites %}
       <div class="website-card" data-website-id="{{ w.id }}">
-        <h3>{{ w.name }}</h3>
+        <div class="website-edit-row">
+          <label class="modal-field">Name
+            <input type="text" class="website-name" value="{{ w.name }}">
+          </label>
+          <label class="modal-field">Tagline (shown under the name on the public page)
+            <input type="text" class="website-tagline" value="{{ w.tagline }}" placeholder="e.g. Articles and guides from Example.">
+          </label>
+          <button type="button" class="btn website-save">Save</button>
+        </div>
         <div class="domain">{{ w.domain }}</div>
         <div class="sections-list">
           {% for s in w.sections %}
           <div class="section-row" data-section-id="{{ s.id }}">
-            <input type="text" class="section-title" value="{{ s.title }}">
-            {% if s.kind == "legal_tools" %}<span class="modal-hint" style="margin:0;">(top-right sign-in panel)</span>{% endif %}
+            <div class="section-row-fields">
+              <input type="text" class="section-title" value="{{ s.title }}" placeholder="Section title">
+              <input type="text" class="section-description" value="{{ s.description }}" placeholder="Description (optional, shown under the title on the public page)">
+            </div>
+            {% if s.kind == "legal_tools" %}<span class="modal-hint section-tag">(top-right sign-in panel)</span>{% endif %}
             <button type="button" class="btn section-save">Save</button>
             <button type="button" class="btn card-delete-btn section-delete" title="Delete section">&#10005;</button>
           </div>
           {% endfor %}
         </div>
         <div class="add-row">
-          <input type="text" class="new-section-title" placeholder="New section title">
+          <div class="section-row-fields">
+            <input type="text" class="new-section-title" placeholder="New section title">
+            <input type="text" class="new-section-description" placeholder="Description (optional)">
+          </div>
           <button type="button" class="btn add-section-btn">Add section</button>
         </div>
       </div>
@@ -103,6 +125,7 @@
       <div class="new-website-form">
         <label>Domain<input type="text" id="newWebsiteDomain" placeholder="example.com"></label>
         <label>Name<input type="text" id="newWebsiteName" placeholder="Example"></label>
+        <label>Tagline<input type="text" id="newWebsiteTagline" placeholder="Shown under the name on the public page"></label>
         <button type="button" class="btn" id="addWebsiteBtn">Add website</button>
       </div>
       <p id="websiteError" class="error-message" style="display:none"></p>

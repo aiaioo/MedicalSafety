@@ -14,7 +14,8 @@
   .public-hero h1 { font-size: 30px; margin: 0 0 6px; }
   .public-hero p { color: #6b7280; margin: 0; }
   .public-section { margin: 36px 0; }
-  .public-section h2 { font-size: 20px; font-weight: 600; border-bottom: 1px solid #e0e2e8; padding-bottom: 8px; margin-bottom: 16px; }
+  .public-section h2 { font-size: 20px; font-weight: 600; border-bottom: 1px solid #e0e2e8; padding-bottom: 8px; margin-bottom: 4px; }
+  .public-section-description { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
   .public-article-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
   .public-article-card { display: block; border: 1px solid #e0e2e8; border-radius: 10px; padding: 16px 18px;
     text-decoration: none; color: inherit; background: #fff; transition: box-shadow 0.15s, border-color 0.15s; }
@@ -28,7 +29,8 @@
   .legal-tools { width: 260px; flex-shrink: 0; margin-top: 48px; background: #fcfcfd;
     border: 1px solid #d5dae3; border-radius: 12px; padding: 18px 20px; }
   .legal-tools h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-    color: #46536b; margin: 0 0 14px; }
+    color: #46536b; margin: 0 0 6px; }
+  .legal-tools-description { font-size: 12px; color: #6b7280; margin: 0 0 12px; }
   .legal-tools-signin .modal-field { display: block; margin: 10px 0; font-size: 13px; color: #46536b; }
   .legal-tools-signin input { width: 100%; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px;
     box-sizing: border-box; margin-top: 4px; }
@@ -60,7 +62,7 @@
     <div class="public-main">
       <div class="public-hero">
         <h1>{{ website.name }}</h1>
-        <p>Articles and guides from {{ website.name }}.</p>
+        {% if website.tagline %}<p>{{ website.tagline }}</p>{% endif %}
       </div>
 
       {% set any_articles = sections | selectattr("articles") | list %}
@@ -72,6 +74,7 @@
       {% if section.articles %}
       <section class="public-section">
         <h2>{{ section.title }}</h2>
+        {% if section.description %}<p class="public-section-description">{{ section.description }}</p>{% endif %}
         <div class="public-article-grid">
           {% for a in section.articles %}
           <a class="public-article-card" href="{{ url_for('public_article', article_id=a.id) }}">
@@ -87,6 +90,7 @@
 
     <aside class="legal-tools">
       <h2>{{ legal_tools.title if legal_tools else "Legal tools" }}</h2>
+      {% if legal_tools and legal_tools.description %}<p class="legal-tools-description">{{ legal_tools.description }}</p>{% endif %}
       {% if g.user and not g.user.is_guest %}
       <div class="legal-tools-signedin">
         <p>Signed in as {{ g.user.email }}.</p>

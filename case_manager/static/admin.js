@@ -102,6 +102,7 @@
   function wireSectionRow(row, list) {
     const sectionId = row.dataset.sectionId;
     const titleInput = $(".section-title", row);
+    const descriptionInput = $(".section-description", row);
     const saveBtn = $(".section-save", row);
     const deleteBtn = $(".section-delete", row);
 
@@ -110,7 +111,9 @@
       if (!title) return;
       const position = Array.from(list.children).indexOf(row);
       try {
-        await api(`/api/admin/section/${encodeURIComponent(sectionId)}`, "POST", { title, position });
+        await api(`/api/admin/section/${encodeURIComponent(sectionId)}`, "POST", {
+          title, description: descriptionInput.value.trim(), position,
+        });
       } catch (e) {
         window.alert("Could not save section: " + e.message);
       }
@@ -126,33 +129,62 @@
     });
   }
 
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  }
+
   $$(".website-card[data-website-id]").forEach((card) => {
     const websiteId = card.dataset.websiteId;
     const list = $(".sections-list", card);
     $$(".section-row", list).forEach((row) => wireSectionRow(row, list));
 
     const newTitle = $(".new-section-title", card);
+    const newDescription = $(".new-section-description", card);
     const addBtn = $(".add-section-btn", card);
     addBtn.addEventListener("click", async () => {
       const title = newTitle.value.trim();
       if (!title) return;
       addBtn.disabled = true;
       try {
-        const section = await api(`/api/admin/website/${encodeURIComponent(websiteId)}/sections`, "POST", { title });
+        const section = await api(`/api/admin/website/${encodeURIComponent(websiteId)}/sections`, "POST", {
+          title, description: newDescription.value.trim(),
+        });
         const row = document.createElement("div");
         row.className = "section-row";
         row.dataset.sectionId = section.id;
         row.innerHTML =
-          '<input type="text" class="section-title" value="' + title.replace(/"/g, "&quot;") + '">' +
+          '<div class="section-row-fields">' +
+          '<input type="text" class="section-title" value="' + escapeAttr(section.title) + '" placeholder="Section title">' +
+          '<input type="text" class="section-description" value="' + escapeAttr(section.description || "") + '" placeholder="Description (optional, shown under the title on the public page)">' +
+          '</div>' +
           '<button type="button" class="btn section-save">Save</button>' +
           '<button type="button" class="btn card-delete-btn section-delete" title="Delete section">&#10005;</button>';
         list.appendChild(row);
         wireSectionRow(row, list);
         newTitle.value = "";
+        newDescription.value = "";
       } catch (e) {
         window.alert("Could not add section: " + e.message);
       } finally {
         addBtn.disabled = false;
+      }
+    });
+
+    const websiteNameInput = $(".website-name", card);
+    const websiteTaglineInput = $(".website-tagline", card);
+    const websiteSaveBtn = $(".website-save", card);
+    websiteSaveBtn.addEventListener("click", async () => {
+      const name = websiteNameInput.value.trim();
+      if (!name) return;
+      websiteSaveBtn.disabled = true;
+      try {
+        await api(`/api/admin/website/${encodeURIComponent(websiteId)}`, "POST", {
+          name, tagline: websiteTaglineInput.value.trim(),
+        });
+      } catch (e) {
+        window.alert("Could not save website: " + e.message);
+      } finally {
+        websiteSaveBtn.disabled = false;
       }
     });
   });
@@ -164,13 +196,14 @@
       show(websiteError, "");
       const domain = $("#newWebsiteDomain").value.trim().toLowerCase();
       const name = $("#newWebsiteName").value.trim();
+      const tagline = $("#newWebsiteTagline").value.trim();
       if (!domain || !name) {
         show(websiteError, "Enter both a domain and a name.");
         return;
       }
       addWebsiteBtn.disabled = true;
       try {
-        await api("/api/admin/websites", "POST", { domain, name });
+        await api("/api/admin/websites", "POST", { domain, name, tagline });
         window.location.reload();
       } catch (e) {
         show(websiteError, e.message);

@@ -2890,9 +2890,15 @@ def require_content_creator():
         raise DocumentError("You don't have permission to see this page", 403)
 
 
+def require_admin_or_content_creator():
+    if not (g.user.is_admin or g.user.is_content_creator):
+        raise DocumentError("You don't have permission to see this page", 403)
+
+
 # ---------------------------------------------------------------------------
-# Admin: the Users tab (roles + per-user stats) and the Websites tab (see
-# db/migrations/022_content_platform.sql). Every route here is admin-only.
+# Admin: the Users tab (roles + per-user stats, admin-only) and the
+# Websites tab (websites/sections, open to any content creator too, not
+# just admins -- see db/migrations/022_content_platform.sql).
 # ---------------------------------------------------------------------------
 
 WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
@@ -2900,8 +2906,9 @@ WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0
 
 @app.route("/admin")
 def admin_view():
-    require_admin()
-    return render_template("admin.html", users=storage.admin_list_users(), websites=storage.list_websites())
+    require_admin_or_content_creator()
+    users = storage.admin_list_users() if g.user.is_admin else None
+    return render_template("admin.html", users=users, websites=storage.list_websites(), is_admin=g.user.is_admin)
 
 
 @app.route("/api/admin/user/<int:user_id>/roles", methods=["PUT"])
@@ -2918,46 +2925,58 @@ def api_admin_user_roles(user_id):
 
 @app.route("/api/admin/websites", methods=["POST"])
 def api_admin_websites():
-    require_admin()
+    require_admin_or_content_creator()
     body = request.get_json(silent=True) or {}
     domain = str(body.get("domain") or "").strip().lower()
     name = str(body.get("name") or "").strip()[:100]
+    tagline = str(body.get("tagline") or "").strip()[:300]
     if not WEBSITE_DOMAIN_RE.match(domain):
         raise DocumentError("Enter a valid domain, e.g. example.com", 400)
     if not name:
         raise DocumentError("A website name is required", 400)
     if storage.website_exists(domain):
         raise DocumentError("A website with that domain already exists", 409)
-    storage.create_website(domain, domain, name)
-    return jsonify({"id": domain, "domain": domain, "name": name, "sections": []})
+    storage.create_website(domain, domain, name, tagline)
+    return jsonify({"id": domain, "domain": domain, "name": name, "tagline": tagline, "sections": []})
 
 
-@app.route("/api/admin/website/<website_id>", methods=["DELETE"])
+@app.route("/api/admin/website/<website_id>", methods=["POST", "DELETE"])
 def api_admin_website(website_id):
-    require_admin()
-    storage.delete_website(website_id)
+    require_admin_or_content_creator()
+    if not storage.website_exists(website_id):
+        raise DocumentError(f"No website with id {website_id!r}", 404)
+    if request.method == "DELETE":
+        storage.delete_website(website_id)
+        return jsonify({"ok": True})
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name") or "").strip()[:100]
+    tagline = str(body.get("tagline") or "").strip()[:300]
+    if not name:
+        raise DocumentError("A website name is required", 400)
+    storage.update_website(website_id, name, tagline)
     return jsonify({"ok": True})
 
 
 @app.route("/api/admin/website/<website_id>/sections", methods=["POST"])
 def api_admin_sections(website_id):
-    require_admin()
+    require_admin_or_content_creator()
     if not storage.website_exists(website_id):
         raise DocumentError(f"No website with id {website_id!r}", 404)
     body = request.get_json(silent=True) or {}
     title = str(body.get("title") or "").strip()[:100]
+    description = str(body.get("description") or "").strip()[:500]
     if not title:
         raise DocumentError("A section title is required", 400)
     section_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
     website = next((w for w in storage.list_websites() if w["id"] == website_id), None)
     position = len(website["sections"]) if website else 0
-    storage.create_section(section_id, website_id, title, position)
-    return jsonify({"id": section_id, "title": title, "position": position})
+    storage.create_section(section_id, website_id, title, description, position)
+    return jsonify({"id": section_id, "title": title, "description": description, "position": position})
 
 
 @app.route("/api/admin/section/<section_id>", methods=["POST", "DELETE"])
 def api_admin_section(section_id):
-    require_admin()
+    require_admin_or_content_creator()
     if not storage.section_exists(section_id):
         raise DocumentError(f"No section with id {section_id!r}", 404)
     if request.method == "DELETE":
@@ -2965,10 +2984,11 @@ def api_admin_section(section_id):
         return jsonify({"ok": True})
     body = request.get_json(silent=True) or {}
     title = str(body.get("title") or "").strip()[:100]
+    description = str(body.get("description") or "").strip()[:500]
     if not title:
         raise DocumentError("A section title is required", 400)
     position = body.get("position")
-    storage.update_section(section_id, title, position if isinstance(position, int) else 0)
+    storage.update_section(section_id, title, description, position if isinstance(position, int) else 0)
     return jsonify({"ok": True})
 
 

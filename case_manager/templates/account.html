@@ -21,7 +21,11 @@
   {% if g.user.is_content_creator or g.user.is_admin %}
   <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
     {% if g.user.is_content_creator %}<a class="btn" href="{{ url_for('articles_view') }}">My webpages</a>{% endif %}
-    {% if g.user.is_admin %}<a class="btn" href="{{ url_for('admin_view') }}">Administrator</a>{% endif %}
+    {% if g.user.is_admin %}
+    <a class="btn" href="{{ url_for('admin_view') }}">Administrator</a>
+    {% elif g.user.is_content_creator %}
+    <a class="btn" href="{{ url_for('admin_view') }}">Websites</a>
+    {% endif %}
   </div>
   {% endif %}
 </header>
