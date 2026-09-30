@@ -12,12 +12,20 @@ window.PageNumberPalette = (function () {
     return "#" + f(0) + f(8) + f(4);
   }
 
-  // A row of greys plus brown and navy, then eight hues at strong and muted
-  // saturations and a few lightnesses.
+  const HUES = [0, 30, 50, 130, 175, 210, 270, 320];
+  const hueRow = (sat, light) => HUES.map((hue) => hslToHex(hue, sat, light));
+
+  // A row of greys plus brown and navy, then rows of hues: strong, fully
+  // saturated primaries, a pastel row, and muted saturations.
   const PALETTE = [
     "#000000", "#333333", "#555555", "#777777", "#999999", "#bbbbbb", "#8b5a2b", "#1f3a93",
-    ...[[85, 30], [85, 45], [85, 65], [40, 40], [40, 65]].flatMap(([sat, light]) =>
-      [0, 30, 50, 130, 175, 210, 270, 320].map((hue) => hslToHex(hue, sat, light))),
+    ...hueRow(85, 30),
+    ...[0, 30, 60, 120, 180, 240, 285, 320].map((hue) => hslToHex(hue, 100, 50)),
+    ...hueRow(85, 45),
+    ...hueRow(70, 82),
+    ...hueRow(85, 65),
+    ...hueRow(40, 40),
+    ...hueRow(40, 65),
   ];
 
   function mount(el, onPick) {
