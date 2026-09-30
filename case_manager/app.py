@@ -17,7 +17,7 @@ from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
-from flask import Flask, Response, abort, g, jsonify, render_template, request, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
@@ -148,11 +148,12 @@ UPLOAD_EXTENSIONS = {".pdf": "pdf"}
 
 
 class DocumentError(Exception):
-    def __init__(self, message, status=404, unlock=None):
+    def __init__(self, message, status=404, unlock=None, signin=False):
         super().__init__(message)
         self.message = message
         self.status = status
         self.unlock = unlock  # (kind, object id) whose key prompt to offer with the message
+        self.signin = signin  # send a page request to the sign-in page rather than show the error
 
 
 @app.errorhandler(storage.DeleteBlocked)
@@ -164,8 +165,10 @@ def handle_delete_blocked(err):
 def handle_document_error(err):
     if request.path.startswith("/api/"):
         return jsonify({"error": err.message}), err.status
+    next_url = request.full_path if request.query_string else request.path
+    if err.signin:
+        return redirect(url_for("auth.signin", next=next_url))
     if err.unlock:
-        next_url = request.full_path if request.query_string else request.path
         return auth.render_unlock(*err.unlock, next_url, err.message, err.status)
     return render_template("error.html", message=err.message), err.status
 
@@ -193,6 +196,8 @@ def raise_no_access(kind, object_id, message):
             # Offer the key prompt too, if the object has other keys to try.
             unlock = (kind, object_id) if storage.object_has_keys(kind, object_id) else None
             raise DocumentError(auth.KEY_DELETED_MESSAGE, 403, unlock=unlock)
+        # A key holder with no access and no key of theirs to blame: sign in.
+        raise DocumentError(message, 404, signin=True)
     raise DocumentError(message, 404)
 
 
