@@ -26,7 +26,6 @@
 <body>
 <header class="docbar" style="position: relative;">
   <a class="home-link docbar-lead" href="{{ url_for('public_view') }}" title="Home">Home</a>
-  <div class="docbar-center"><span class="doc-name doc-name-static">{{ article.title }}</span></div>
   {% if g.user and not g.user.is_guest %}
   <div style="margin-left: auto;"><a class="btn" href="{{ url_for('account_view') }}">My account</a></div>
   {% endif %}
