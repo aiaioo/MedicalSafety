@@ -107,9 +107,9 @@
 
   function placeholderValues() {
     return {
-      COURT_NAME: data.court || "[COURT_NAME]",
-      COURT_LOCATION: data.court_location || "[COURT_LOCATION]",
-      CASE_NUMBER: data.case_number || "[CASE_NUMBER]",
+      COURT_NAME: data.court.toUpperCase() || "[COURT_NAME]",
+      COURT_LOCATION: data.court_location.toUpperCase() || "[COURT_LOCATION]",
+      CASE_NUMBER: data.case_number.toUpperCase() || "[CASE_NUMBER]",
       PLAINTIFFS: partiesText("complainant") || "[PLAINTIFFS]",
       RESPONDENTS: partiesText("respondent") || "[RESPONDENTS]",
     };
@@ -274,7 +274,7 @@
         <label>Template <select id="templateSelect"></select></label>
         <label>Font <select id="fontSelect"></select></label>
         <label>Size (pt) <input type="number" id="fontSizeInput" min="6" max="72" style="width: 70px"></label>
-        <label class="toggle-label"><input type="checkbox" id="oneLinePartiesInput"> One-line parties</label>
+        <label class="toggle-label"><input type="checkbox" id="oneLinePartiesInput"> Short party names</label>
       </div>
       <div class="cause-title-actions">
         <button type="button" class="btn" id="resetCauseTitleBtn" title="Discard your edits and regenerate the title from the template">Clear changes</button>
