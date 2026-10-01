@@ -695,6 +695,18 @@ def save_annexure_annotations(report_id: str, mode: str) -> None:
         cur.execute("UPDATE reports SET annexure_annotations = %s WHERE id = %s", (mode, report_id))
 
 
+def get_annexure_list_of_documents(report_id: str) -> bool:
+    with _cursor() as cur:
+        cur.execute("SELECT annexure_list_of_documents FROM reports WHERE id = %s", (report_id,))
+        row = cur.fetchone()
+    return bool(row["annexure_list_of_documents"]) if row else False
+
+
+def save_annexure_list_of_documents(report_id: str, enabled: bool) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE reports SET annexure_list_of_documents = %s WHERE id = %s", (bool(enabled), report_id))
+
+
 def delete_report(report_id: str) -> None:
     """Refused while an allegation's evidence cites the report (the foreign
     key would otherwise just null the citation)."""

@@ -16,13 +16,14 @@
   const pnFont = document.getElementById("pageNumberFontInput");
   const pnSize = document.getElementById("pageNumberFontSizeInput");
   const pnShape = document.getElementById("pageNumberShapeInput");
+  const lodEnabled = document.getElementById("listOfDocumentsEnabled");
   const dnEnabled = document.getElementById("docNumberEnabled");
   const dnName = document.getElementById("docNumberNameInput");
   const dnPrefix = document.getElementById("docNumberPrefixInput");
   const dnFirst = document.getElementById("docNumberFirstInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], annotations: "none", pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 } };
+  let state = { documents: [], available: [], annotations: "none", pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 }, listOfDocuments: { enabled: false, causeTitleHtml: "", causeFont: "", causeFontSize: 0, location: "" } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -70,6 +71,32 @@
     return Array.from({ length: pageCount }, (_, i) => i + 1);
   }
 
+  // The page numbers shown on annexure pages first..last (0-based, inclusive); mirrors annexure_page_range in app.py.
+  function pageRange(first, last) {
+    const pn = state.pageNumbers;
+    const [skip, start] = pn.position !== "none" ? [pn.skip, pn.first || 1] : [0, 1];
+    const lo = Math.max(first, skip);
+    if (lo > last) return "-";
+    const a = lo - skip + start, b = last - skip + start;
+    return a === b ? String(a) : `${a}-${b}`;
+  }
+
+  // The List of Documents page (a single scrolling card here; the PDF flows it onto as many pages as it needs).
+  function listPage(rows) {
+    const l = state.listOfDocuments;
+    const wrap = document.createElement("div");
+    wrap.className = "annex-list-page";
+    const cause = l.causeTitleHtml
+      ? `<div style="${l.causeFont ? `font-family:${esc(l.causeFont)},Times,serif;` : ""}${l.causeFontSize ? `font-size:${l.causeFontSize}pt;` : ""}">${l.causeTitleHtml}</div>`
+      : '<p>&nbsp;</p>'.repeat(9);
+    wrap.innerHTML = `<span class="page-label">List of Documents</span>${cause}` +
+      '<p class="lod-title"><b><u>List of Documents</u></b></p>' +
+      '<table><tr><th class="lod-sl">Sl.No.</th><th>Particulars</th><th class="lod-pg">Pg.Nos.</th></tr>' +
+      rows.map(([text, pages], i) => `<tr><td class="lod-sl">${i + 1}</td><td>${esc(text)}</td><td class="lod-pg">${esc(pages)}</td></tr>`).join("") +
+      `</table><p class="lod-location">${esc(l.location) || "&nbsp;"}</p><p>Date:</p>`;
+    return wrap;
+  }
+
   // ---- main panel: continuous scroll of every annexed document's pages ----
   async function renderPages() {
     if (observer) observer.disconnect();
@@ -92,7 +119,10 @@
     const dn = state.docNumbers;
     let shown = 0; // annexure pages laid out so far, across documents
     let docsNumbered = 0;
+    const lodRows = [];
+    const lodSlot = state.listOfDocuments.enabled ? container.appendChild(document.createElement("div")) : null;
     for (const d of state.documents) {
+      const firstIndex = shown;
       const heading = document.createElement("div");
       heading.className = "annex-doc-heading";
       heading.dataset.doc = d.id;
@@ -151,7 +181,12 @@
         container.appendChild(wrap);
         observer.observe(wrap);
       }
+      if (shown > firstIndex) {
+        const text = (d.description || d.title).trim();
+        lodRows.push([dn.enabled ? `${dn.name} ${dn.prefix}${dn.first + lodRows.length} - ${text}` : text, pageRange(firstIndex, shown - 1)]);
+      }
     }
+    if (lodSlot) lodSlot.replaceWith(listPage(lodRows));
   }
   renderPages.version = 0;
 
@@ -287,6 +322,7 @@
   function renderPageNumberInputs() {
     const pn = state.pageNumbers;
     annotationRadios.forEach((r) => { r.checked = r.value === state.annotations; });
+    lodEnabled.checked = state.listOfDocuments.enabled;
     pnPosition.value = pn.position;
     pnStart.value = pn.skip + 1;
     pnFirst.value = pn.first || 1;
@@ -339,6 +375,10 @@
     state.annotations = r.value;
     commit();
   }));
+  lodEnabled.addEventListener("change", () => {
+    state.listOfDocuments = { ...state.listOfDocuments, enabled: lodEnabled.checked };
+    commit();
+  });
   [pnPosition, pnStart, pnFirst, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
 
   function render(pagesToo) {
@@ -357,7 +397,7 @@
         body: JSON.stringify({ documents: state.documents.map((d) => {
           const a = applied(d);
           return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
-        }), pageNumbers: state.pageNumbers, docNumbers: state.docNumbers, annotations: state.annotations }),
+        }), pageNumbers: state.pageNumbers, docNumbers: state.docNumbers, listOfDocuments: state.listOfDocuments.enabled, annotations: state.annotations }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");

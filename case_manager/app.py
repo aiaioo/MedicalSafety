@@ -2643,7 +2643,140 @@ def annexure_annotations_to_draw(raw, mode):
     return anns if mode == "all" else []
 
 
-def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc_numbers=None):
+# ---- Annexure "List of Documents" ----------------------------------------
+# An optional unnumbered index placed before the annexed pages: the report's
+# case's cause title (nine blank lines when there isn't one), a centred
+# "List of Documents" heading, and a Sl.No. / Particulars / Pg.Nos. table.
+
+LIST_OF_DOCUMENTS_BLANK_LINES = 9
+
+
+def _cause_title_parties(case, side):
+    names = [p["name"].strip() for p in case.get("parties", []) if p["side"] == side and p["name"].strip()]
+    if case.get("cause_title_one_line_parties"):
+        return f"{names[0]} and Ors." if len(names) > 1 else "".join(names)
+    return "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names)) if len(names) > 1 else "".join(names)
+
+
+def _cause_title_template_doc(body):
+    """A template body is a ProseMirror doc (JSON string); older ones are plain text, one paragraph per line."""
+    if isinstance(body, str) and body.lstrip().startswith("{"):
+        try:
+            doc = json.loads(body)
+            if isinstance(doc, dict) and doc.get("type") == "doc":
+                return doc
+        except ValueError:
+            pass
+    return {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": line}] if line else []}
+                                       for line in str(body).splitlines() or [""]]}
+
+
+def generate_cause_title_doc(case, templates):
+    """Mirror of static/cause-title.js generateCauseDoc: the case's template with its placeholders filled in."""
+    template = next((t for t in templates if t["id"] == case.get("cause_title_template_id")), templates[0] if templates else None)
+    if template is None:
+        return {"type": "doc", "content": [{"type": "paragraph"}]}
+    values = {
+        "COURT_NAME": (case.get("court") or "").upper() or "[COURT_NAME]",
+        "COURT_LOCATION": (case.get("court_location") or "").upper() or "[COURT_LOCATION]",
+        "CASE_NUMBER": (case.get("case_number") or "").upper() or "[CASE_NUMBER]",
+        "PLAINTIFFS": _cause_title_parties(case, "complainant") or "[PLAINTIFFS]",
+        "RESPONDENTS": _cause_title_parties(case, "respondent") or "[RESPONDENTS]",
+    }
+    placeholder = re.compile(r"\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]")
+
+    def substitute(node):
+        out = []
+        for i, line in enumerate(placeholder.sub(lambda m: values[m.group(1)], node["text"]).split("\n")):
+            if i:
+                out.append({"type": "hardBreak"})
+            if line:
+                out.append({**node, "text": line})
+        return out
+
+    blocks = []
+    for block in _cause_title_template_doc(template["body"]).get("content") or []:
+        content = [x for n in block.get("content") or [] for x in (substitute(n) if n.get("type") == "text" else [n])]
+        blocks.append({**block, "content": content})
+    return {"type": "doc", "content": blocks}
+
+
+def annexure_list_context(report):
+    """What the List of Documents shows besides the table: the cause title as
+    HTML ("" when the report has no case with one), its font, and the court
+    location. Taken from the report's first case the user can view."""
+    case = next((c for c in (storage.get_case(cid) for cid in report.get("case_ids", []) if has_role("case", cid, "viewer")) if c), None)
+    ctx = {"causeTitleHtml": "", "causeFont": "", "causeFontSize": 0, "location": ""}
+    if case is None:
+        return ctx
+    ctx["location"] = case.get("court_location") or ""
+    templates = storage.list_cause_title_templates()
+    doc = case.get("cause_title_doc")
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except ValueError:
+            doc = None
+    if not doc:
+        filled = case.get("court") or case.get("case_number") or case.get("court_location") or any(p["name"].strip() for p in case.get("parties", []))
+        if not (filled and templates):
+            return ctx
+        doc = generate_cause_title_doc(case, templates)
+    doc = sanitize_report_doc(doc, CAUSE_TITLE_TEMPLATE_MAX_CHARS)
+    ctx["causeTitleHtml"] = _json_blocks_to_html(doc.get("content") or [])
+    ctx["causeFont"] = case.get("cause_title_font") or ""
+    ctx["causeFontSize"] = case.get("cause_title_font_size") or 0
+    return ctx
+
+
+def annexure_page_range(start, end, pn):
+    """The page numbers shown on annexure pages `start`..`end` (0-based, inclusive), as "a-b"; "-" if none is numbered."""
+    skip, first = (pn["skip"], pn["first"]) if pn["position"] != "none" else (0, 1)
+    lo = max(start, skip)
+    if lo > end:
+        return "-"
+    a, b = lo - skip + first, end - skip + first
+    return str(a) if a == b else f"{a}-{b}"
+
+
+def list_of_documents_html(ctx, rows):
+    """`rows`: [(particulars, page range)]."""
+    cause_css = f"font-family: {ctx['causeFont']}, Times, serif;" if ctx["causeFont"] else ""
+    if ctx["causeFontSize"]:
+        cause_css += f" font-size: {ctx['causeFontSize']}pt;"
+    top = f'<div style="{html_escape(cause_css, quote=True)}">{ctx["causeTitleHtml"]}</div>' if ctx["causeTitleHtml"] \
+        else "<p>&nbsp;</p>" * LIST_OF_DOCUMENTS_BLANK_LINES
+    body = "".join(
+        f"<tr><td style=\"text-align:center\">{i}</td><td>{html_escape(text)}</td><td style=\"text-align:center\">{html_escape(pages)}</td></tr>"
+        for i, (text, pages) in enumerate(rows, 1))
+    css = ("body { font-family: Times, serif; font-size: 12pt; line-height: 1.4; color: #000; }"
+           " p { margin: 0; } table { border-collapse: collapse; width: 100%; }"
+           " td, th { border: 1px solid #000; padding: 5pt; vertical-align: top; text-align: left; }")
+    return (f"<html><head><style>{css}</style></head><body>{top}"
+            '<p style="text-align:center; margin: 16pt 0 12pt;"><b><u>List of Documents</u></b></p>'
+            '<table><tr><th style="width:12%; text-align:center">Sl.No.</th><th>Particulars</th><th style="width:16%; text-align:center">Pg.Nos.</th></tr>'
+            f'{body}</table><p style="margin-top: 24pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p><p>Date:</p></body></html>')
+
+
+def list_of_documents_pdf(ctx, rows):
+    """The List of Documents as an (unnumbered) A4 PDF, flowing onto more pages as needed."""
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (64, 64, -64, -64)
+    story = fitz.Story(html=list_of_documents_html(ctx, rows))
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    more = 1
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
+
+
+
+def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc_numbers=None, list_of_documents=None):
     """The annexure as the page shows it: the saved [{"id", "page_mode", "page_range"}] order,
     with every document the report's snippets come from present (appended if
     missing -- they can't be left out) and each one's snippet pages; documents
@@ -2659,6 +2792,10 @@ def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc
         "pageNumbers": sanitize_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
                                              ANNEXURE_DEFAULT_PAGE_NUMBERS),
         "docNumbers": sanitize_doc_numbers(doc_numbers if doc_numbers is not None else storage.get_annexure_doc_numbers(report_id)),
+        "listOfDocuments": {
+            "enabled": storage.get_annexure_list_of_documents(report_id) if list_of_documents is None else list_of_documents,
+            **annexure_list_context(storage.get_report(report_id) or {}),
+        },
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
              "description": docs[o["id"]].get("description", ""),
@@ -2706,13 +2843,17 @@ def api_report_annexure(report_id):
         if "docNumbers" in body:
             doc_numbers = sanitize_doc_numbers(body["docNumbers"], storage.get_annexure_doc_numbers(report_id))
             storage.save_annexure_doc_numbers(report_id, doc_numbers)
+        list_of_documents = None
+        if "listOfDocuments" in body:
+            list_of_documents = bool(body["listOfDocuments"])
+            storage.save_annexure_list_of_documents(report_id, list_of_documents)
         annotations = None
         if "annotations" in body:
             annotations = body["annotations"]
             if annotations not in ANNEXURE_ANNOTATION_MODES:
                 raise DocumentError("annotations must be 'none', 'blackouts' or 'all'", 400)
             storage.save_annexure_annotations(report_id, annotations)
-        payload = _annexure_payload(report_id, saved, page_numbers, annotations, doc_numbers)
+        payload = _annexure_payload(report_id, saved, page_numbers, annotations, doc_numbers, list_of_documents)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
@@ -2733,6 +2874,7 @@ def api_report_annexure_export(report_id):
 
     out = fitz.open()
     first_pages = []  # index in `out` of each document's first page
+    spans = []  # (document, first, last index in `out`) of each document with pages
     try:
         for d in payload["documents"]:
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
@@ -2749,12 +2891,22 @@ def api_report_annexure_export(report_id):
                             draw_annotations_on_page(src[int(n) - 1], annexure_annotations_to_draw(raw_anns, payload["annotations"]), src[int(n) - 1].rect)
                 if pages:
                     first_pages.append(out.page_count)
+                    spans.append((d, out.page_count, out.page_count + len(pages) - 1))
                 for p in pages:
                     out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
         pn = payload["pageNumbers"]
         band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
         stamp_page_numbers(out, pn, band)
         stamp_doc_numbers(out, payload["docNumbers"], pn, band, first_pages)
+        if payload["listOfDocuments"]["enabled"]:
+            # Added after the stamping, so its pages stay unnumbered and the annexure's numbering is unchanged.
+            dn = payload["docNumbers"]
+            rows = []
+            for n, (d, first, last) in enumerate(spans):
+                text = (d["description"] or d["title"]).strip()
+                rows.append((f"{doc_number_label(dn, n)} - {text}" if dn["enabled"] else text, annexure_page_range(first, last, pn)))
+            with fitz.open(stream=list_of_documents_pdf(payload["listOfDocuments"], rows), filetype="pdf") as front:
+                out.insert_pdf(front, start_at=0)
         data = out.tobytes()
     finally:
         out.close()
