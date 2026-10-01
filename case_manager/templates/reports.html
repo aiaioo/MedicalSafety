@@ -41,9 +41,7 @@
 
     {% if report_id %}
     <input id="titleInput" class="doc-name" type="text" placeholder="Untitled report">
-    <button type="button" id="saveBtn" class="save-btn">Save</button>
     {% endif %}
-    <span id="saveStatus" class="save-status"></span>
 
     <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Documents</a>
     <a class="btn disabled" id="lastSourceLink" aria-disabled="true" title="No document viewed yet">Last Document &raquo;</a>
@@ -155,6 +153,9 @@
     <span class="toolbar-sep"></span>
     <button type="button" class="fmt-btn" id="linkBtn" title="Insert or edit link">&#128279; Link</button>
     <button type="button" class="fmt-btn" id="insertImageBtn" title="Insert image">&#128247; Image</button>
+    <span class="toolbar-sep"></span>
+    <button type="button" class="fmt-btn" id="saveBtn" title="Save report">Save</button>
+    <span id="saveStatus" class="save-status"></span>
     <input type="file" id="imageFileInput" accept="image/*" hidden>
     </div>
   </div>

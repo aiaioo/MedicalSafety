@@ -73,7 +73,6 @@
       <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" value="{{ doc_title }}">
       <span class="tag">{{ doc_type }}</span>
     </div>
-    <button type="button" id="saveBtn" class="save-btn">Save</button>
     <label class="toggle-label"><input type="checkbox" id="continuousToggle" checked> Continuous view</label>
     <div class="pagenav">
       <a class="btn" id="prevLink" href="?doc={{ doc_id }}&type={{ doc_type }}&page={{ page-1 if page>1 else 1 }}">&laquo; Prev</a>
@@ -113,8 +112,10 @@
     </div>
     <button type="button" id="undoBtn">Undo</button>
     <button type="button" id="clearBtn">Clear</button>
+    <span class="toolbar-sep"></span>
+    <button type="button" id="saveBtn" class="save-btn">Save</button>
+    <span id="statusMsg" class="status-msg" style="margin-left: 0;"></span>
     <span id="modeHint" class="hint"></span>
-    <span id="statusMsg" class="status-msg"></span>
   </div>
 
   <div class="modal-overlay" id="pageSetupModal">
