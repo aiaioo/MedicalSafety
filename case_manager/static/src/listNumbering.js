@@ -263,6 +263,41 @@ export const ListMarkers = Extension.create({
   },
 });
 
+// Clicking a list item's marker -- the number widget of a numbered list, or
+// the native bullet of a bulleted one, neither of which is editable text --
+// puts the cursor at the start of that item, so Tab / Shift+Tab can then
+// sink or lift it a level.
+export const ListMarkerSelect = Extension.create({
+  name: "listMarkerSelect",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            mousedown(view, e) {
+              const target = e.target;
+              if (!target || !target.closest || e.button !== 0) return false;
+              const marker = target.closest(".list-marker");
+              const li = marker ? marker.closest("li") : target.tagName === "LI" ? target : null;
+              if (!li || !view.dom.contains(li)) return false;
+              if (!marker) {
+                // A bullet sits in the <li>'s margin, left of its first block.
+                const first = li.firstElementChild;
+                if (first && e.clientX >= first.getBoundingClientRect().left) return false;
+              }
+              e.preventDefault();
+              view.focus();
+              const $pos = view.state.doc.resolve(view.posAtDOM(li, 0));
+              view.dispatch(view.state.tr.setSelection(TextSelection.near($pos)));
+              return true;
+            },
+          },
+        },
+      }),
+    ];
+  },
+});
+
 // Extends Tiptap's stock OrderedList with the template attributes above.
 export const OrderedList = BaseOrderedList.extend({
   addAttributes() {

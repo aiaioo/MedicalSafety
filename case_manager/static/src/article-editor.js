@@ -8,6 +8,7 @@ import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { handleTabCharacter } from "./tabKey.js";
+import { ListMarkerSelect } from "./listNumbering.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
@@ -263,6 +264,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
     element: editorEl,
     extensions: [
       StarterKit,
+      ListMarkerSelect,
       TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
