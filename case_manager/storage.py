@@ -717,6 +717,7 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
             "cause_title_template_id": c["cause_title_template_id"],
             "cause_title_font": c["cause_title_font"],
             "cause_title_font_size": c["cause_title_font_size"],
+            "cause_title_one_line_parties": c["cause_title_one_line_parties"],
             "cause_title_doc": c["cause_title_doc"],
             "hearings": hearings_by_case.get(c["id"], []),
             **({"role": roles[c["id"]]} if roles else {}),
@@ -740,7 +741,7 @@ def list_cases(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.court_location,
-                   c.cause_title_template_id, c.cause_title_font, c.cause_title_font_size, c.cause_title_doc, c.created_at, c.updated_at, uc.role
+                   c.cause_title_template_id, c.cause_title_font, c.cause_title_font_size, c.cause_title_one_line_parties, c.cause_title_doc, c.created_at, c.updated_at, uc.role
             FROM cases c JOIN eff_user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
             """,
             (user_id,),
@@ -768,7 +769,7 @@ def get_case(case_id: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             "SELECT id, name, cause_id, court, case_number, summary, court_location, cause_title_template_id,"
-            " cause_title_font, cause_title_font_size, cause_title_doc, created_at, updated_at FROM cases WHERE id = %s",
+            " cause_title_font, cause_title_font_size, cause_title_one_line_parties, cause_title_doc, created_at, updated_at FROM cases WHERE id = %s",
             (case_id,),
         )
         case_row = cur.fetchone()
@@ -792,19 +793,21 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
         cur.execute(
             """
             INSERT INTO cases (id, cause_id, name, court, case_number, summary, court_location,
-                               cause_title_template_id, cause_title_font, cause_title_font_size, cause_title_doc,
+                               cause_title_template_id, cause_title_font, cause_title_font_size, cause_title_one_line_parties, cause_title_doc,
                                created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 cause_id = EXCLUDED.cause_id, name = EXCLUDED.name, court = EXCLUDED.court,
                 case_number = EXCLUDED.case_number, summary = EXCLUDED.summary,
                 court_location = EXCLUDED.court_location, cause_title_template_id = EXCLUDED.cause_title_template_id,
                 cause_title_font = EXCLUDED.cause_title_font, cause_title_font_size = EXCLUDED.cause_title_font_size,
+                cause_title_one_line_parties = EXCLUDED.cause_title_one_line_parties,
                 cause_title_doc = EXCLUDED.cause_title_doc, updated_at = EXCLUDED.updated_at
             """,
             (case_id, data["cause_id"], data["name"], data["court"], data["case_number"], data["summary"],
              data.get("court_location", ""), data.get("cause_title_template_id"),
-             data.get("cause_title_font", ""), data.get("cause_title_font_size", 0), data.get("cause_title_doc"),
+             data.get("cause_title_font", ""), data.get("cause_title_font_size", 0),
+             bool(data.get("cause_title_one_line_parties", False)), data.get("cause_title_doc"),
              data["created_at"], data["updated_at"]),
         )
         # Like hearings below, but only when the caller sent a parties list

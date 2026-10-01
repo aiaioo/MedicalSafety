@@ -60,6 +60,7 @@
           cause_title_template_id: data.cause_title_template_id,
           cause_title_font: data.cause_title_font,
           cause_title_font_size: data.cause_title_font_size,
+          cause_title_one_line_parties: data.cause_title_one_line_parties,
           cause_title_doc: data.cause_title_doc,
         }),
       });
@@ -84,6 +85,7 @@
   // -------------------------------------------------------------------
   function partiesText(side) {
     const names = data.parties.filter((p) => p.side === side && p.name.trim()).map((p) => p.name.trim());
+    if (data.cause_title_one_line_parties) return names.length > 1 ? `${names[0]} and Ors.` : names.join("");
     return names.length > 1 ? names.map((n, i) => `${i + 1}. ${n}`).join("\n") : names.join("");
   }
 
@@ -154,6 +156,10 @@
     const edited = !!data.cause_title_doc;
     const resetBtn = bodyEl.querySelector("#resetCauseTitleBtn");
     resetBtn.disabled = !edited || !canEdit();
+    // The option only shapes the generated title; an edited one is left alone.
+    const oneLine = bodyEl.querySelector("#oneLinePartiesInput");
+    oneLine.disabled = edited || !canEdit();
+    oneLine.title = edited ? "Clear your changes to the cause title to use this option" : "Show \"<first party> and Ors.\" instead of listing every party";
     bodyEl.querySelector("#causeTitleHint").textContent = edited ? "Edited by hand" : "Generated from the template";
   }
 
@@ -268,6 +274,7 @@
         <label>Template <select id="templateSelect"></select></label>
         <label>Font <select id="fontSelect"></select></label>
         <label>Size (pt) <input type="number" id="fontSizeInput" min="6" max="72" style="width: 70px"></label>
+        <label class="toggle-label"><input type="checkbox" id="oneLinePartiesInput"> One-line parties</label>
       </div>
       <div class="cause-title-actions">
         <button type="button" class="btn" id="resetCauseTitleBtn" title="Discard your edits and regenerate the title from the template">Clear changes</button>
@@ -311,6 +318,14 @@
     sizeInput.addEventListener("input", () => {
       const n = parseInt(sizeInput.value, 10);
       data.cause_title_font_size = n >= 6 && n <= 72 ? n : 0;
+      renderCauseTitle();
+      scheduleSave();
+    });
+
+    const oneLineInput = bodyEl.querySelector("#oneLinePartiesInput");
+    oneLineInput.checked = !!data.cause_title_one_line_parties;
+    oneLineInput.addEventListener("change", () => {
+      data.cause_title_one_line_parties = oneLineInput.checked;
       renderCauseTitle();
       scheduleSave();
     });

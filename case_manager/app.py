@@ -540,6 +540,7 @@ def sanitize_cause_title_settings(body, existing):
     return {
         "court_location": _sanitize_text(body.get("court_location", existing.get("court_location", "")), CASE_MAX_COURT_CHARS),
         "cause_title_template_id": template_id if template_id in known_ids else None,
+        "cause_title_one_line_parties": bool(body.get("cause_title_one_line_parties", existing.get("cause_title_one_line_parties", False))),
         "cause_title_doc": json.dumps(doc, separators=(",", ":")) if doc is not None else None,
         "cause_title_font": font if font in CAUSE_TITLE_FONTS else "",
         "cause_title_font_size": size if isinstance(size, int) and not isinstance(size, bool)
