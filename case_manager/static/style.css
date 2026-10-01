@@ -877,6 +877,10 @@ a.tag:hover { background: #d7deec; }
 .annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
 .annex-name select, .annex-name .annex-range { margin-top: 4px; font-size: 12px; padding: 3px 4px; }
 .annex-name .annex-desc { margin-top: 4px; font-size: 12px; padding: 3px 4px; text-overflow: ellipsis; }
+/* Description boxes look like plain text until clicked. */
+.annex-name .annex-desc, .desc-bar input { background: transparent; border: 1px solid transparent; }
+.annex-name .annex-desc:hover:not(:read-only), .desc-bar input:hover:not(:read-only) { background: #eceef2; }
+.annex-name .annex-desc:focus, .desc-bar input:focus { background: white; border-color: #cfd4e0; outline: none; }
 .desc-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #f7f8fa; border-bottom: 1px solid #e0e2e8; font-size: 13px; }
 .desc-bar label { color: #555; flex: none; }
 .desc-bar input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 6px; }

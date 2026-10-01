@@ -1118,7 +1118,13 @@
       setStatus("Save failed: " + err.message, true);
     }
   });
-  descInput.addEventListener("keydown", (e) => { if (e.key === "Enter") descInput.blur(); });
+  // Enter, or Ctrl/Cmd+S, saves (the blur fires "change") and leaves the box looking read-only.
+  descInput.addEventListener("keydown", (e) => {
+    const save = e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s");
+    if (!save) return;
+    e.preventDefault();
+    descInput.blur();
+  });
 
   let titleDirty = false;
   titleInput.addEventListener("input", () => {

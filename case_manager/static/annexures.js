@@ -227,7 +227,9 @@
           setStatus("Save failed: " + e.message, true);
         }
       });
-      descIn.addEventListener("keydown", (e) => { if (e.key === "Enter") descIn.blur(); });
+      descIn.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s")) { e.preventDefault(); descIn.blur(); }
+      });
       descIn.addEventListener("focus", () => { item.draggable = false; });
       descIn.addEventListener("blur", () => { item.draggable = true; });
       item.querySelector(".annex-delete").addEventListener("click", () => {
