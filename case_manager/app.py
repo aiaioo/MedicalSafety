@@ -1005,6 +1005,8 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
             indent = attrs.get("indent")
             if isinstance(indent, int) and 0 <= indent <= 10:
                 clean_attrs["indent"] = indent
+            if t == "paragraph" and attrs.get("tight") is True:
+                clean_attrs["tight"] = True
         if t == "orderedList":
             start = attrs.get("start")
             if isinstance(start, int) and start > 0:
@@ -1148,6 +1150,8 @@ def _json_block_style(attrs):
         decls.append(f"text-align: {attrs['textAlign']}")
     if attrs.get("indent"):
         decls.append(f"margin-left: {18 * attrs['indent']}pt")
+    if attrs.get("tight"):
+        decls.append("margin-top: 0; margin-bottom: 0")
     return f' style="{html_escape("; ".join(decls), quote=True)}"' if decls else ""
 
 
@@ -1506,6 +1510,8 @@ def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
             doc.add_paragraph().add_run("—" * 20)
         elif t == "paragraph":
             p = doc.add_paragraph()
+            # Standard spacing is a 1em gap after the paragraph; "tight" has none.
+            p.paragraph_format.space_after = Pt(0 if attrs.get("tight") else 11)
             if attrs.get("indent"):
                 p.paragraph_format.left_indent = Pt(18 * attrs["indent"])
             _docx_render_inline(content, p, max_width_emu)

@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { ParagraphSpacing, hasStandardSpacing, tightenParagraphs } from "./paragraphSpacing.js";
 import { handleTabCharacter } from "./tabKey.js";
 import { ListMarkerSelect } from "./listNumbering.js";
 import { Link } from "@tiptap/extension-link";
@@ -268,6 +269,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
+      ParagraphSpacing,
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
     ],
@@ -375,6 +377,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
         setSelectedImageAlign(editor, TEXT_ALIGNS[cmd] === "justify" ? "left" : TEXT_ALIGNS[cmd]);
       } else if (TEXT_ALIGNS[cmd]) {
         editor.chain().focus().setTextAlign(TEXT_ALIGNS[cmd]).run();
+      } else if (cmd === "paragraphSpacing") {
+        editor.chain().focus().toggleParagraphSpacing().run();
       } else if (MARK_TOGGLES[cmd]) {
         editor.chain().focus().toggleMark(MARK_TOGGLES[cmd]).run();
       }
@@ -499,6 +503,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       let active;
       if (MARK_TOGGLES[cmd]) active = editor.isActive(MARK_TOGGLES[cmd]);
       else if (TEXT_ALIGNS[cmd]) active = editor.isActive({ textAlign: TEXT_ALIGNS[cmd] });
+      else if (cmd === "paragraphSpacing") active = hasStandardSpacing(editor);
       else return;
       btn.classList.toggle("active", active);
     });

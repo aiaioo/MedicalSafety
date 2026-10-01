@@ -12,6 +12,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { ParagraphSpacing, hasStandardSpacing, tightenParagraphs } from "./paragraphSpacing.js";
 import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
@@ -583,6 +584,7 @@ import { Pagination, repaginate } from "./pagination.js";
       TextStyleKit.configure({ backgroundColor: false, lineHeight: false }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
+      ParagraphSpacing,
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
@@ -845,6 +847,8 @@ import { Pagination, repaginate } from "./pagination.js";
         setSelectedImageAlign(editor, TEXT_ALIGNS[cmd] === "justify" ? "left" : TEXT_ALIGNS[cmd]);
       } else if (TEXT_ALIGNS[cmd]) {
         editor.chain().focus().setTextAlign(TEXT_ALIGNS[cmd]).run();
+      } else if (cmd === "paragraphSpacing") {
+        editor.chain().focus().toggleParagraphSpacing().run();
       } else if (MARK_TOGGLES[cmd]) {
         editor.chain().focus().toggleMark(MARK_TOGGLES[cmd]).run();
       }
@@ -990,6 +994,7 @@ import { Pagination, repaginate } from "./pagination.js";
       let active;
       if (MARK_TOGGLES[cmd]) active = editor.isActive(MARK_TOGGLES[cmd]);
       else if (TEXT_ALIGNS[cmd]) active = editor.isActive({ textAlign: TEXT_ALIGNS[cmd] });
+      else if (cmd === "paragraphSpacing") active = hasStandardSpacing(editor);
       else if (cmd === "insertUnorderedList") active = editor.isActive("bulletList");
       else if (cmd === "insertOrderedList") active = editor.isActive("orderedList");
       else return;
@@ -1245,7 +1250,7 @@ import { Pagination, repaginate } from "./pagination.js";
           return;
         }
         const doc = window.CauseTitle.doc(caseData, templates);
-        editor.chain().focus().insertContentAt(0, doc.content).run();
+        editor.chain().focus().insertContentAt(0, tightenParagraphs(doc.content)).run();
       } catch (e) {
         setStatus("Could not insert the cause title: " + e.message, true);
       }
