@@ -65,7 +65,7 @@ def sanitize_margins(raw, fallback=None):
 # draw them in. Font names mirror the #pageNumberFontInput <option> values in
 # reports.html (quoted where the CSS family name has a space, so the same
 # string can be dropped straight into a font-family declaration).
-REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "font": "Arial", "fontSize": 11, "shape": "none", "color": "#555555"}
+REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "first": 1, "font": "Arial", "fontSize": 11, "shape": "none", "color": "#555555"}
 ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "none"}
 REPORT_PAGE_NUMBER_SHAPES = {"none", "circle", "rectangle"}
 REPORT_PAGE_NUMBER_POSITIONS = {
@@ -80,6 +80,7 @@ REPORT_PAGE_NUMBER_FONTS = {
 PAGE_NUMBER_TEXT_DROP = 0.18  # tuned so the number's glyphs sit optically centred in the outline
 ANNEXURE_PAGE_NUMBER_BAND = 46  # pt of header/footer band the annexure page numbers sit in (the preview mirrors it)
 REPORT_PAGE_NUMBER_SKIP_MAX = 50
+REPORT_PAGE_NUMBER_FIRST_MAX = 100000
 REPORT_PAGE_NUMBER_FONT_SIZE_MIN = 6
 REPORT_PAGE_NUMBER_FONT_SIZE_MAX = 72
 
@@ -102,6 +103,16 @@ def sanitize_page_numbers(raw, fallback=None):
         skip = fallback.get("skip")
         if not isinstance(skip, int) or not (0 <= skip <= REPORT_PAGE_NUMBER_SKIP_MAX):
             skip = REPORT_DEFAULT_PAGE_NUMBERS["skip"]
+
+    first = raw.get("first") if isinstance(raw, dict) else None
+    try:
+        first = int(first)
+    except (TypeError, ValueError):
+        first = None
+    if first is None or not (1 <= first <= REPORT_PAGE_NUMBER_FIRST_MAX):
+        first = fallback.get("first")
+        if not isinstance(first, int) or not (1 <= first <= REPORT_PAGE_NUMBER_FIRST_MAX):
+            first = REPORT_DEFAULT_PAGE_NUMBERS["first"]
 
     font = raw.get("font") if isinstance(raw, dict) else None
     if font not in REPORT_PAGE_NUMBER_FONTS:
@@ -131,7 +142,7 @@ def sanitize_page_numbers(raw, fallback=None):
         if not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
             color = REPORT_DEFAULT_PAGE_NUMBERS["color"]
 
-    return {"position": position, "skip": skip, "font": font, "fontSize": font_size,
+    return {"position": position, "skip": skip, "first": first, "font": font, "fontSize": font_size,
             "shape": shape, "color": color.lower()}
 
 app = Flask(__name__)
@@ -1173,7 +1184,7 @@ def stamp_page_numbers(doc, pn, m):
     for i in range(pn["skip"], doc.page_count):
         page = doc[i]
         r = page.rect
-        label = str(i - pn["skip"] + 1)
+        label = str(i - pn["skip"] + pn["first"])
         box_w = max(box_h, fitz.get_text_length(label, fontsize=fs) + fs * 0.6) if pn["shape"] != "none" else fitz.get_text_length(label, fontsize=fs)
         left, right = r.x0 + m["left"], r.x1 - m["right"]
         x0 = {"left": left, "center": (left + right - box_w) / 2, "right": right - box_w}[horiz]
@@ -1506,10 +1517,10 @@ def _docx_add_page_field(paragraph):
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
 
 
-def _docx_add_conditional_page_field(paragraph, skip):
-    """Inserts { IF { PAGE } > skip "{ = { PAGE } - skip }" "" } -- Word
+def _docx_add_conditional_page_field(paragraph, skip, first=1):
+    """Inserts { IF { PAGE } > skip "{ = { PAGE } - skip + first - 1 }" "" } -- Word
     evaluates this per rendered page, so it correctly hides the number on
-    the first `skip` pages (and restarts the visible count at 1 right after)
+    the first `skip` pages (and restarts the visible count at `first` right after)
     regardless of where python-docx's own generation loop happened to put
     paragraph/section boundaries (which don't correspond to physical pages
     -- only Word's own layout does)."""
@@ -1524,7 +1535,8 @@ def _docx_add_conditional_page_field(paragraph, skip):
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "begin"})
     _docx_field_run(paragraph, "w:instrText", " PAGE ")
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
-    _docx_field_run(paragraph, "w:instrText", f" - {skip} ")
+    delta = first - 1 - skip
+    _docx_field_run(paragraph, "w:instrText", f" {'+' if delta >= 0 else '-'} {abs(delta)} ")
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "end"})
     _docx_field_run(paragraph, "w:instrText", '" "" ')
     _docx_field_run(paragraph, "w:fldChar", **{"w:fldCharType": "separate"})
@@ -1558,8 +1570,9 @@ def _docx_apply_page_numbers(doc, page_numbers):
     paragraph.alignment = align
 
     skip = page_numbers.get("skip", 0)
-    if skip > 0:
-        _docx_add_conditional_page_field(paragraph, skip)
+    first = page_numbers.get("first", 1)
+    if skip > 0 or first != 1:
+        _docx_add_conditional_page_field(paragraph, skip, first)
     else:
         _docx_add_page_field(paragraph)
 

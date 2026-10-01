@@ -78,6 +78,7 @@ import { Pagination, repaginate } from "./pagination.js";
   const marginFooterInput = document.getElementById("marginFooterInput");
   const pageNumberPositionInput = document.getElementById("pageNumberPositionInput");
   const pageNumberStartInput = document.getElementById("pageNumberStartInput");
+  const pageNumberFirstInput = document.getElementById("pageNumberFirstInput");
   const pageNumberFontInput = document.getElementById("pageNumberFontInput");
   const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
   const pageNumberShapeInput = document.getElementById("pageNumberShapeInput");
@@ -103,7 +104,7 @@ import { Pagination, repaginate } from "./pagination.js";
   const PAGE_NUMBER_FONT_SIZE_MAX = 72;
   const PAGE_NUMBER_SHAPES = new Set(["none", "circle", "rectangle"]);
   const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" };
+  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" };
   let pageNumbers = { ...DEFAULT_PAGE_NUMBERS };
 
   const newDocModal = document.getElementById("newDocModal");
@@ -393,13 +394,15 @@ import { Pagination, repaginate } from "./pagination.js";
     const position = raw && PAGE_NUMBER_POSITIONS.has(raw.position) ? raw.position : DEFAULT_PAGE_NUMBERS.position;
     const skipRaw = raw && typeof raw === "object" ? Number(raw.skip) : NaN;
     const skip = Number.isInteger(skipRaw) && skipRaw >= 0 && skipRaw <= 50 ? skipRaw : DEFAULT_PAGE_NUMBERS.skip;
+    const firstRaw = raw && typeof raw === "object" ? Number(raw.first) : NaN;
+    const first = Number.isInteger(firstRaw) && firstRaw >= 1 && firstRaw <= 100000 ? firstRaw : DEFAULT_PAGE_NUMBERS.first;
     const font = raw && PAGE_NUMBER_FONTS.has(raw.font) ? raw.font : DEFAULT_PAGE_NUMBERS.font;
     const fontSizeRaw = raw && typeof raw === "object" ? Number(raw.fontSize) : NaN;
     const fontSize = Number.isFinite(fontSizeRaw) && fontSizeRaw >= PAGE_NUMBER_FONT_SIZE_MIN && fontSizeRaw <= PAGE_NUMBER_FONT_SIZE_MAX
       ? fontSizeRaw : DEFAULT_PAGE_NUMBERS.fontSize;
     const shape = raw && PAGE_NUMBER_SHAPES.has(raw.shape) ? raw.shape : DEFAULT_PAGE_NUMBERS.shape;
     const color = raw && typeof raw.color === "string" && HEX_COLOR.test(raw.color) ? raw.color.toLowerCase() : DEFAULT_PAGE_NUMBERS.color;
-    return { position, skip, font, fontSize, shape, color };
+    return { position, skip, first, font, fontSize, shape, color };
   }
 
   function marginsPx() {
@@ -454,7 +457,7 @@ import { Pagination, repaginate } from "./pagination.js";
         label.style.color = pageNumbers.color;
         const num = document.createElement("span");
         num.className = "page-number-outline";
-        num.textContent = String(i - pageNumbers.skip + 1);
+        num.textContent = String(i - pageNumbers.skip + pageNumbers.first);
         if (pageNumbers.shape !== "none") {
           num.style.border = "1px solid " + pageNumbers.color;
           num.style.borderRadius = pageNumbers.shape === "circle" ? "50%" : "0";
@@ -483,6 +486,12 @@ import { Pagination, repaginate } from "./pagination.js";
     return Math.min(51, Math.max(1, n));
   }
 
+  function clampPageNumberFirst(v) {
+    const n = Number(v);
+    if (!Number.isInteger(n)) return null;
+    return Math.min(100000, Math.max(1, n));
+  }
+
   function clampPageNumberFontSize(v) {
     const n = Number(v);
     if (!Number.isFinite(n)) return null;
@@ -499,6 +508,7 @@ import { Pagination, repaginate } from "./pagination.js";
   function renderPageNumberInputs() {
     pageNumberPositionInput.value = pageNumbers.position;
     pageNumberStartInput.value = pageNumbers.skip + 1;
+    pageNumberFirstInput.value = pageNumbers.first;
     pageNumberFontInput.value = pageNumbers.font;
     pageNumberFontSizeInput.value = pageNumbers.fontSize;
     pageNumberShapeInput.value = pageNumbers.shape;
@@ -513,18 +523,20 @@ import { Pagination, repaginate } from "./pagination.js";
   function readPageNumbers() {
     const start = clampPageNumberStart(pageNumberStartInput.value);
     const fontSize = clampPageNumberFontSize(pageNumberFontSizeInput.value);
+    const first = clampPageNumberFirst(pageNumberFirstInput.value);
     pageNumberStartInput.classList.toggle("invalid", start === null);
+    pageNumberFirstInput.classList.toggle("invalid", first === null);
     pageNumberFontSizeInput.classList.toggle("invalid", fontSize === null);
-    if (start === null || fontSize === null) return;
+    if (start === null || first === null || fontSize === null) return;
     if (!PAGE_NUMBER_POSITIONS.has(pageNumberPositionInput.value) || !PAGE_NUMBER_FONTS.has(pageNumberFontInput.value)) return;
     pageNumbers = {
-      position: pageNumberPositionInput.value, skip: start - 1, font: pageNumberFontInput.value, fontSize,
+      position: pageNumberPositionInput.value, skip: start - 1, first, font: pageNumberFontInput.value, fontSize,
       shape: PAGE_NUMBER_SHAPES.has(pageNumberShapeInput.value) ? pageNumberShapeInput.value : "none",
       color: pageNumbers.color,
     };
     applyPageNumbers();
   }
-  [pageNumberPositionInput, pageNumberStartInput, pageNumberFontInput, pageNumberFontSizeInput, pageNumberShapeInput]
+  [pageNumberPositionInput, pageNumberStartInput, pageNumberFirstInput, pageNumberFontInput, pageNumberFontSizeInput, pageNumberShapeInput]
     .forEach((el) => el.addEventListener("change", readPageNumbers));
 
   pageSetupBtn.addEventListener("click", () => {

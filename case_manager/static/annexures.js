@@ -12,12 +12,13 @@
   const includeAnnotations = document.getElementById("includeAnnotations");
   const pnPosition = document.getElementById("pageNumberPositionInput");
   const pnStart = document.getElementById("pageNumberStartInput");
+  const pnFirst = document.getElementById("pageNumberFirstInput");
   const pnFont = document.getElementById("pageNumberFontInput");
   const pnSize = document.getElementById("pageNumberFontSizeInput");
   const pnShape = document.getElementById("pageNumberShapeInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
+  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -119,7 +120,7 @@
             `font-family:${pn.font},Arial,sans-serif;font-size:${pn.fontSize * scale}px;color:${pn.color};z-index:1`;
           const num = document.createElement("span");
           num.className = "page-number-outline";
-          num.textContent = shown - pn.skip;
+          num.textContent = shown - pn.skip + (pn.first || 1) - 1;
           if (pn.shape !== "none") {
             const h = pn.fontSize * 1.6 * scale;
             num.style.cssText = `height:${h}px;min-width:${h}px;line-height:${h}px;padding:0 ${pn.fontSize * 0.3 * scale}px;` +
@@ -241,6 +242,7 @@
     includeAnnotations.checked = !!state.includeAnnotations;
     pnPosition.value = pn.position;
     pnStart.value = pn.skip + 1;
+    pnFirst.value = pn.first || 1;
     pnFont.value = pn.font;
     pnSize.value = pn.fontSize;
     pnShape.value = pn.shape;
@@ -258,18 +260,21 @@
   function readPageNumbers() {
     const start = parseInt(pnStart.value, 10);
     const size = parseFloat(pnSize.value);
-    const ok = start >= 1 && start <= 51 && size >= 6 && size <= 72;
+    const first = parseInt(pnFirst.value, 10);
+    const firstOk = first >= 1 && first <= 100000;
+    const ok = start >= 1 && start <= 51 && size >= 6 && size <= 72 && firstOk;
+    pnFirst.classList.toggle("invalid", !firstOk);
     pnStart.classList.toggle("invalid", !(start >= 1 && start <= 51));
     pnSize.classList.toggle("invalid", !(size >= 6 && size <= 72));
     if (!ok) return;
-    state.pageNumbers = { position: pnPosition.value, skip: start - 1, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
+    state.pageNumbers = { position: pnPosition.value, skip: start - 1, first, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
     commit();
   }
   includeAnnotations.addEventListener("change", () => {
     state.includeAnnotations = includeAnnotations.checked;
     commit();
   });
-  [pnPosition, pnStart, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
+  [pnPosition, pnStart, pnFirst, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
 
   function render(pagesToo) {
     renderList();
