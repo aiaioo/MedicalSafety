@@ -4,6 +4,7 @@
   const casesUrl = appEl.dataset.casesUrl;
   const caseUrlBase = appEl.dataset.caseUrlBase;
   const allegationsUrlBase = appEl.dataset.allegationsUrlBase;
+  const caseDetailsUrlBase = appEl.dataset.caseDetailsUrlBase;
   const causesUrl = appEl.dataset.causesUrl;
   const sourceDocumentsUrl = appEl.dataset.sourceDocumentsUrl;
   const annotationsPageUrl = appEl.dataset.annotationsPageUrl;
@@ -727,7 +728,10 @@
     caseDetailEl.innerHTML = `
       <div class="allegation-detail-head">
         <h2>${escapeHtml(detailCase.name || "Untitled case")}</h2>
+        <span class="detail-head-actions">
+        <a class="btn" href="${caseDetailsUrlBase}?case=${encodeURIComponent(detailCase.id)}">Case details</a>
         <a class="btn" href="${allegationsUrlBase}?case=${encodeURIComponent(detailCase.id)}">Open allegations &rarr;</a>
+        </span>
       </div>
       <div class="case-identity-fields">
         <label class="modal-field">Court

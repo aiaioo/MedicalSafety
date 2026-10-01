@@ -134,6 +134,10 @@ CREATE TABLE cases (
     court       TEXT NOT NULL DEFAULT '',
     case_number TEXT NOT NULL DEFAULT '',
     summary     TEXT NOT NULL DEFAULT '',
+    court_location          TEXT NOT NULL DEFAULT '',
+    cause_title_template_id TEXT,
+    cause_title_font        TEXT NOT NULL DEFAULT '',
+    cause_title_font_size   INTEGER NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -247,6 +251,29 @@ CREATE TABLE allegation_cases (
     PRIMARY KEY (allegation_id, case_id)
 );
 CREATE INDEX allegation_cases_case_id_idx ON allegation_cases (case_id);
+
+-- Parties to a case and the admin-managed cause title templates (see
+-- db/migrations/028_case_details.sql).
+CREATE TABLE case_parties (
+    id        TEXT PRIMARY KEY,
+    case_id   TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    side      TEXT NOT NULL CHECK (side IN ('complainant', 'respondent')),
+    position  INTEGER NOT NULL DEFAULT 0,
+    name      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX case_parties_case_id_idx ON case_parties (case_id);
+
+CREATE TABLE cause_title_templates (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL DEFAULT '',
+    body        TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO cause_title_templates (id, name, body) VALUES (
+    'consumer-commission',
+    'Consumer Dispute Redressal Commission',
+    E'BEFORE THE [COURT_NAME] AT [COURT_LOCATION]\n[CASE_NUMBER]\nBETWEEN:\n[PLAINTIFFS]\n\nAND:\n[RESPONDENTS]'
+);
 
 -- ===========================================================================
 -- Miscellaneous singleton app state (previously storage/causes/_last_used.json).

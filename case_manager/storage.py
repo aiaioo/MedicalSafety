@@ -713,6 +713,10 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
             "court": c["court"],
             "case_number": c["case_number"],
             "summary": c["summary"],
+            "court_location": c["court_location"],
+            "cause_title_template_id": c["cause_title_template_id"],
+            "cause_title_font": c["cause_title_font"],
+            "cause_title_font_size": c["cause_title_font_size"],
             "hearings": hearings_by_case.get(c["id"], []),
             **({"role": roles[c["id"]]} if roles else {}),
             "created_at": _iso(c["created_at"]),
@@ -734,7 +738,8 @@ def list_cases(user_id: int) -> list[dict]:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.created_at, c.updated_at, uc.role
+            SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.court_location,
+                   c.cause_title_template_id, c.cause_title_font, c.cause_title_font_size, c.created_at, c.updated_at, uc.role
             FROM cases c JOIN eff_user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
             """,
             (user_id,),
@@ -761,7 +766,8 @@ def case_exists(case_id: str) -> bool:
 def get_case(case_id: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
-            "SELECT id, name, cause_id, court, case_number, summary, created_at, updated_at FROM cases WHERE id = %s",
+            "SELECT id, name, cause_id, court, case_number, summary, court_location, cause_title_template_id,"
+            " cause_title_font, cause_title_font_size, created_at, updated_at FROM cases WHERE id = %s",
             (case_id,),
         )
         case_row = cur.fetchone()
@@ -771,7 +777,11 @@ def get_case(case_id: str) -> dict | None:
         hearing_rows = cur.fetchall()
         cur.execute(_HEARING_DOC_JOIN + " JOIN hearings h ON h.id = hd.hearing_id WHERE h.case_id = %s ORDER BY hd.position", (case_id,))
         doc_link_rows = cur.fetchall()
-    return _assemble_cases([case_row], hearing_rows, doc_link_rows)[0]
+        cur.execute("SELECT id, side, name FROM case_parties WHERE case_id = %s ORDER BY side, position", (case_id,))
+        party_rows = cur.fetchall()
+    case = _assemble_cases([case_row], hearing_rows, doc_link_rows)[0]
+    case["parties"] = [{"id": p["id"], "side": p["side"], "name": p["name"]} for p in party_rows]
+    return case
 
 
 def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
@@ -780,15 +790,32 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
     with _cursor() as cur:
         cur.execute(
             """
-            INSERT INTO cases (id, cause_id, name, court, case_number, summary, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO cases (id, cause_id, name, court, case_number, summary, court_location,
+                               cause_title_template_id, cause_title_font, cause_title_font_size, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 cause_id = EXCLUDED.cause_id, name = EXCLUDED.name, court = EXCLUDED.court,
-                case_number = EXCLUDED.case_number, summary = EXCLUDED.summary, updated_at = EXCLUDED.updated_at
+                case_number = EXCLUDED.case_number, summary = EXCLUDED.summary,
+                court_location = EXCLUDED.court_location, cause_title_template_id = EXCLUDED.cause_title_template_id,
+                cause_title_font = EXCLUDED.cause_title_font, cause_title_font_size = EXCLUDED.cause_title_font_size,
+                updated_at = EXCLUDED.updated_at
             """,
             (case_id, data["cause_id"], data["name"], data["court"], data["case_number"], data["summary"],
+             data.get("court_location", ""), data.get("cause_title_template_id"),
+             data.get("cause_title_font", ""), data.get("cause_title_font_size", 0),
              data["created_at"], data["updated_at"]),
         )
+        # Like hearings below, but only when the caller sent a parties list
+        # (the cases workspace doesn't, and must not wipe them).
+        if "parties" in data:
+            cur.execute("DELETE FROM case_parties WHERE case_id = %s", (case_id,))
+            counters = {"complainant": 0, "respondent": 0}
+            for party in data["parties"]:
+                cur.execute(
+                    "INSERT INTO case_parties (id, case_id, side, position, name) VALUES (%s, %s, %s, %s, %s)",
+                    (party["id"], case_id, party["side"], counters[party["side"]], party["name"]),
+                )
+                counters[party["side"]] += 1
         # A fresh DELETE + reinsert of every child row: exactly the "whole
         # record overwritten on every save" semantics the old JSON file had,
         # just spread across parent + child tables in one transaction.
@@ -806,6 +833,29 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
                     )
         if owner_id is not None:
             _grant(cur, owner_id, "case", case_id, "owner")
+
+
+def list_cause_title_templates() -> list[dict]:
+    with _cursor() as cur:
+        cur.execute("SELECT id, name, body FROM cause_title_templates ORDER BY created_at, id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def save_cause_title_template(template_id: str, name: str, body: str) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO cause_title_templates (id, name, body) VALUES (%s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, body = EXCLUDED.body
+            """,
+            (template_id, name, body),
+        )
+
+
+def delete_cause_title_template(template_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("DELETE FROM cause_title_templates WHERE id = %s", (template_id,))
+        cur.execute("UPDATE cases SET cause_title_template_id = NULL WHERE cause_title_template_id = %s", (template_id,))
 
 
 def delete_case(case_id: str) -> None:

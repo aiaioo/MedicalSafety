@@ -482,6 +482,11 @@ ALLEGATION_MAX_TEXT_CHARS = 10_000
 EVIDENCE_MAX_ITEMS = 300
 CASE_MAX_COURT_CHARS = 200
 CASE_MAX_NUMBER_CHARS = 100
+CASE_MAX_PARTIES = 50
+CASE_MAX_PARTY_CHARS = 300
+CAUSE_TITLE_FONTS = ("", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New")
+CAUSE_TITLE_MIN_FONT_SIZE, CAUSE_TITLE_MAX_FONT_SIZE = 6, 72
+CAUSE_TITLE_TEMPLATE_MAX_CHARS = 5000
 CASE_MAX_DATE_CHARS = 40
 HEARING_MAX_ITEMS = 300
 HEARING_DOC_MAX_ITEMS = 100
@@ -494,6 +499,42 @@ def _sanitize_item_id(raw):
 
 def _sanitize_text(raw, max_chars):
     return raw.strip()[:max_chars] if isinstance(raw, str) else ""
+
+
+def sanitize_parties(raw, existing):
+    """The case's parties, in order. `raw` is a list of {id, side, name};
+    entries with no name or an unknown side are dropped."""
+    if raw is None:
+        return existing
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:CASE_MAX_PARTIES]:
+        if not isinstance(item, dict) or item.get("side") not in ("complainant", "respondent"):
+            continue
+        name = _sanitize_text(item.get("name"), CASE_MAX_PARTY_CHARS)
+        if not name:
+            continue
+        # Fresh ids on every save: party ids are global primary keys, so
+        # never trust one sent by the client.
+        out.append({"id": uuid.uuid4().hex[:12], "side": item["side"], "name": name})
+    return out
+
+
+def sanitize_cause_title_settings(body, existing):
+    """Court location, template choice and font for the generated cause
+    title -- each falls back to the saved value when not sent."""
+    font = body.get("cause_title_font", existing.get("cause_title_font", ""))
+    size = body.get("cause_title_font_size", existing.get("cause_title_font_size", 0))
+    template_id = body.get("cause_title_template_id", existing.get("cause_title_template_id"))
+    known_ids = {t["id"] for t in storage.list_cause_title_templates()}
+    return {
+        "court_location": _sanitize_text(body.get("court_location", existing.get("court_location", "")), CASE_MAX_COURT_CHARS),
+        "cause_title_template_id": template_id if template_id in known_ids else None,
+        "cause_title_font": font if font in CAUSE_TITLE_FONTS else "",
+        "cause_title_font_size": size if isinstance(size, int) and not isinstance(size, bool)
+                                 and CAUSE_TITLE_MIN_FONT_SIZE <= size <= CAUSE_TITLE_MAX_FONT_SIZE else 0,
+    }
 
 
 def linkable_ids(kind, already_linked=()):
@@ -1795,6 +1836,11 @@ def cases_view():
     return render_template("cases.html", can_create=can_create_items())
 
 
+@app.route("/case-details")
+def case_details_view():
+    return render_template("case_details.html", is_admin=g.user.is_admin)
+
+
 # ---------------------------------------------------------------------------
 # Collaborations: invite another user by email; once they accept, share
 # objects you own with them (viewer or editor) -- see
@@ -2613,6 +2659,7 @@ def api_allegation_cases():
         "court": _sanitize_text(body.get("court"), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
+        **sanitize_cause_title_settings({}, {}),
         "hearings": [],
         "created_at": now,
         "updated_at": now,
@@ -2663,6 +2710,8 @@ def api_allegation_case(case_id):
         "court": _sanitize_text(body.get("court", existing.get("court", "")), CASE_MAX_COURT_CHARS),
         "case_number": _sanitize_text(body.get("case_number", existing.get("case_number", "")), CASE_MAX_NUMBER_CHARS),
         "summary": _sanitize_text(body.get("summary", existing.get("summary", "")), ALLEGATION_MAX_TEXT_CHARS),
+        **sanitize_cause_title_settings(body, existing),
+        "parties": sanitize_parties(body.get("parties"), existing.get("parties", [])),
         "hearings": sanitize_hearings(body.get("hearings", existing.get("hearings", [])),
                                       linkable_ids("source", existing_doc_ids)),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
@@ -2670,6 +2719,44 @@ def api_allegation_case(case_id):
     }
     storage.save_case(case_id, data)
     return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# API: cause title templates. Anyone can read them (the case details page
+# generates a case's cause title from one); only admins manage them.
+# ---------------------------------------------------------------------------
+
+@app.route("/api/cause-title-templates", methods=["GET", "POST"])
+def api_cause_title_templates():
+    if request.method == "GET":
+        return jsonify(storage.list_cause_title_templates())
+    require_admin()
+    name, body = _cause_title_template_fields(request.get_json(silent=True) or {})
+    template_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    storage.save_cause_title_template(template_id, name, body)
+    return jsonify({"id": template_id, "name": name, "body": body})
+
+
+@app.route("/api/cause-title-template/<template_id>", methods=["PUT", "DELETE"])
+def api_cause_title_template(template_id):
+    require_admin()
+    if template_id not in {t["id"] for t in storage.list_cause_title_templates()}:
+        raise DocumentError("No such cause title template", 404)
+    if request.method == "DELETE":
+        storage.delete_cause_title_template(template_id)
+        return jsonify({"ok": True})
+    name, body = _cause_title_template_fields(request.get_json(silent=True) or {})
+    storage.save_cause_title_template(template_id, name, body)
+    return jsonify({"id": template_id, "name": name, "body": body})
+
+
+def _cause_title_template_fields(data):
+    name = _sanitize_text(data.get("name"), 200)
+    body = data.get("body")
+    body = body.strip("\r\n")[:CAUSE_TITLE_TEMPLATE_MAX_CHARS] if isinstance(body, str) else ""
+    if not name or not body.strip():
+        raise DocumentError("A template needs a name and some text", 400)
+    return name, body
 
 
 # ---------------------------------------------------------------------------
@@ -2929,7 +3016,8 @@ WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0
 def admin_view():
     require_admin_or_content_creator()
     users = storage.admin_list_users() if g.user.is_admin else None
-    return render_template("admin.html", users=users, websites=storage.list_websites(), is_admin=g.user.is_admin)
+    return render_template("admin.html", users=users, websites=storage.list_websites(), is_admin=g.user.is_admin,
+                           title_templates=storage.list_cause_title_templates() if g.user.is_admin else None)
 
 
 @app.route("/api/admin/user/<int:user_id>/roles", methods=["PUT"])

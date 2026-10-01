@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case details</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="caseDetailsApp"
+     data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
+     data-templates-url="{{ url_for('api_cause_title_templates') }}"
+     data-cases-page-url="{{ url_for('cases_view') }}"
+>
+  <header class="docbar" style="position: relative;">
+    <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+    <a class="btn docbar-lead" href="{{ url_for('cases_view') }}">&larr; Cases</a>
+    <div class="docbar-center"><span class="doc-name doc-name-static" id="caseTitle">Case details</span></div>
+    <span id="saveStatus" class="save-status"></span>
+    {% if is_admin %}<a class="btn" style="margin-left: auto;" href="{{ url_for('admin_view') }}">Cause title templates</a>{% endif %}
+  </header>
+
+  <main class="allegations-layout" style="display:block; max-width: 980px; margin: 24px auto; padding: 0 20px 40px;">
+    <div id="caseDetailsBody"><p class="empty">Loading&hellip;</p></div>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
+<script src="{{ url_for('static', filename='case-details.js') }}"></script>
+</body>
+</html>

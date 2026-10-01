@@ -211,4 +211,48 @@
       }
     });
   }
+
+  // ---------------------------------------------------------------------
+  // Cause title templates
+  // ---------------------------------------------------------------------
+  const templateListEl = $("#titleTemplateList");
+  if (templateListEl) {
+    templateListEl.addEventListener("click", async (e) => {
+      const card = e.target.closest("[data-template-id]");
+      if (!card) return;
+      const id = card.dataset.templateId;
+      const status = $(".role-save-status", card);
+      if (e.target.classList.contains("template-save")) {
+        try {
+          await api("/api/cause-title-template/" + encodeURIComponent(id), "PUT",
+            { name: $(".template-name", card).value, body: $(".template-body", card).value });
+          status.textContent = "Saved";
+        } catch (err) {
+          status.textContent = err.message;
+        }
+      }
+    });
+    $$(".template-delete", templateListEl).forEach((btn) => {
+      wireConfirmDelete(btn, async () => {
+        const card = btn.closest("[data-template-id]");
+        try {
+          await api("/api/cause-title-template/" + encodeURIComponent(card.dataset.templateId), "DELETE");
+          card.remove();
+        } catch (err) {
+          $(".role-save-status", card).textContent = err.message;
+        }
+      });
+    });
+    $("#addTemplateBtn").addEventListener("click", async () => {
+      const errEl = $("#templateError");
+      try {
+        await api("/api/cause-title-templates", "POST",
+          { name: $("#newTemplateName").value, body: $("#newTemplateBody").value });
+        show(errEl, "");
+        location.reload();
+      } catch (err) {
+        show(errEl, err.message);
+      }
+    });
+  }
 })();
