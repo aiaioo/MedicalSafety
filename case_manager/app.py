@@ -145,6 +145,62 @@ def sanitize_page_numbers(raw, fallback=None):
     return {"position": position, "skip": skip, "first": first, "font": font, "fontSize": font_size,
             "shape": shape, "color": color.lower()}
 
+# Annexure document numbers: an optional "<name> <prefix><n>" label (e.g.
+# "Annexure P-1") stamped in the top margin of each annexed document's first
+# page, in the page numbers' font, size and colour.
+ANNEXURE_DEFAULT_DOC_NUMBERS = {"enabled": False, "name": "Annexure", "prefix": "", "first": 1}
+ANNEXURE_DOC_NUMBER_NAMES = ("Annexure", "Document", "Attachment")
+ANNEXURE_DOC_NUMBER_PREFIX_MAX = 6
+
+
+def sanitize_doc_numbers(raw, fallback=None):
+    fallback = fallback if isinstance(fallback, dict) else ANNEXURE_DEFAULT_DOC_NUMBERS
+    raw = raw if isinstance(raw, dict) else {}
+
+    def pick(key, ok, convert=lambda v: v):
+        for src in (raw, fallback):
+            try:
+                v = convert(src.get(key))
+            except (TypeError, ValueError):
+                continue
+            if ok(v):
+                return v
+        return ANNEXURE_DEFAULT_DOC_NUMBERS[key]
+
+    return {
+        "enabled": bool(raw["enabled"]) if "enabled" in raw else bool(fallback.get("enabled", False)),
+        "name": pick("name", lambda v: v in ANNEXURE_DOC_NUMBER_NAMES),
+        "prefix": pick("prefix", lambda v: isinstance(v, str) and len(v) <= ANNEXURE_DOC_NUMBER_PREFIX_MAX and v.isprintable(),
+                       lambda v: v.strip() if isinstance(v, str) else v),
+        "first": pick("first", lambda v: 1 <= v <= REPORT_PAGE_NUMBER_FIRST_MAX, int),
+    }
+
+
+def doc_number_label(dn, index):
+    """The label of the `index`th (0-based) numbered document."""
+    return f"{dn['name']} {dn['prefix']}{dn['first'] + index}"
+
+
+def stamp_doc_numbers(doc, dn, pn, m, first_pages):
+    """Stamps each document's label in the top margin band of its first page
+    (`first_pages`: page indexes into `doc`, one per numbered document) --
+    at the top right, or the top left when the page number is top right."""
+    if not dn["enabled"] or m["header"] <= 0:
+        return
+    fs = pn["fontSize"]
+    align = "left" if pn["position"] == "top-right" else "right"
+    css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {pn['color']}; margin: 0; text-align: {align};"
+    box_h = fs * 1.6
+    for n, i in enumerate(first_pages):
+        r = doc[i].rect
+        left, right = r.x0 + m["left"], r.x1 - m["right"]
+        half = (left, (left + right) / 2) if align == "left" else ((left + right) / 2, right)
+        mid = r.y0 + m["header"] / 2
+        box = fitz.Rect(half[0], mid - box_h / 2, half[1], mid + box_h / 2)
+        doc[i].insert_htmlbox(box + (0, PAGE_NUMBER_TEXT_DROP * fs, 0, PAGE_NUMBER_TEXT_DROP * fs),
+                              f'<p style="{css}">{html_escape(doc_number_label(dn, n))}</p>')
+
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
 # Behind a reverse proxy every request arrives from the proxy's address, so
@@ -2500,7 +2556,7 @@ def parse_page_range(text, page_count):
     return sorted(pages)
 
 
-def _annexure_payload(report_id, saved, page_numbers=None, include_annotations=None):
+def _annexure_payload(report_id, saved, page_numbers=None, include_annotations=None, doc_numbers=None):
     """The annexure as the page shows it: the saved [{"id", "page_mode", "page_range"}] order,
     with every document the report's snippets come from present (appended if
     missing -- they can't be left out) and each one's snippet pages; documents
@@ -2515,6 +2571,7 @@ def _annexure_payload(report_id, saved, page_numbers=None, include_annotations=N
         "includeAnnotations": storage.get_annexure_include_annotations(report_id) if include_annotations is None else include_annotations,
         "pageNumbers": sanitize_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
                                              ANNEXURE_DEFAULT_PAGE_NUMBERS),
+        "docNumbers": sanitize_doc_numbers(doc_numbers if doc_numbers is not None else storage.get_annexure_doc_numbers(report_id)),
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
              "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
@@ -2557,11 +2614,15 @@ def api_report_annexure(report_id):
         if "pageNumbers" in body:
             page_numbers = sanitize_page_numbers(body["pageNumbers"], storage.get_annexure_page_numbers(report_id))
             storage.save_annexure_page_numbers(report_id, page_numbers)
+        doc_numbers = None
+        if "docNumbers" in body:
+            doc_numbers = sanitize_doc_numbers(body["docNumbers"], storage.get_annexure_doc_numbers(report_id))
+            storage.save_annexure_doc_numbers(report_id, doc_numbers)
         include_annotations = None
         if "includeAnnotations" in body:
             include_annotations = bool(body["includeAnnotations"])
             storage.save_annexure_include_annotations(report_id, include_annotations)
-        payload = _annexure_payload(report_id, saved, page_numbers, include_annotations)
+        payload = _annexure_payload(report_id, saved, page_numbers, include_annotations, doc_numbers)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
@@ -2581,6 +2642,7 @@ def api_report_annexure_export(report_id):
         raise DocumentError("The annexure is empty — add a document before downloading", 400)
 
     out = fitz.open()
+    first_pages = []  # index in `out` of each document's first page
     try:
         for d in payload["documents"]:
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
@@ -2595,10 +2657,14 @@ def api_report_annexure_export(report_id):
                     for n, raw_anns in storage.get_all_annotations(d["id"]).items():
                         if n.isdigit() and 1 <= int(n) <= src.page_count:
                             draw_annotations_on_page(src[int(n) - 1], sanitize_annotations(raw_anns), src[int(n) - 1].rect)
+                if pages:
+                    first_pages.append(out.page_count)
                 for p in pages:
                     out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
         pn = payload["pageNumbers"]
-        stamp_page_numbers(out, pn, {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND})
+        band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
+        stamp_page_numbers(out, pn, band)
+        stamp_doc_numbers(out, payload["docNumbers"], pn, band, first_pages)
         data = out.tobytes()
     finally:
         out.close()

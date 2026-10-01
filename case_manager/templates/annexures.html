@@ -82,6 +82,24 @@
         </div>
         <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Counts pages of the whole annexure.</p>
       </div>
+      <h3 class="annex-section-divider">Document numbers</h3>
+      <div class="annex-numbering">
+        <label class="annex-toggle"><input type="checkbox" id="docNumberEnabled"> Number the documents</label>
+        <label class="modal-field">Name
+          <select id="docNumberNameInput">
+            <option value="Annexure">Annexure</option>
+            <option value="Document">Document</option>
+            <option value="Attachment">Attachment</option>
+          </select>
+        </label>
+        <label class="modal-field">Prefix (optional, e.g. P- or R)
+          <input id="docNumberPrefixInput" type="text" maxlength="6" autocomplete="off">
+        </label>
+        <label class="modal-field">First document number
+          <input id="docNumberFirstInput" type="number" min="1" max="100000" step="1" value="1">
+        </label>
+        <p class="empty" style="margin: 0">Shown at the top right of each document's first page (top left if the page number is top right), in the page number's font, size and colour.</p>
+      </div>
     </aside>
   </main>
 </div>

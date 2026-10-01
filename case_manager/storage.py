@@ -657,6 +657,19 @@ def save_annexure_page_numbers(report_id: str, page_numbers: dict) -> None:
                     (psycopg2.extras.Json(page_numbers), report_id))
 
 
+def get_annexure_doc_numbers(report_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT annexure_doc_numbers FROM reports WHERE id = %s", (report_id,))
+        row = cur.fetchone()
+    return row["annexure_doc_numbers"] if row else None
+
+
+def save_annexure_doc_numbers(report_id: str, doc_numbers: dict) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE reports SET annexure_doc_numbers = %s WHERE id = %s",
+                    (psycopg2.extras.Json(doc_numbers), report_id))
+
+
 def get_annexure_include_annotations(report_id: str) -> bool:
     with _cursor() as cur:
         cur.execute("SELECT annexure_include_annotations FROM reports WHERE id = %s", (report_id,))

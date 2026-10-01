@@ -16,9 +16,13 @@
   const pnFont = document.getElementById("pageNumberFontInput");
   const pnSize = document.getElementById("pageNumberFontSizeInput");
   const pnShape = document.getElementById("pageNumberShapeInput");
+  const dnEnabled = document.getElementById("docNumberEnabled");
+  const dnName = document.getElementById("docNumberNameInput");
+  const dnPrefix = document.getElementById("docNumberPrefixInput");
+  const dnFirst = document.getElementById("docNumberFirstInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" } };
+  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: false, name: "Annexure", prefix: "", first: 1 } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -85,7 +89,9 @@
     }
     const version = ++renderPages.version;
     const pn = state.pageNumbers;
+    const dn = state.docNumbers;
     let shown = 0; // annexure pages laid out so far, across documents
+    let docsNumbered = 0;
     for (const d of state.documents) {
       const heading = document.createElement("div");
       heading.className = "annex-doc-heading";
@@ -100,6 +106,7 @@
         continue;
       }
       if (version !== renderPages.version) return; // superseded by a newer render
+      let firstPage = true;
       for (const n of pagesFor(d, pages.length)) {
         const dim = pages[n - 1];
         const wrap = document.createElement("div");
@@ -129,6 +136,18 @@
           label.appendChild(num);
           wrap.appendChild(label);
         }
+        if (dn.enabled && firstPage) {
+          const scale = parseFloat(wrap.style.width) / dim.width;
+          const label = document.createElement("span");
+          // top right, unless the page number is there (same band, font, size and colour as the page number)
+          label.className = `page-number-label page-number-top-${pn.position === "top-right" ? "left" : "right"}`;
+          label.style.cssText = `--mg-top:${NUMBER_BAND_PT * scale}px;--mg-left:${36 * scale}px;--mg-right:${36 * scale}px;` +
+            `font-family:${pn.font},Arial,sans-serif;font-size:${pn.fontSize * scale}px;color:${pn.color};z-index:1`;
+          label.textContent = `${dn.name} ${dn.prefix}${dn.first + docsNumbered}`;
+          wrap.appendChild(label);
+          docsNumbered++;
+        }
+        firstPage = false;
         container.appendChild(wrap);
         observer.observe(wrap);
       }
@@ -247,6 +266,12 @@
     pnSize.value = pn.fontSize;
     pnShape.value = pn.shape;
     markSelectedSwatch();
+    const dn = state.docNumbers;
+    dnEnabled.checked = dn.enabled;
+    dnName.value = dn.name;
+    dnPrefix.value = dn.prefix;
+    dnFirst.value = dn.first;
+    for (const el of [dnName, dnPrefix, dnFirst]) el.disabled = !canEdit || !dn.enabled;
   }
 
   const markSelectedSwatch = () => selectSwatch(state.pageNumbers.color);
@@ -270,6 +295,17 @@
     state.pageNumbers = { position: pnPosition.value, skip: start - 1, first, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
     commit();
   }
+  function readDocNumbers() {
+    const first = parseInt(dnFirst.value, 10);
+    const firstOk = first >= 1 && first <= 100000;
+    dnFirst.classList.toggle("invalid", !firstOk);
+    if (!firstOk) return;
+    state.docNumbers = { enabled: dnEnabled.checked, name: dnName.value, prefix: dnPrefix.value.trim(), first };
+    for (const el of [dnName, dnPrefix, dnFirst]) el.disabled = !canEdit || !dnEnabled.checked;
+    commit();
+  }
+  [dnEnabled, dnName, dnPrefix, dnFirst].forEach((el) => el.addEventListener("change", readDocNumbers));
+
   includeAnnotations.addEventListener("change", () => {
     state.includeAnnotations = includeAnnotations.checked;
     commit();
@@ -292,7 +328,7 @@
         body: JSON.stringify({ documents: state.documents.map((d) => {
           const a = applied(d);
           return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
-        }), pageNumbers: state.pageNumbers, includeAnnotations: state.includeAnnotations }),
+        }), pageNumbers: state.pageNumbers, docNumbers: state.docNumbers, includeAnnotations: state.includeAnnotations }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
