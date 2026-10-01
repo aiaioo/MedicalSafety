@@ -222,6 +222,10 @@
           if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
           d.description = (await res.json()).description;
           descIn.value = d.description;
+          descIn.classList.remove("save-flash");
+          void descIn.offsetWidth; // restart the animation if it's already running
+          descIn.classList.add("save-flash");
+          descIn.addEventListener("animationend", () => descIn.classList.remove("save-flash"), { once: true });
           setStatus("Saved");
         } catch (e) {
           setStatus("Save failed: " + e.message, true);
