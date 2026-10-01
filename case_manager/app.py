@@ -2822,7 +2822,7 @@ def list_of_documents_docx(ctx, rows):
             row.cells[j].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     place = doc.add_paragraph(ctx.get("location") or "")
-    place.paragraph_format.space_before = Pt(24)
+    place.paragraph_format.space_before = Pt(56)
     doc.add_paragraph("Date:")
     buf = io.BytesIO()
     doc.save(buf)
@@ -2845,7 +2845,7 @@ def list_of_documents_html(ctx, rows):
     return (f"<html><head><style>{css}</style></head><body>{top}"
             '<p style="text-align:center; margin: 16pt 0 12pt;"><b><u>List of Documents</u></b></p>'
             '<table><tr><th style="width:12%; text-align:center">Sl.No.</th><th>Particulars</th><th style="width:16%; text-align:center">Pg.Nos.</th></tr>'
-            f'{body}</table><p style="margin-top: 24pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p><p>Date:</p></body></html>')
+            f'{body}</table><p style="margin-top: 56pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p><p>Date:</p></body></html>')
 
 
 def list_of_documents_pdf(ctx, rows):
