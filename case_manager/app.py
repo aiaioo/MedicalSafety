@@ -148,7 +148,7 @@ def sanitize_page_numbers(raw, fallback=None):
 # Annexure document numbers: an optional "<name> <prefix><n>" label (e.g.
 # "Annexure P-1") stamped in the top margin of each annexed document's first
 # page, in the page numbers' font, size and colour.
-ANNEXURE_DEFAULT_DOC_NUMBERS = {"enabled": False, "name": "Annexure", "prefix": "", "first": 1}
+ANNEXURE_DEFAULT_DOC_NUMBERS = {"enabled": True, "name": "Annexure", "prefix": "", "first": 1}
 ANNEXURE_DOC_NUMBER_NAMES = ("Annexure", "Document", "Attachment")
 ANNEXURE_DOC_NUMBER_PREFIX_MAX = 6
 
@@ -168,7 +168,7 @@ def sanitize_doc_numbers(raw, fallback=None):
         return ANNEXURE_DEFAULT_DOC_NUMBERS[key]
 
     return {
-        "enabled": bool(raw["enabled"]) if "enabled" in raw else bool(fallback.get("enabled", False)),
+        "enabled": bool(raw["enabled"]) if "enabled" in raw else bool(fallback.get("enabled", ANNEXURE_DEFAULT_DOC_NUMBERS["enabled"])),
         "name": pick("name", lambda v: v in ANNEXURE_DOC_NUMBER_NAMES),
         "prefix": pick("prefix", lambda v: isinstance(v, str) and len(v) <= ANNEXURE_DOC_NUMBER_PREFIX_MAX and v.isprintable(),
                        lambda v: v.strip() if isinstance(v, str) else v),

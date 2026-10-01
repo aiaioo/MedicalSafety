@@ -22,7 +22,7 @@
   const dnFirst = document.getElementById("docNumberFirstInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: false, name: "Annexure", prefix: "", first: 1 } };
+  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
