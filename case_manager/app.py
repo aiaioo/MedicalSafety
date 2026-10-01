@@ -2544,6 +2544,50 @@ def api_report(report_id):
     return jsonify(data)
 
 
+@app.route("/api/report/<report_id>/copy", methods=["POST"])
+def api_report_copy(report_id):
+    """Copies a report (content, page setup, source document, annexure and
+    cause/case associations) to a new one named "Copy n of <title>", with the
+    lowest n not already used by a report this user can see."""
+    check_report_id(report_id)
+    require_role("report", report_id, "viewer")
+    if not can_create_items():
+        raise DocumentError("You don't have permission to create reports", 403)
+    existing = storage.get_report(report_id)
+    if existing is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+
+    listed = storage.list_reports(g.user.id)
+    taken = {r["name"] for r in listed}
+    n = 1
+    while f"Copy {n} of {existing['name']}"[:200] in taken:
+        n += 1
+    name = f"Copy {n} of {existing['name']}"[:200]
+
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "name": name,
+        "doc": existing["doc"],
+        "source_doc": existing.get("source_doc", ""),
+        "source_type": existing.get("source_type", "pdf"),
+        "margins": sanitize_margins(existing.get("margins")),
+        "pageNumbers": sanitize_page_numbers(existing.get("pageNumbers")),
+        "created_at": now,
+        "updated_at": now,
+    }
+    new_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    original = next((r for r in listed if r["id"] == report_id), None)
+    links = [("cause", c) for c in (original or {}).get("cause_ids", [])]
+    links += [("case", c) for c in (original or {}).get("case_ids", [])]
+    storage.save_report(new_id, data, owner_id=g.user.id, link=links[0] if links else default_cause_link())
+    for target_kind, target_id in links[1:]:
+        storage.link_to("report", new_id, target_kind, target_id)
+    annexure = storage.get_annexure(report_id)
+    if annexure:
+        storage.save_annexure(new_id, annexure)
+    return jsonify({"id": new_id, "name": name, "original_name": existing["name"]})
+
+
 PAGE_RANGE_RE = re.compile(r"^\s*\d+\s*(-\s*\d+\s*)?(,\s*\d+\s*(-\s*\d+\s*)?)*$")
 
 

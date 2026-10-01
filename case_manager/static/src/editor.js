@@ -371,6 +371,22 @@ import { Pagination, repaginate } from "./pagination.js";
     });
   }
 
+  // One-off confirmation after File > Make a copy opened the new report.
+  function showCopyNotice() {
+    let info = null;
+    try {
+      info = JSON.parse(sessionStorage.getItem("reportCopyNotice") || "null");
+      sessionStorage.removeItem("reportCopyNotice");
+    } catch (e) { /* no notice */ }
+    if (!info || info.id !== reportId) return;
+    const el = document.createElement("div");
+    el.className = "flash-notice";
+    el.textContent = `A copy of report titled "${info.original}" has been created and it is called "${info.name}".`;
+    document.getElementById("formatToolbar").parentNode.insertBefore(el, document.getElementById("formatToolbar"));
+    setTimeout(() => el.remove(), 10000);
+  }
+  showCopyNotice();
+
   if (!reportId) {
     loadLanding();
     return; // nothing else to wire up until a document is open
@@ -1068,6 +1084,26 @@ import { Pagination, repaginate } from "./pagination.js";
   }
 
   titleInput.addEventListener("input", markDirty);
+
+  // File > Make a copy: saves this report, copies it server-side as
+  // "Copy n of <title>" (same cause), then opens the copy, where the
+  // confirmation is flashed (see showCopyNotice).
+  const copyDocBtn = document.getElementById("copyDocBtn");
+  copyDocBtn.addEventListener("click", async () => {
+    try {
+      setStatus("Copying…");
+      await saveReport();
+      const res = await fetch(`/api/report/${encodeURIComponent(reportId)}/copy`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      const copy = await res.json();
+      try {
+        sessionStorage.setItem("reportCopyNotice", JSON.stringify({ id: copy.id, name: copy.name, original: copy.original_name }));
+      } catch (e) { /* the copy is still opened, just without the notice */ }
+      window.location.href = `/reports?report=${encodeURIComponent(copy.id)}`;
+    } catch (e) {
+      setStatus("Could not make a copy: " + e.message, true);
+    }
+  });
 
   // Pressing Enter in the title field saves right away instead of waiting
   // out the autosave debounce, flashing the field green on success (mirrors

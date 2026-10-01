@@ -55,6 +55,7 @@
       <div class="menu-dropdown" id="fileMenuDropdown">
         <button type="button" id="newDocBtn">New report&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
+        <button type="button" id="copyDocBtn" {{ 'disabled' if not report_id or not can_create }}>Make a copy</button>
         <hr>
         <button type="button" id="uploadSourceMenuBtn">Upload document&hellip;</button>
         <input type="file" id="uploadSourceInput" accept=".pdf" hidden>
