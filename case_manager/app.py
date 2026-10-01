@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import fitz  # PyMuPDF
 import psycopg2.errors
 from docx import Document as DocxDocument
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -2720,10 +2720,11 @@ def annexure_list_context(report, include_doc=False):
     location. Taken from the report's first case the user can view.
     `include_doc` also returns the cause title's ProseMirror doc as "causeTitleDoc"."""
     case = next((c for c in (storage.get_case(cid) for cid in report.get("case_ids", []) if has_role("case", cid, "viewer")) if c), None)
-    ctx = {"causeTitleHtml": "", "causeFont": "", "causeFontSize": 0, "location": ""}
+    ctx = {"causeTitleHtml": "", "causeFont": "", "causeFontSize": 0, "location": "", "role": ""}
     if case is None:
         return ctx
     ctx["location"] = case.get("court_location") or ""
+    ctx["role"] = case.get("case_role") or ""
     templates = storage.list_cause_title_templates()
     doc = case.get("cause_title_doc")
     if isinstance(doc, str):
@@ -2826,7 +2827,11 @@ def list_of_documents_docx(ctx, rows):
 
     place = doc.add_paragraph(ctx.get("location") or "")
     place.paragraph_format.space_before = Pt(56)
-    doc.add_paragraph("Date:")
+    date_line = doc.add_paragraph("Date:")
+    if ctx.get("role"):
+        # Right-aligned so the user can sign above it.
+        date_line.paragraph_format.tab_stops.add_tab_stop(Emu(int(max_width_emu)), WD_TAB_ALIGNMENT.RIGHT)
+        date_line.add_run("\t" + ctx["role"])
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
@@ -2848,7 +2853,8 @@ def list_of_documents_html(ctx, rows):
     return (f"<html><head><style>{css}</style></head><body>{top}"
             '<p style="text-align:center; margin: 16pt 0 12pt;"><b><u>List of Documents</u></b></p>'
             '<table><tr><th style="width:12%; text-align:center">Sl.No.</th><th>Particulars</th><th style="width:16%; text-align:center">Pg.Nos.</th></tr>'
-            f'{body}</table><p style="margin-top: 56pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p><p>Date:</p></body></html>')
+            f'{body}</table><p style="margin-top: 56pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p>'
+            f'<p><span style="float:right">{html_escape(ctx.get("role", ""))}</span>Date:</p></body></html>')
 
 
 def list_of_documents_pdf(ctx, rows):

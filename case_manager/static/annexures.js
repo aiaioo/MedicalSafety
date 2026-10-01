@@ -93,7 +93,7 @@
       '<p class="lod-title"><b><u>List of Documents</u></b></p>' +
       '<table><tr><th class="lod-sl">Sl.No.</th><th>Particulars</th><th class="lod-pg">Pg.Nos.</th></tr>' +
       rows.map(([text, pages], i) => `<tr><td class="lod-sl">${i + 1}</td><td>${esc(text)}</td><td class="lod-pg">${esc(pages)}</td></tr>`).join("") +
-      `</table><p class="lod-location">${esc(l.location) || "&nbsp;"}</p><p>Date:</p>`;
+      `</table><p class="lod-location">${esc(l.location) || "&nbsp;"}</p><p class="lod-date"><span>${esc(l.role)}</span>Date:</p>`;
     return wrap;
   }
 
