@@ -936,8 +936,8 @@ a.tag:hover { background: #d7deec; }
 .key-value { font-size: 12px; background: #f1f3f8; padding: 2px 6px; border-radius: 4px; user-select: all; }
 
 /* Viewers can read a report but not change it: hide the editing controls
-   (the "Create annexure" link stays) and the snippet Insert buttons. */
-#docApp.report-readonly #fmtControls > :not(.toolbar-link),
+   and the snippet Insert buttons. */
+#docApp.report-readonly #fmtControls,
 #docApp.report-readonly .insert-snippet,
 #docApp.report-readonly #saveBtn,
 #docApp.report-readonly #saveStatus { display: none; }

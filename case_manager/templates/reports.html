@@ -154,8 +154,6 @@
     <button type="button" class="fmt-btn" id="linkBtn" title="Insert or edit link">&#128279; Link</button>
     <button type="button" class="fmt-btn" id="insertImageBtn" title="Insert image">&#128247; Image</button>
     <input type="file" id="imageFileInput" accept="image/*" hidden>
-    <span class="toolbar-sep"></span>
-    <a class="toolbar-link" id="annexureLink" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Create annexure</a>
     </div>
   </div>
   <style id="dynamicListStyles"></style>
@@ -187,8 +185,9 @@
           </select>
         </label>
         <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document &raquo;</a>
-        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Case setup &hellip;</button>
+        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Link to case &hellip;</button>
         <button type="button" class="btn" id="insertCauseTitleBtn" style="display:none">Insert cause title</button>
+        <a class="btn" id="annexureLink" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Create annexure</a>
       </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
@@ -275,7 +274,7 @@
 
   <div class="modal-overlay" id="caseSetupModal">
     <div class="modal">
-      <h3>Case setup</h3>
+      <h3>Link to case</h3>
       <div id="caseSetupBody"></div>
       <p id="caseSetupError" class="error-message" style="display:none"></p>
       <div class="modal-actions">
