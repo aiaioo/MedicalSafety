@@ -156,10 +156,10 @@
     const edited = !!data.cause_title_doc;
     const resetBtn = bodyEl.querySelector("#resetCauseTitleBtn");
     resetBtn.disabled = !edited || !canEdit();
-    // The option only shapes the generated title; an edited one is left alone.
+    // The option only shapes the generated title, so on an edited one it asks first.
     const oneLine = bodyEl.querySelector("#oneLinePartiesInput");
-    oneLine.disabled = edited || !canEdit();
-    oneLine.title = edited ? "Clear your changes to the cause title to use this option" : "Show \"<first party> and Ors.\" instead of listing every party";
+    oneLine.disabled = !canEdit();
+    oneLine.title = edited ? "Changing this discards your changes to the cause title" : "Show \"<first party> and Ors.\" instead of listing every party";
     bodyEl.querySelector("#causeTitleHint").textContent = edited ? "Edited by hand" : "Generated from the template";
   }
 
@@ -325,6 +325,13 @@
     const oneLineInput = bodyEl.querySelector("#oneLinePartiesInput");
     oneLineInput.checked = !!data.cause_title_one_line_parties;
     oneLineInput.addEventListener("change", () => {
+      if (data.cause_title_doc) {
+        if (!confirm("This regenerates the cause title from the template and discards your changes to it. Continue?")) {
+          oneLineInput.checked = !oneLineInput.checked;
+          return;
+        }
+        data.cause_title_doc = null;
+      }
       data.cause_title_one_line_parties = oneLineInput.checked;
       renderCauseTitle();
       scheduleSave();
