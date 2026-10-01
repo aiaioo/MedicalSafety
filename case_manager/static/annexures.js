@@ -168,6 +168,7 @@
       item.innerHTML = `<span class="annex-grip" aria-hidden="true">&#8942;&#8942;</span>` +
         `<span class="annex-name"><a href="#" class="annex-jump" title="Scroll to this document">${esc(d.title)}</a>` +
         `<span class="report-card-meta">${esc(pages)}</span>` +
+        `<input type="text" class="annex-desc" maxlength="500" placeholder="Add a description&hellip;" title="Description (used in the List of Documents)" value="${esc(d.description || "")}">` +
         `<a class="annex-view" href="/annotations?doc=${encodeURIComponent(d.id)}&type=${encodeURIComponent(d.type)}&page=1">View document</a>` +
         `<select class="annex-mode" title="Which pages of this document to include">` +
         `<option value="all">Include all pages</option>` +
@@ -182,12 +183,14 @@
         const h = container.querySelector(`.annex-doc-heading[data-doc="${CSS.escape(d.id)}"]`);
         if (h) container.scrollTo({ top: h.offsetTop - container.offsetTop - 12, behavior: "smooth" });
       });
+      const descIn = item.querySelector(".annex-desc");
       const modeSel = item.querySelector(".annex-mode");
       const rangeIn = item.querySelector(".annex-range");
       modeSel.value = d.page_mode;
       if (!canEdit) {
         modeSel.disabled = true;
         rangeIn.disabled = true;
+        descIn.readOnly = true;
         item.querySelector(".annex-delete").disabled = true;
         listEl.appendChild(item);
         continue;
@@ -208,10 +211,29 @@
       rangeIn.addEventListener("keydown", (e) => { if (e.key === "Enter") rangeIn.blur(); });
       rangeIn.addEventListener("focus", () => { item.draggable = false; });
       rangeIn.addEventListener("blur", () => { item.draggable = true; });
+      // Saved on the document itself (not the annexure), so it also shows in the annotator.
+      descIn.addEventListener("change", async () => {
+        try {
+          const res = await fetch(`/api/doc/${encodeURIComponent(d.id)}/description`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: descIn.value }),
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
+          d.description = (await res.json()).description;
+          descIn.value = d.description;
+          setStatus("Saved");
+        } catch (e) {
+          setStatus("Save failed: " + e.message, true);
+        }
+      });
+      descIn.addEventListener("keydown", (e) => { if (e.key === "Enter") descIn.blur(); });
+      descIn.addEventListener("focus", () => { item.draggable = false; });
+      descIn.addEventListener("blur", () => { item.draggable = true; });
       item.querySelector(".annex-delete").addEventListener("click", () => {
         if (d.locked) return;
         state.documents = state.documents.filter((x) => x.id !== d.id);
-        state.available.push({ id: d.id, title: d.title, type: d.type });
+        state.available.push({ id: d.id, title: d.title, type: d.type, description: d.description });
         commit();
       });
       item.addEventListener("dragstart", (e) => {
@@ -342,7 +364,7 @@
     const d = state.available.find((x) => x.id === addSelect.value);
     if (!d) return;
     state.available = state.available.filter((x) => x.id !== d.id);
-    state.documents.push({ ...d, snippet_pages: [], locked: false, page_mode: "all", page_range: "" });
+    state.documents.push({ ...d, description: d.description || "", snippet_pages: [], locked: false, page_mode: "all", page_range: "" });
     commit();
   });
 

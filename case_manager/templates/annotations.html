@@ -64,6 +64,7 @@
      data-download-pages-url="{{ url_for('api_download_annotated_pages', doc_id=doc_id) }}?type={{ doc_type }}"
      data-download-original-url="{{ url_for('api_download_original', doc_id=doc_id) }}?type={{ doc_type }}"
      data-title-url="{{ title_url }}"
+     data-description-url="{{ description_url }}"
 >
   <header class="topbar">
     <div class="doc-title">
@@ -117,6 +118,11 @@
     <button type="button" id="saveBtn" class="save-btn">Save</button>
     <span id="statusMsg" class="status-msg" style="margin-left: 0;"></span>
     <span id="modeHint" class="hint"></span>
+  </div>
+
+  <div class="desc-bar">
+    <label for="descInput">Description</label>
+    <input id="descInput" type="text" maxlength="500" placeholder="{{ 'Add a description of this document (used in the List of Documents)' if can_edit else 'No description' }}" value="{{ doc_description }}" autocomplete="off">
   </div>
 
   <div class="modal-overlay" id="pageSetupModal">

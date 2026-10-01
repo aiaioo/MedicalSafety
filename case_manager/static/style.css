@@ -876,6 +876,10 @@ a.tag:hover { background: #d7deec; }
 .annex-delete { border: none; background: none; color: #c0392b; cursor: pointer; padding: 4px; display: flex; }
 .annex-delete:disabled { color: #c4c9d4; cursor: not-allowed; }
 .annex-name select, .annex-name .annex-range { margin-top: 4px; font-size: 12px; padding: 3px 4px; }
+.annex-name .annex-desc { margin-top: 4px; font-size: 12px; padding: 3px 4px; text-overflow: ellipsis; }
+.desc-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #f7f8fa; border-bottom: 1px solid #e0e2e8; font-size: 13px; }
+.desc-bar label { color: #555; flex: none; }
+.desc-bar input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 6px; }
 .annex-range.invalid { border-color: #c0392b; outline-color: #c0392b; }
 
 .annex-numbering .modal-field { margin: 8px 0; }

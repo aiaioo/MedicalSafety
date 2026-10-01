@@ -1102,6 +1102,24 @@
     return (await res.json()).snippets_refreshed || 0;
   }
 
+  const descInput = document.getElementById("descInput");
+  descInput.addEventListener("change", async () => {
+    try {
+      const res = await fetch(appEl.dataset.descriptionUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: descInput.value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      descInput.value = (await res.json()).description;
+      setStatus("Saved");
+      flashSaved(descInput);
+    } catch (err) {
+      setStatus("Save failed: " + err.message, true);
+    }
+  });
+  descInput.addEventListener("keydown", (e) => { if (e.key === "Enter") descInput.blur(); });
+
   let titleDirty = false;
   titleInput.addEventListener("input", () => {
     titleDirty = true;
@@ -1383,6 +1401,7 @@
   // ---- boot ----
   if (!canEdit) {
     titleInput.readOnly = true;
+    descInput.readOnly = true;
     document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #pageSetupBtn").forEach((el) => {
       el.disabled = true;
     });

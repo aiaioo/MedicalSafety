@@ -210,11 +210,11 @@ def _cause_owner_dir(cur, link: tuple[str, str], fallback_user_id: int) -> str:
 
 def list_documents(user_id: int) -> list[dict]:
     """Every uploaded source document this user has any role on, id-sorted
-    -- {"id", "type", "title", "role", "cause_ids", "case_ids", "snippet_count"}."""
+    -- {"id", "type", "title", "description", "role", "cause_ids", "case_ids", "snippet_count"}."""
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.doc_type, d.title, us.role, {links},
+            SELECT d.id, d.doc_type, d.title, d.description, us.role, {links},
                    (SELECT count(*) FROM snippets s WHERE s.document_id = d.id) AS snippet_count
             FROM documents d JOIN eff_user_sources us ON us.document_id = d.id AND us.user_id = %s
             ORDER BY d.id
@@ -223,7 +223,7 @@ def list_documents(user_id: int) -> list[dict]:
         )
         rows = cur.fetchall()
     return [
-        {"id": r["id"], "type": r["doc_type"], "title": r["title"], "role": r["role"],
+        {"id": r["id"], "type": r["doc_type"], "title": r["title"], "description": r["description"], "role": r["role"],
          "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"]),
          "snippet_count": r["snippet_count"]}
         for r in rows
@@ -251,6 +251,18 @@ def get_document_title(document_id: str) -> str:
 def set_document_title(document_id: str, title: str) -> None:
     with _cursor() as cur:
         cur.execute("UPDATE documents SET title = %s WHERE id = %s", (title, document_id))
+
+
+def get_document_description(document_id: str) -> str:
+    with _cursor() as cur:
+        cur.execute("SELECT description FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+    return row["description"] if row else ""
+
+
+def set_document_description(document_id: str, description: str) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE documents SET description = %s WHERE id = %s", (description, document_id))
 
 
 def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int, link: tuple[str, str]) -> None:

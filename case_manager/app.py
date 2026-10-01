@@ -1868,6 +1868,8 @@ def page_view():
         doc_type=raw_type,
         norm_type=norm_type,
         doc_title=storage.get_document_title(doc_id),
+        doc_description=storage.get_document_description(doc_id),
+        description_url=url_for("api_doc_description", doc_id=doc_id),
         can_edit=has_role("source", doc_id, "editor"),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
@@ -2229,6 +2231,19 @@ def api_doc_title(doc_id):
     title = str(body.get("title") or "").strip()[:200] or doc_id
     storage.set_document_title(doc_id, title)
     return jsonify({"title": title})
+
+
+@app.route("/api/doc/<doc_id>/description", methods=["POST"])
+def api_doc_description(doc_id):
+    check_doc_id(doc_id)
+    require_role("source", doc_id, "editor")
+    if storage.get_document_type(doc_id) is None:
+        raise DocumentError(f"No document with id {doc_id!r}", 404)
+
+    body = request.get_json(silent=True) or {}
+    description = " ".join(str(body.get("description") or "").split())[:500]
+    storage.set_document_description(doc_id, description)
+    return jsonify({"description": description})
 
 
 @app.route("/api/document/<doc_id>", methods=["DELETE"])
@@ -2646,13 +2661,14 @@ def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc
         "docNumbers": sanitize_doc_numbers(doc_numbers if doc_numbers is not None else storage.get_annexure_doc_numbers(report_id)),
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
+             "description": docs[o["id"]].get("description", ""),
              "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
              "page_mode": "all" if o["page_mode"] == "snippets" and o["id"] not in snippet_pages else o["page_mode"],
              "page_range": o["page_range"]}
             for o in order
         ],
         "available": [
-            {"id": d["id"], "title": d["title"], "type": d["type"]}
+            {"id": d["id"], "title": d["title"], "type": d["type"], "description": d.get("description", "")}
             for d in docs.values() if d["id"] not in {o["id"] for o in order}
         ],
     }
