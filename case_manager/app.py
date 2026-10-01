@@ -22,6 +22,7 @@ from flask import Flask, Response, abort, g, jsonify, redirect, render_template,
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
+import mailer
 import storage
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -1859,6 +1860,20 @@ def api_collaborations():
         raise DocumentError("That user has already invited you -- accept their invitation below.", 409)
     if storage.create_collaboration(g.user.id, invitee["id"]) is None:
         raise DocumentError("You have already invited that user.", 409)
+    # Tell the invitee. Capped per address so deleting and re-sending
+    # invitations can't be used to flood someone's inbox.
+    if storage.record_signup_attempt(
+        "mail:invite:" + invitee["email"].lower(), auth.MAIL_LIMIT_PER_ADDRESS, auth.MAIL_LIMIT_WINDOW_SECONDS,
+    ):
+        _, site_name, _ = mailer.site_for_host(request.host)
+        mailer.send_action_email(
+            request.host, invitee["email"], f"{g.user.email} invited you to collaborate on {site_name}",
+            f"{g.user.email} has invited you to collaborate on {site_name}. "
+            "Sign in to accept or decline the invitation.",
+            "View the invitation", mailer.base_url(request.host) + url_for("collaborations_view"),
+            "Nothing is shared with them unless you accept and choose what to share. "
+            "If you don't know this person, you can ignore this email.",
+        )
     return jsonify({"ok": True})
 
 
