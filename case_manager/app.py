@@ -1507,6 +1507,14 @@ class _ListNumberingState:
         return "".join(parts) + " "
 
 
+DOCX_TEXT_ALIGN = {
+    "left": WD_ALIGN_PARAGRAPH.LEFT,
+    "center": WD_ALIGN_PARAGRAPH.CENTER,
+    "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+}
+
+
 def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
     for node in nodes:
         t = node.get("type")
@@ -1515,11 +1523,13 @@ def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
 
         if t == "heading":
             p = doc.add_paragraph(style=DOCX_HEADING_STYLE.get(attrs.get("level", 1), "Heading 1"))
+            p.alignment = DOCX_TEXT_ALIGN.get(attrs.get("textAlign"))
             _docx_render_inline(content, p, max_width_emu)
         elif t == "horizontalRule":
             doc.add_paragraph().add_run("—" * 20)
         elif t == "paragraph":
             p = doc.add_paragraph()
+            p.alignment = DOCX_TEXT_ALIGN.get(attrs.get("textAlign"))
             # Standard spacing is a 1em gap after the paragraph; "tight" has none.
             p.paragraph_format.space_after = Pt(0 if attrs.get("tight") else 11)
             if attrs.get("indent"):
@@ -2765,6 +2775,13 @@ def list_of_documents_docx(ctx, rows):
     cause = (ctx.get("causeTitleDoc") or {}).get("content")
     if cause:
         _docx_render_blocks(cause, doc, max_width_emu)
+        font, size = _docx_clean_font_name(ctx.get("causeFont") or ""), ctx.get("causeFontSize")
+        for p in doc.paragraphs:
+            for run in p.runs:
+                if font and run.font.name is None:
+                    run.font.name = font
+                if size:
+                    run.font.size = Pt(size)
     else:
         for _ in range(LIST_OF_DOCUMENTS_BLANK_LINES):
             doc.add_paragraph()
@@ -2782,9 +2799,14 @@ def list_of_documents_docx(ctx, rows):
     for i, (text, pages) in enumerate(rows, 1):
         for cell, value in zip(table.add_row().cells, (str(i), text, pages)):
             cell.paragraphs[0].add_run(value)
+    # Word sizes columns from the table grid, so set it as well as each cell; Sl.No. 12% / Pg.Nos. 16% as in the PDF.
+    table.autofit = False
+    widths = [int(max_width_emu * 0.12), int(max_width_emu * 0.72), int(max_width_emu * 0.16)]
+    for column, width in zip(table.columns, widths):
+        column.width = width
     for row in table.rows:
-        for j, width in enumerate((Pt(60), int(max_width_emu - Pt(60) - Pt(80)), Pt(80))):
-            row.cells[j].width = width
+        for cell, width in zip(row.cells, widths):
+            cell.width = width
         for j in (0, 2):
             row.cells[j].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
