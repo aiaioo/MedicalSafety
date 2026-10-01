@@ -9,7 +9,7 @@
   const addBtn = document.getElementById("addBtn");
   const statusMsg = document.getElementById("statusMsg");
 
-  const includeAnnotations = document.getElementById("includeAnnotations");
+  const annotationRadios = document.querySelectorAll("input[name=annexAnnotations]");
   const pnPosition = document.getElementById("pageNumberPositionInput");
   const pnStart = document.getElementById("pageNumberStartInput");
   const pnFirst = document.getElementById("pageNumberFirstInput");
@@ -22,7 +22,7 @@
   const dnFirst = document.getElementById("docNumberFirstInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], includeAnnotations: false, pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 } };
+  let state = { documents: [], available: [], annotations: "none", pageNumbers: { position: "none", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -116,7 +116,7 @@
         wrap.style.maxWidth = "100%";
         wrap.style.background = "white";
         wrap.innerHTML = `<span class="page-label">${esc(d.title)} &middot; page ${n}</span>` +
-          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}${state.includeAnnotations ? "&annotations=1" : ""}">`;
+          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}${state.annotations !== "none" ? "&annotations=" + state.annotations : ""}">`;
         shown++;
         if (pn.position !== "none" && shown > pn.skip) {
           const scale = parseFloat(wrap.style.width) / dim.width; // px per pt
@@ -258,7 +258,7 @@
 
   function renderPageNumberInputs() {
     const pn = state.pageNumbers;
-    includeAnnotations.checked = !!state.includeAnnotations;
+    annotationRadios.forEach((r) => { r.checked = r.value === state.annotations; });
     pnPosition.value = pn.position;
     pnStart.value = pn.skip + 1;
     pnFirst.value = pn.first || 1;
@@ -306,10 +306,11 @@
   }
   [dnEnabled, dnName, dnPrefix, dnFirst].forEach((el) => el.addEventListener("change", readDocNumbers));
 
-  includeAnnotations.addEventListener("change", () => {
-    state.includeAnnotations = includeAnnotations.checked;
+  annotationRadios.forEach((r) => r.addEventListener("change", () => {
+    if (!r.checked) return;
+    state.annotations = r.value;
     commit();
-  });
+  }));
   [pnPosition, pnStart, pnFirst, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
 
   function render(pagesToo) {
@@ -328,7 +329,7 @@
         body: JSON.stringify({ documents: state.documents.map((d) => {
           const a = applied(d);
           return { id: d.id, page_mode: a.page_mode, page_range: a.page_range };
-        }), pageNumbers: state.pageNumbers, docNumbers: state.docNumbers, includeAnnotations: state.includeAnnotations }),
+        }), pageNumbers: state.pageNumbers, docNumbers: state.docNumbers, annotations: state.annotations }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");

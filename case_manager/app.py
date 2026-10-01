@@ -2256,8 +2256,9 @@ def api_render(doc_id, page):
             raise DocumentError("Page out of range", 404)
         zoom = dpi / 72
         p = d[page - 1]
-        if request.args.get("annotations") == "1":
-            draw_annotations_on_page(p, sanitize_annotations(storage.get_page_annotations(doc_id, page)), p.rect)
+        mode = {"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations"))
+        if mode in ("blackouts", "all"):
+            draw_annotations_on_page(p, annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode), p.rect)
         pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
         png_bytes = pix.tobytes("png")
 
@@ -2616,7 +2617,18 @@ def parse_page_range(text, page_count):
     return sorted(pages)
 
 
-def _annexure_payload(report_id, saved, page_numbers=None, include_annotations=None, doc_numbers=None):
+ANNEXURE_ANNOTATION_MODES = ("none", "blackouts", "all")
+
+
+def annexure_annotations_to_draw(raw, mode):
+    """The sanitized annotations an annexure in `mode` shows."""
+    anns = sanitize_annotations(raw)
+    if mode == "blackouts":
+        return [a for a in anns if a["kind"] == "blackout"]
+    return anns if mode == "all" else []
+
+
+def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc_numbers=None):
     """The annexure as the page shows it: the saved [{"id", "page_mode", "page_range"}] order,
     with every document the report's snippets come from present (appended if
     missing -- they can't be left out) and each one's snippet pages; documents
@@ -2628,7 +2640,7 @@ def _annexure_payload(report_id, saved, page_numbers=None, include_annotations=N
     order += [{"id": d, "page_mode": "all", "page_range": ""} for d in snippet_pages
               if d in docs and d not in {o["id"] for o in order}]
     return {
-        "includeAnnotations": storage.get_annexure_include_annotations(report_id) if include_annotations is None else include_annotations,
+        "annotations": storage.get_annexure_annotations(report_id) if annotations is None else annotations,
         "pageNumbers": sanitize_page_numbers(page_numbers if page_numbers is not None else storage.get_annexure_page_numbers(report_id),
                                              ANNEXURE_DEFAULT_PAGE_NUMBERS),
         "docNumbers": sanitize_doc_numbers(doc_numbers if doc_numbers is not None else storage.get_annexure_doc_numbers(report_id)),
@@ -2678,11 +2690,13 @@ def api_report_annexure(report_id):
         if "docNumbers" in body:
             doc_numbers = sanitize_doc_numbers(body["docNumbers"], storage.get_annexure_doc_numbers(report_id))
             storage.save_annexure_doc_numbers(report_id, doc_numbers)
-        include_annotations = None
-        if "includeAnnotations" in body:
-            include_annotations = bool(body["includeAnnotations"])
-            storage.save_annexure_include_annotations(report_id, include_annotations)
-        payload = _annexure_payload(report_id, saved, page_numbers, include_annotations, doc_numbers)
+        annotations = None
+        if "annotations" in body:
+            annotations = body["annotations"]
+            if annotations not in ANNEXURE_ANNOTATION_MODES:
+                raise DocumentError("annotations must be 'none', 'blackouts' or 'all'", 400)
+            storage.save_annexure_annotations(report_id, annotations)
+        payload = _annexure_payload(report_id, saved, page_numbers, annotations, doc_numbers)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
@@ -2713,10 +2727,10 @@ def api_report_annexure_export(report_id):
                     pages = [p for p in d["snippet_pages"] if p <= src.page_count]
                 else:
                     pages = parse_page_range(d["page_range"], src.page_count) or []
-                if payload["includeAnnotations"]:
+                if payload["annotations"] != "none":
                     for n, raw_anns in storage.get_all_annotations(d["id"]).items():
                         if n.isdigit() and 1 <= int(n) <= src.page_count:
-                            draw_annotations_on_page(src[int(n) - 1], sanitize_annotations(raw_anns), src[int(n) - 1].rect)
+                            draw_annotations_on_page(src[int(n) - 1], annexure_annotations_to_draw(raw_anns, payload["annotations"]), src[int(n) - 1].rect)
                 if pages:
                     first_pages.append(out.page_count)
                 for p in pages:
