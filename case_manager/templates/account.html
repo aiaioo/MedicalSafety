@@ -11,6 +11,7 @@
   .account-page section { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 4px 19px 16px; margin-bottom: 24px; }
   .account-photo { display: flex; align-items: center; gap: 16px; margin: 14px 0; }
   .account-photo img, .account-photo .placeholder { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: #e6e9f0; }
+  .modal-field select[hidden], .modal-field input[hidden] { display: none; }
   .photo-editor { margin: 0 0 14px; }
   .photo-editor[hidden] { display: none; }
   .photo-viewport { position: relative; width: 200px; height: 200px; border-radius: 50%; overflow: hidden; background: #e6e9f0; cursor: grab; touch-action: none; user-select: none; box-shadow: 0 0 0 1px #d5dae3; }
@@ -65,11 +66,15 @@
       <label class="modal-field">Name
         <input type="text" id="fullName" maxlength="100" value="{{ profile.full_name }}">
       </label>
-      <label class="modal-field">City
-        <input type="text" id="city" maxlength="100" value="{{ profile.city }}">
-      </label>
       <label class="modal-field">Country
-        <input type="text" id="country" maxlength="100" value="{{ profile.country }}">
+        <select id="country">
+          {% for c in countries %}<option value="{{ c }}"{% if c == country %} selected{% endif %}>{{ c }}</option>{% endfor %}
+          <option value="Other"{% if country == "Other" %} selected{% endif %}>Other</option>
+        </select>
+      </label>
+      <label class="modal-field">City
+        <select id="citySelect" hidden></select>
+        <input type="text" id="city" maxlength="100" value="{{ profile.city }}">
       </label>
       <p class="error-message" id="detailsError" role="alert" style="display:none"></p>
       <p class="ok-message" id="detailsOk" style="display:none">Saved.</p>
@@ -117,12 +122,34 @@
   function show(el, msg) { el.textContent = msg; el.style.display = msg ? "" : "none"; }
 
   // Details
+  // City: a drop-down of major cities (plus Other) for countries we have a list for, else free text.
+  const CITIES = {{ cities|tojson }}, DEFAULT_CITY = {{ default_cities|tojson }};
+  function renderCities(keepSaved) {
+    const list = CITIES[$("country").value], sel = $("citySelect"), txt = $("city");
+    if (!list) { sel.hidden = true; txt.hidden = false; return; }
+    const saved = keepSaved ? txt.value.trim() : "";
+    sel.innerHTML = "";
+    sel.add(new Option("Select a city", ""));
+    for (const c of list.concat(["Other"])) sel.add(new Option(c, c));
+    if (saved && list.includes(saved)) { sel.value = saved; txt.value = ""; }
+    else { sel.value = saved ? "Other" : (DEFAULT_CITY[$("country").value] || ""); if (!saved) txt.value = ""; }
+    sel.hidden = false; syncCityText();
+  }
+  function syncCityText() { $("city").hidden = !$("citySelect").hidden && $("citySelect").value !== "Other"; }
+  function cityValue() {
+    const sel = $("citySelect");
+    return sel.hidden ? $("city").value : (sel.value === "Other" ? $("city").value : sel.value);
+  }
+  $("country").addEventListener("change", () => renderCities(false));
+  $("citySelect").addEventListener("change", () => { syncCityText(); if (!$("city").hidden) $("city").focus(); });
+  renderCities(true);
+
   $("detailsForm").addEventListener("submit", async ev => {
     ev.preventDefault();
     show($("detailsError"), ""); $("detailsOk").style.display = "none";
     try {
       await api({{ url_for('api_account_details')|tojson }}, "PUT",
-        {full_name: $("fullName").value, city: $("city").value, country: $("country").value});
+        {full_name: $("fullName").value, city: cityValue(), country: $("country").value});
       $("detailsOk").style.display = "";
     } catch (e) { show($("detailsError"), e.message); }
   });
