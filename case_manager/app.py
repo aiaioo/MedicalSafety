@@ -792,14 +792,15 @@ def sanitize_annotations(raw, max_count=500, max_points=2000):
         if not (isinstance(color, str) and HEX_COLOR_RE.match(color)):
             color = DEFAULT_ANNOTATION_COLOR
 
-        if item.get("kind") == "rect":
+        if item.get("kind") in ("rect", "blackout"):
+            kind = item["kind"]
             try:
                 x, y, w, h = (_clamp01(item[k]) for k in ("x", "y", "w", "h"))
             except (KeyError, TypeError, ValueError):
                 continue
             if w <= 0 or h <= 0:
                 continue
-            out.append({"kind": "rect", "color": color, "x": x, "y": y, "w": w, "h": h})
+            out.append({"kind": kind, "color": color, "x": x, "y": y, "w": w, "h": h})
 
         elif item.get("kind") == "freehand":
             pts = item.get("points")
@@ -855,6 +856,15 @@ def draw_annotations_on_page(page, annotations, page_rect):
             )
             shape.draw_rect(r)
             shape.finish(color=color, width=line_width)
+        elif a["kind"] == "blackout":
+            r = fitz.Rect(
+                page_rect.x0 + a["x"] * page_rect.width,
+                page_rect.y0 + a["y"] * page_rect.height,
+                page_rect.x0 + (a["x"] + a["w"]) * page_rect.width,
+                page_rect.y0 + (a["y"] + a["h"]) * page_rect.height,
+            )
+            shape.draw_rect(r)
+            shape.finish(color=color, fill=color, width=0)
         elif a["kind"] == "freehand":
             pts = [
                 fitz.Point(page_rect.x0 + px * page_rect.width, page_rect.y0 + py * page_rect.height)

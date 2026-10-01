@@ -52,17 +52,19 @@
   const nextLink = document.getElementById("nextLink");
   const continuousToggle = document.getElementById("continuousToggle");
 
+  const BLACKOUT_COLOR = "#000000";
   const CONTINUOUS_PREF_KEY = "annotator:continuousView";
 
   const HINTS = {
     null: 'Click an annotation to select it, then press Delete or right-click to remove it (right-click works in any mode)',
     rect: "Drag to draw a rectangle",
     freehand: "Drag to draw a freehand line",
+    blackout: "Drag to black out sensitive information",
     snippet: "Drag to extract a rectangular snippet",
     text: "Drag to draw a text box (or click to place one), then type. Font and size: File > Page setup",
   };
 
-  let mode = null; // null = idle/select mode; otherwise "rect" | "freehand" | "snippet" | "text"
+  let mode = null; // null = idle/select mode; otherwise "rect" | "freehand" | "snippet" | "text" | "blackout"
   let continuousMode = localStorage.getItem(CONTINUOUS_PREF_KEY) === "1";
   let currentPage = initialPage; // "active" page: scrollspy-tracked in continuous mode
   let selected = null; // { controller, index } | null
@@ -191,7 +193,11 @@
     const py = yFrac * canvas.height;
     for (let i = annotations.length - 1; i >= 0; i--) {
       const a = annotations[i];
-      if (a.kind === "rect") {
+      if (a.kind === "blackout") {
+        const rx = a.x * canvas.width;
+        const ry = a.y * canvas.height;
+        if (px >= rx && px <= rx + a.w * canvas.width && py >= ry && py <= ry + a.h * canvas.height) return i;
+      } else if (a.kind === "rect") {
         const rx = a.x * canvas.width;
         const ry = a.y * canvas.height;
         const rw = a.w * canvas.width;
@@ -237,7 +243,7 @@
     ctx.lineWidth = 2;
     const pad = 6;
     let rect = null;
-    if (a.kind === "rect" || a.kind === "text") {
+    if (a.kind === "rect" || a.kind === "text" || a.kind === "blackout") {
       const rx = a.x * canvas.width;
       const ry = a.y * canvas.height;
       rect = [rx - pad, ry - pad, a.w * canvas.width + pad * 2, a.h * canvas.height + pad * 2];
@@ -250,6 +256,11 @@
     if (rect) ctx.strokeRect(...rect);
     ctx.restore();
     return rect;
+  }
+
+  function drawBlackout(ctx, canvas, a) {
+    ctx.fillStyle = a.color;
+    ctx.fillRect(a.x * canvas.width, a.y * canvas.height, a.w * canvas.width, a.h * canvas.height);
   }
 
   function drawRect(ctx, canvas, a) {
@@ -469,6 +480,7 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (const a of state.annotations) {
         if (a.kind === "rect") drawRect(ctx, canvas, a);
+        else if (a.kind === "blackout") drawBlackout(ctx, canvas, a);
         else if (a.kind === "freehand") drawFreehand(ctx, canvas, a);
         else if (a.kind === "text") drawText(ctx, canvas, a, pageWidthPt(pageNum), controller.editing === a);
       }
@@ -655,6 +667,21 @@
         if (r) createTextBox(r);
         return;
       }
+      if (mode === "blackout") {
+        if (!r || r.w < 0.002 || r.h < 0.002) {
+          redraw();
+          return;
+        }
+        r.kind = "blackout";
+        r.color = BLACKOUT_COLOR;
+        state.annotations.push(r);
+        state.annotationSnippetIds.push(null); // blackouts never get a snippet
+        state.dirty = true;
+        updateAnnotatedPagesBtn();
+        redraw();
+        await saveAfterAddition(controller);
+        return;
+      }
       if (!r || r.w < 0.002 || r.h < 0.002) {
         redraw();
         return;
@@ -717,9 +744,9 @@
       canvas.setPointerCapture(e.pointerId);
       controller.drawing = true;
       const [x, y] = clientToFrac(canvas, e.clientX, e.clientY);
-      if (mode === "rect" || mode === "snippet" || mode === "text") {
+      if (mode === "rect" || mode === "snippet" || mode === "text" || mode === "blackout") {
         controller.startFrac = [x, y];
-        controller.liveRect = { kind: "rect", color: mode === "snippet" ? "#2266dd" : colorPicker.value, x, y, w: 0, h: 0 };
+        controller.liveRect = { kind: "rect", color: mode === "snippet" ? "#2266dd" : mode === "blackout" ? BLACKOUT_COLOR : colorPicker.value, x, y, w: 0, h: 0 };
       } else if (mode === "freehand") {
         controller.currentStroke = { kind: "freehand", color: colorPicker.value, points: [[x, y]] };
       }
@@ -771,7 +798,7 @@
         return;
       }
       if (!controller.drawing) return;
-      if (mode === "rect" || mode === "snippet" || mode === "text") finishRect();
+      if (mode === "rect" || mode === "snippet" || mode === "text" || mode === "blackout") finishRect();
       else if (mode === "freehand") finishFreehand();
     });
     canvas.addEventListener("dblclick", (e) => {

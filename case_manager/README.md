@@ -179,4 +179,5 @@ Annotation object shapes:
 ```json
 {"kind": "rect", "color": "#e02424", "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}
 {"kind": "freehand", "color": "#e02424", "points": [[0.1, 0.2], [0.11, 0.21], ...]}
+{"kind": "blackout", "color": "#000000", "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.05}
 ```
