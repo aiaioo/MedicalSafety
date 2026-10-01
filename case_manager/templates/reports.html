@@ -188,8 +188,7 @@
           </select>
         </label>
         <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document &raquo;</a>
-        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Edit cause title &hellip;</button>
-        <button type="button" class="btn" id="insertCauseTitleBtn" style="display:none">Insert cause title</button>
+        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Insert from templates &hellip;</button>
         <a class="btn" id="annexureLink" style="font-weight: bold; font-size: 110%" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Annexures</a>
       </div>
       <h3>Snippets &amp; annotations</h3>
@@ -277,7 +276,7 @@
 
   <div class="modal-overlay" id="caseSetupModal">
     <div class="modal">
-      <h3>Link to case</h3>
+      <h3>Insert from templates</h3>
       <div id="caseSetupBody"></div>
       <p id="caseSetupError" class="error-message" style="display:none"></p>
       <div class="modal-actions">

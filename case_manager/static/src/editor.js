@@ -1186,7 +1186,6 @@ import { Pagination, repaginate } from "./pagination.js";
   const caseSetupBody = document.getElementById("caseSetupBody");
   const caseSetupError = document.getElementById("caseSetupError");
   const caseSetupClose = document.getElementById("caseSetupClose");
-  const insertCauseTitleBtn = document.getElementById("insertCauseTitleBtn");
   let reportCauseIds = [];
   let reportCaseIds = [];
   let candidateCases = []; // editable cases under the report's causes
@@ -1204,7 +1203,6 @@ import { Pagination, repaginate } from "./pagination.js";
         (c) => reportCaseIds.includes(c.id) || (reportCauseIds.includes(c.cause_id) && (c.role === "owner" || c.role === "editor"))
       );
       caseSetupBtn.style.display = candidateCases.length ? "" : "none";
-      if (insertCauseTitleBtn) insertCauseTitleBtn.style.display = reportCaseIds.length ? "" : "none";
     } catch (e) {
       console.error(e);
     }
@@ -1216,8 +1214,10 @@ import { Pagination, repaginate } from "./pagination.js";
     if (current) {
       caseSetupBody.innerHTML =
         `<p>This report is associated with the case <strong>${escapeHtml(current.name)}</strong>.</p>` +
+        '<button type="button" id="insertCauseTitleBtn">Insert cause title</button> ' +
         `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Cause title builder</a> ` +
         '<button type="button" id="caseDissociateBtn">Dissociate from case</button>';
+      document.getElementById("insertCauseTitleBtn").addEventListener("click", insertCauseTitle);
       document.getElementById("caseDissociateBtn").addEventListener("click", () => updateCaseLink("DELETE", current.id));
       return;
     }
@@ -1245,7 +1245,6 @@ import { Pagination, repaginate } from "./pagination.js";
         throw new Error(body.error || `HTTP ${res.status}`);
       }
       reportCaseIds = method === "POST" ? [caseId] : reportCaseIds.filter((id) => id !== caseId);
-      if (insertCauseTitleBtn) insertCauseTitleBtn.style.display = reportCaseIds.length ? "" : "none";
       renderCaseSetup();
     } catch (e) {
       caseSetupError.textContent = e.message;
@@ -1267,31 +1266,30 @@ import { Pagination, repaginate } from "./pagination.js";
   // Insert cause title: puts the report's case's cause title at the very
   // start of the document. A case with no generated title sends the user to
   // its details page (with a notice) to make one first.
-  if (insertCauseTitleBtn) {
-    insertCauseTitleBtn.addEventListener("click", async () => {
-      const caseId = reportCaseIds[0];
-      if (!caseId) return;
-      const detailsUrl = `${appEl.dataset.caseDetailsUrl}?case=${encodeURIComponent(caseId)}`;
-      try {
-        const [caseRes, templatesRes] = await Promise.all([
-          fetch(appEl.dataset.caseUrlBase.replace("__ID__", encodeURIComponent(caseId))),
-          fetch(appEl.dataset.templatesUrl),
-        ]);
-        if (!caseRes.ok) throw new Error((await caseRes.json().catch(() => ({}))).error || `HTTP ${caseRes.status}`);
-        const caseData = await caseRes.json();
-        caseData.parties = Array.isArray(caseData.parties) ? caseData.parties : [];
-        caseData.cause_title_doc = caseData.cause_title_doc ? JSON.parse(caseData.cause_title_doc) : null;
-        const templates = templatesRes.ok ? await templatesRes.json() : [];
-        if (!window.CauseTitle.exists(caseData, templates)) {
-          location.href = detailsUrl + "&notice=no-cause-title";
-          return;
-        }
-        const doc = window.CauseTitle.doc(caseData, templates);
-        editor.chain().focus().insertContentAt(0, tightenParagraphs(doc.content)).run();
-      } catch (e) {
-        setStatus("Could not insert the cause title: " + e.message, true);
+  async function insertCauseTitle() {
+    const caseId = reportCaseIds[0];
+    if (!caseId) return;
+    closeModal(caseSetupModal);
+    const detailsUrl = `${appEl.dataset.caseDetailsUrl}?case=${encodeURIComponent(caseId)}`;
+    try {
+      const [caseRes, templatesRes] = await Promise.all([
+        fetch(appEl.dataset.caseUrlBase.replace("__ID__", encodeURIComponent(caseId))),
+        fetch(appEl.dataset.templatesUrl),
+      ]);
+      if (!caseRes.ok) throw new Error((await caseRes.json().catch(() => ({}))).error || `HTTP ${caseRes.status}`);
+      const caseData = await caseRes.json();
+      caseData.parties = Array.isArray(caseData.parties) ? caseData.parties : [];
+      caseData.cause_title_doc = caseData.cause_title_doc ? JSON.parse(caseData.cause_title_doc) : null;
+      const templates = templatesRes.ok ? await templatesRes.json() : [];
+      if (!window.CauseTitle.exists(caseData, templates)) {
+        location.href = detailsUrl + "&notice=no-cause-title";
+        return;
       }
-    });
+      const doc = window.CauseTitle.doc(caseData, templates);
+      editor.chain().focus().insertContentAt(0, tightenParagraphs(doc.content)).run();
+    } catch (e) {
+      setStatus("Could not insert the cause title: " + e.message, true);
+    }
   }
 
   async function loadSnippets() {
