@@ -182,6 +182,7 @@
           </select>
         </label>
         <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document &raquo;</a>
+        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Case setup &hellip;</button>
       </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
@@ -257,6 +258,17 @@
       <div class="modal-actions">
         <button type="button" id="newDocCancel">Cancel</button>
         <button type="button" id="newDocCreate">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="caseSetupModal">
+    <div class="modal">
+      <h3>Case setup</h3>
+      <div id="caseSetupBody"></div>
+      <p id="caseSetupError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="caseSetupClose">Close</button>
       </div>
     </div>
   </div>

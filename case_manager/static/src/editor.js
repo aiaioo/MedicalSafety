@@ -1121,6 +1121,90 @@ import { Pagination, repaginate } from "./pagination.js";
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Case setup: associate the report with one of the cases under its
+  // cause(s), or dissociate it. The button is only offered when the report
+  // has no case yet and such cases exist, or when it already has one.
+  // ---------------------------------------------------------------------
+  const caseSetupBtn = document.getElementById("caseSetupBtn");
+  const caseSetupModal = document.getElementById("caseSetupModal");
+  const caseSetupBody = document.getElementById("caseSetupBody");
+  const caseSetupError = document.getElementById("caseSetupError");
+  const caseSetupClose = document.getElementById("caseSetupClose");
+  let reportCauseIds = [];
+  let reportCaseIds = [];
+  let candidateCases = []; // editable cases under the report's causes
+
+  async function refreshCaseSetup() {
+    if (!caseSetupBtn || !canEdit) return;
+    try {
+      const [reportRes, casesRes] = await Promise.all([fetch(reportUrl), fetch("/api/allegation-cases")]);
+      const report = await reportRes.json();
+      const all = await casesRes.json();
+      reportCauseIds = report.cause_ids || [];
+      reportCaseIds = report.case_ids || [];
+      const list = Array.isArray(all) ? all : all.cases || [];
+      candidateCases = list.filter(
+        (c) => reportCaseIds.includes(c.id) || (reportCauseIds.includes(c.cause_id) && (c.role === "owner" || c.role === "editor"))
+      );
+      caseSetupBtn.style.display = candidateCases.length ? "" : "none";
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function renderCaseSetup() {
+    caseSetupError.style.display = "none";
+    const current = candidateCases.find((c) => reportCaseIds.includes(c.id));
+    if (current) {
+      caseSetupBody.innerHTML =
+        `<p>This report is associated with the case <strong>${escapeHtml(current.name)}</strong>.</p>` +
+        '<button type="button" id="caseDissociateBtn">Dissociate from case</button>';
+      document.getElementById("caseDissociateBtn").addEventListener("click", () => updateCaseLink("DELETE", current.id));
+      return;
+    }
+    const options = candidateCases
+      .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
+      .join("");
+    caseSetupBody.innerHTML =
+      '<label class="modal-field">Associate this report with case' +
+      `<select id="caseSetupSelect">${options}</select></label>` +
+      '<button type="button" id="caseAssociateBtn">Associate</button>';
+    document.getElementById("caseAssociateBtn").addEventListener("click", () =>
+      updateCaseLink("POST", document.getElementById("caseSetupSelect").value)
+    );
+  }
+
+  async function updateCaseLink(method, caseId) {
+    try {
+      const res = await fetch(`/api/report/${encodeURIComponent(reportId)}/links`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: caseId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      reportCaseIds = method === "POST" ? [caseId] : reportCaseIds.filter((id) => id !== caseId);
+      renderCaseSetup();
+    } catch (e) {
+      caseSetupError.textContent = e.message;
+      caseSetupError.style.display = "";
+    }
+  }
+
+  if (caseSetupBtn) {
+    caseSetupBtn.addEventListener("click", () => {
+      renderCaseSetup();
+      openModal(caseSetupModal);
+    });
+    caseSetupClose.addEventListener("click", () => closeModal(caseSetupModal));
+    caseSetupModal.addEventListener("click", (e) => {
+      if (e.target === caseSetupModal) closeModal(caseSetupModal);
+    });
+  }
+
   async function loadSnippets() {
     const { source_doc, source_type } = currentSource();
     if (!source_doc) {
@@ -1210,6 +1294,7 @@ import { Pagination, repaginate } from "./pagination.js";
       sourceSelect.value = combo;
       if (sourceSelect.value !== combo) sourceSelect.value = "";
       updateAnnotateLink();
+      refreshCaseSetup();
       loadSnippets();
       dirty = false;
       setStatus("");
