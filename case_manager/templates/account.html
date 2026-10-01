@@ -11,6 +11,13 @@
   .account-page section { background: #fcfcfd; border: 1px solid #d5dae3; border-radius: 12px; padding: 4px 19px 16px; margin-bottom: 24px; }
   .account-photo { display: flex; align-items: center; gap: 16px; margin: 14px 0; }
   .account-photo img, .account-photo .placeholder { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: #e6e9f0; }
+  .photo-editor { margin: 0 0 14px; }
+  .photo-editor[hidden] { display: none; }
+  .photo-viewport { position: relative; width: 200px; height: 200px; border-radius: 50%; overflow: hidden; background: #e6e9f0; cursor: grab; touch-action: none; user-select: none; box-shadow: 0 0 0 1px #d5dae3; }
+  .photo-viewport.dragging { cursor: grabbing; }
+  .photo-viewport img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; pointer-events: none; -webkit-user-drag: none; }
+  .photo-editor-controls { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .photo-editor-controls input[type=range] { width: 160px; }
   .ok-message { color: #1d6b34; }
 </style>
 </head>
@@ -43,6 +50,15 @@
         <input type="file" id="photoFile" accept="image/*" hidden>
         <button type="button" class="btn" id="photoChoose">Choose photo</button>
         <button type="button" class="btn" id="photoRemove"{% if not profile.has_photo %} hidden{% endif %}>Remove</button>
+      </div>
+    </div>
+    <div class="photo-editor" id="photoEditor" hidden>
+      <p class="modal-hint">Drag the photo to reposition it, and use the slider to zoom.</p>
+      <div class="photo-viewport" id="photoViewport"><img id="photoEditImg" alt="" draggable="false"></div>
+      <div class="photo-editor-controls">
+        <input type="range" id="photoZoom" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
+        <button type="button" class="btn" id="photoSave">Save photo</button>
+        <button type="button" class="btn" id="photoCancel">Cancel</button>
       </div>
     </div>
     <form id="detailsForm" autocomplete="off">
@@ -117,14 +133,84 @@
     if (on) $("photoImg").src = {{ url_for('account_photo')|tojson }} + "?v=" + Date.now();
   }
   $("photoChoose").addEventListener("click", () => $("photoFile").click());
-  $("photoFile").addEventListener("change", async () => {
+  // Reposition/zoom editor: the visible circle is cropped client-side and uploaded as a square.
+  const VIEW = 200, OUT = 512;
+  const ed = {img: null, url: "", baseScale: 1, zoom: 1, x: 0, y: 0};
+  function edClamp() {
+    const dw = ed.img.naturalWidth * ed.baseScale * ed.zoom, dh = ed.img.naturalHeight * ed.baseScale * ed.zoom;
+    ed.x = Math.min(0, Math.max(VIEW - dw, ed.x)); ed.y = Math.min(0, Math.max(VIEW - dh, ed.y));
+  }
+  function edRender() {
+    edClamp();
+    const el = $("photoEditImg"), sc = ed.baseScale * ed.zoom;
+    el.style.transform = `translate(${ed.x}px, ${ed.y}px) scale(${sc})`;
+  }
+  function edClose() {
+    $("photoEditor").hidden = true;
+    if (ed.url) URL.revokeObjectURL(ed.url);
+    ed.url = ""; ed.img = null; $("photoEditImg").removeAttribute("src");
+  }
+  function edSetZoom(z) {  // zoom about the centre of the circle
+    const old = ed.baseScale * ed.zoom;
+    const cx = (VIEW / 2 - ed.x) / old, cy = (VIEW / 2 - ed.y) / old;
+    ed.zoom = z;
+    const sc = ed.baseScale * ed.zoom;
+    ed.x = VIEW / 2 - cx * sc; ed.y = VIEW / 2 - cy * sc;
+    edRender();
+  }
+  $("photoChoose").addEventListener("click", () => $("photoFile").click());
+  $("photoFile").addEventListener("change", () => {
     const file = $("photoFile").files[0];
+    $("photoFile").value = "";
     if (!file) return;
     show($("detailsError"), "");
-    const fd = new FormData(); fd.append("photo", file);
-    try { await api({{ url_for('api_account_photo')|tojson }}, "POST", null, fd); setPhoto(true); }
+    edClose();
+    const url = URL.createObjectURL(file), img = $("photoEditImg");
+    img.onload = () => {
+      ed.img = img; ed.url = url;
+      ed.baseScale = VIEW / Math.min(img.naturalWidth, img.naturalHeight);
+      ed.zoom = 1; $("photoZoom").value = 1;
+      ed.x = (VIEW - img.naturalWidth * ed.baseScale) / 2; ed.y = (VIEW - img.naturalHeight * ed.baseScale) / 2;
+      $("photoEditor").hidden = false; edRender();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); show($("detailsError"), "That file isn't an image we can read. Please choose a JPEG or PNG photo."); };
+    img.src = url;
+  });
+  $("photoZoom").addEventListener("input", ev => { if (ed.img) edSetZoom(parseFloat(ev.target.value)); });
+  $("photoViewport").addEventListener("wheel", ev => {
+    if (!ed.img) return;
+    ev.preventDefault();
+    const z = Math.min(4, Math.max(1, ed.zoom * (ev.deltaY < 0 ? 1.08 : 1 / 1.08)));
+    $("photoZoom").value = z; edSetZoom(z);
+  }, {passive: false});
+  (function () {
+    const vp = $("photoViewport"); let drag = null;
+    vp.addEventListener("pointerdown", ev => {
+      if (!ed.img) return;
+      drag = {px: ev.clientX, py: ev.clientY, x: ed.x, y: ed.y};
+      vp.setPointerCapture(ev.pointerId); vp.classList.add("dragging");
+    });
+    vp.addEventListener("pointermove", ev => {
+      if (!drag) return;
+      ed.x = drag.x + ev.clientX - drag.px; ed.y = drag.y + ev.clientY - drag.py; edRender();
+    });
+    const end = () => { drag = null; vp.classList.remove("dragging"); };
+    vp.addEventListener("pointerup", end); vp.addEventListener("pointercancel", end);
+  })();
+  $("photoCancel").addEventListener("click", edClose);
+  $("photoSave").addEventListener("click", async () => {
+    if (!ed.img) return;
+    show($("detailsError"), "");
+    const sc = ed.baseScale * ed.zoom, side = VIEW / sc;
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = OUT;
+    canvas.getContext("2d").drawImage(ed.img, -ed.x / sc, -ed.y / sc, side, side, 0, 0, OUT, OUT);
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.92));
+    if (!blob) { show($("detailsError"), "Couldn't prepare the photo."); return; }
+    const fd = new FormData(); fd.append("photo", blob, "photo.jpg");
+    $("photoSave").disabled = true;
+    try { await api({{ url_for('api_account_photo')|tojson }}, "POST", null, fd); setPhoto(true); edClose(); }
     catch (e) { show($("detailsError"), e.message); }
-    $("photoFile").value = "";
+    $("photoSave").disabled = false;
   });
   $("photoRemove").addEventListener("click", async () => {
     try { await api({{ url_for('api_account_photo')|tojson }}, "DELETE"); setPhoto(false); }
