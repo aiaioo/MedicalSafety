@@ -1216,6 +1216,7 @@ import { Pagination, repaginate } from "./pagination.js";
     if (current) {
       caseSetupBody.innerHTML =
         `<p>This report is associated with the case <strong>${escapeHtml(current.name)}</strong>.</p>` +
+        `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Go to case details</a> ` +
         '<button type="button" id="caseDissociateBtn">Dissociate from case</button>';
       document.getElementById("caseDissociateBtn").addEventListener("click", () => updateCaseLink("DELETE", current.id));
       return;
