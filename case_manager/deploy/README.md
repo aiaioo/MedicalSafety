@@ -64,6 +64,24 @@ Put a reverse proxy (nginx or Caddy) in front for TLS; this service only
 binds `127.0.0.1:8000` and is not meant to face the internet directly. That
 proxy setup isn't included here since it's independent of the app itself.
 
+## Outgoing email (Postmark)
+
+Password-reset, email-verification and notification emails go out through
+Postmark's HTTPS API (so DigitalOcean's blocked SMTP ports don't matter) as
+`noreply@medicalsafety.in` or `noreply@caseplan.in`, whichever site the
+visitor was on. One Postmark server and its token cover both domains:
+
+1. In Postmark, add both domains under Sender Signatures and create the DKIM
+   (TXT) and Return-Path (`pm-bounces` CNAME) records it shows in
+   DigitalOcean's Networking -> Domains. Add a `_dmarc` TXT record too.
+2. Put the server's API token in `/etc/case-manager/case-manager.env` as
+   `POSTMARK_TOKEN=...` and `sudo systemctl restart case-manager`.
+3. Apply `db/migrations/027_email_verification.sql` (users created before it
+   are marked verified).
+
+Without `POSTMARK_TOKEN`, nothing is sent and each email is written to the
+log instead (handy in development: the verification/reset links are in it).
+
 ## Bringing existing data along
 
 If you're moving from a machine that was still using the old

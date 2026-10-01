@@ -27,6 +27,7 @@ from captcha.image import ImageCaptcha
 from flask import Blueprint, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import mailer
 import storage
 
 SESSION_COOKIE = "cm_session"
@@ -41,6 +42,8 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 # the sign-in page (or, for /api/ routes, answers 401).
 PUBLIC_ENDPOINTS = {
     "auth.signin", "auth.signup", "auth.unlock", "static",
+    # Emailed links are opened in whatever browser the person reads mail in.
+    "auth.verify_email", "auth.forgot_password", "auth.reset_password",
     # "index" itself redirects a signed-out visitor to public_view (see
     # app.py's index()) rather than to sign-in, so it has to be reachable
     # signed out too. The content aggregation page and the articles on it
@@ -60,7 +63,7 @@ GUEST_BLOCKED_ENDPOINTS = {
     "index", "collaborations_view", "api_collaborations", "api_collaborations_captcha",
     "api_collaborations_seen", "api_collaboration_item", "api_collaboration_accept",
     "api_collaboration_access", "api_set_show_advanced", "api_default_cause",
-    "account_view", "account_photo", "api_account_details", "api_account_photo", "api_account_password", "api_keys", "api_key_item",
+    "auth.resend_verification", "account_view", "account_photo", "api_account_details", "api_account_photo", "api_account_password", "api_keys", "api_key_item",
 }
 GUEST_BLOCKED_POSTS = {
     "api_causes", "api_upload_document", "api_reports", "api_allegation_cases", "api_allegations",
@@ -97,6 +100,14 @@ CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I -- easy to 
 # At most this many sign-up attempts (successful or not) per client IP per
 # window. Behind a reverse proxy, set TRUSTED_PROXY_HOPS so the client's real
 # address is used -- see app.py.
+VERIFY_TOKEN_LIFETIME = timedelta(hours=24)
+RESET_TOKEN_LIFETIME = timedelta(hours=1)
+# Emails we'll trigger per hour: per client IP, and per target address (so
+# nobody can use the forgot-password form to flood one person's inbox).
+MAIL_LIMIT_PER_IP = 10
+MAIL_LIMIT_PER_ADDRESS = 3
+MAIL_LIMIT_WINDOW_SECONDS = 3600
+
 SIGNUP_ATTEMPT_LIMIT = 10
 SIGNUP_ATTEMPT_WINDOW_SECONDS = 3600
 
@@ -115,6 +126,7 @@ class User:
     password_hash: str
     show_advanced: bool = False
     is_guest: bool = False  # a key session, not a registered user
+    email_verified: bool = False
     is_admin: bool = False
     is_content_creator: bool = False
 
@@ -123,6 +135,7 @@ class User:
         return cls(
             id=row["id"], email=row["email"], password_hash=row["password_hash"],
             show_advanced=row.get("show_advanced", False),
+            email_verified=row.get("email_verified_at") is not None,
             is_admin=row.get("is_admin", False), is_content_creator=row.get("is_content_creator", False),
         )
 
@@ -364,6 +377,7 @@ def signup():
     if user is None:
         error = "An account with that email already exists. Sign in instead."
         return _render_signup(email, error, next_url, 409)
+    _send_token_email(user.id, user.email, "verify")
     return _start_session(user, next_url)
 
 
@@ -396,3 +410,132 @@ def signout():
     resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="Lax", secure=_cookie_secure())
     resp.delete_cookie(KEY_SESSION_COOKIE, httponly=True, samesite="Lax", secure=_cookie_secure())
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Emailed links: email verification and password reset. Each is a random
+# one-time token whose hash is stored (storage.create_email_token); the link
+# in the email carries the token itself.
+# ---------------------------------------------------------------------------
+
+def _send_token_email(user_id: int, email: str, purpose: str) -> None:
+    token = secrets.token_urlsafe(32)
+    lifetime = VERIFY_TOKEN_LIFETIME if purpose == "verify" else RESET_TOKEN_LIFETIME
+    storage.create_email_token(user_id, purpose, _hash_token(token), datetime.now(timezone.utc) + lifetime)
+    host = request.host
+    _, site_name, _ = mailer.site_for_host(host)
+    if purpose == "verify":
+        link = mailer.base_url(host) + url_for("auth.verify_email", token=token)
+        mailer.send_action_email(
+            host, email, f"Verify your email address for {site_name}",
+            f"Welcome to {site_name}. Please confirm that this is your email address.",
+            "Verify my email address", link,
+            "This link works once and expires in 24 hours. If you didn't create an account, you can ignore this email.",
+        )
+    else:
+        link = mailer.base_url(host) + url_for("auth.reset_password", token=token)
+        mailer.send_action_email(
+            host, email, f"Reset your {site_name} password",
+            f"Someone asked to reset the password for your {site_name} account.",
+            "Choose a new password", link,
+            "This link works once and expires in 1 hour. If you didn't ask for it, you can ignore this email: your password hasn't changed.",
+        )
+
+
+def _render_message(title: str, message: str, status: int = 200, link_url: str = "", link_text: str = ""):
+    return render_template(
+        "auth_message.html", title=title, message=message, link_url=link_url, link_text=link_text,
+    ), status
+
+
+@bp.route("/verify-email/<token>")
+def verify_email(token):
+    user_id = storage.take_email_token(_hash_token(token), "verify")
+    if user_id is None:
+        return _render_message(
+            "Link not valid",
+            "This verification link has expired or was already used. Sign in and choose "
+            "\u201cSend verification email\u201d on your account page to get a new one.",
+            400, url_for("account_view"), "Go to my account",
+        )
+    storage.mark_email_verified(user_id)
+    return _render_message("Email verified", "Thank you, your email address is now verified.",
+                           200, url_for("index"), "Continue")
+
+
+@bp.route("/api/account/resend-verification", methods=["POST"])
+def resend_verification():
+    if g.user.email_verified:
+        return jsonify({"ok": True})
+    if not storage.record_signup_attempt(f"mail:verify:{g.user.id}", MAIL_LIMIT_PER_ADDRESS, MAIL_LIMIT_WINDOW_SECONDS):
+        return jsonify({"error": "Too many verification emails requested. Please try again later."}), 429
+    _send_token_email(g.user.id, g.user.email, "verify")
+    return jsonify({"ok": True})
+
+
+def _render_forgot(email: str, error: str, status: int = 200):
+    return render_template("forgot_password.html", email=email, error=error, captcha=new_captcha()), status
+
+
+@bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "GET":
+        return _render_forgot("", "")
+
+    email = normalize_email(request.form.get("email"))
+    if not storage.record_signup_attempt("mail:" + _client_key(), MAIL_LIMIT_PER_IP, MAIL_LIMIT_WINDOW_SECONDS):
+        return _render_forgot(email, "Too many requests from your network. Please try again later.", 429)
+    if not captcha_passed(request.form.get("captcha_id") or "", request.form.get("captcha_answer") or ""):
+        return _render_forgot(email, "The characters you typed didn't match the image. Please try the new one.", 400)
+    if not EMAIL_RE.match(email) or len(email) > EMAIL_MAX_CHARS:
+        return _render_forgot(email, "Please enter a valid email address.", 400)
+
+    # The same answer whether or not the address has an account (or we're
+    # over its per-address limit), so this form can't be used to find out
+    # who is registered.
+    row = storage.get_user_by_email(email)
+    if row is not None and storage.record_signup_attempt(
+        "mail:reset:" + email, MAIL_LIMIT_PER_ADDRESS, MAIL_LIMIT_WINDOW_SECONDS,
+    ):
+        _send_token_email(row["id"], row["email"], "reset")
+    return _render_message(
+        "Check your email",
+        "If an account exists for that address, we've sent a link to reset its password. It's valid for one hour.",
+        200, url_for("auth.signin"), "Back to sign in",
+    )
+
+
+@bp.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    token_hash = _hash_token(token)
+    invalid = lambda: _render_message(  # noqa: E731
+        "Link not valid", "This password reset link has expired or was already used.",
+        400, url_for("auth.forgot_password"), "Request a new link",
+    )
+    # Opening the link only looks at the token; it's used up when the new
+    # password is saved, so a mail scanner pre-fetching the link can't burn it.
+    if not storage.email_token_is_valid(token_hash, "reset"):
+        return invalid()
+    if request.method == "GET":
+        return render_template("reset_password.html", token=token, error="")
+
+    password = request.form.get("password") or ""
+    confirm = request.form.get("confirm") or ""
+    error = ""
+    if len(password) < PASSWORD_MIN_CHARS:
+        error = f"Your password must be at least {PASSWORD_MIN_CHARS} characters long."
+    elif len(password) > PASSWORD_MAX_CHARS:
+        error = "That password is too long."
+    elif password != confirm:
+        error = "The two passwords don't match."
+    if error:
+        return render_template("reset_password.html", token=token, error=error), 400
+
+    user_id = storage.take_email_token(token_hash, "reset")
+    if user_id is None:
+        return invalid()
+    storage.reset_password(user_id, User.hash_password(password))
+    return _render_message(
+        "Password changed", "Your password has been changed and you've been signed out everywhere. You can sign in now.",
+        200, url_for("auth.signin"), "Sign in",
+    )

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} — {{ site_name }}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+  <div class="modal auth-card">
+    <p class="auth-site-name">{{ site_name }}</p>
+    <h3>{{ title }}</h3>
+    <p>{{ message }}</p>
+    {% if link_url %}
+    <div class="modal-actions">
+      <a class="btn" href="{{ link_url }}">{{ link_text }}</a>
+    </div>
+    {% endif %}
+    {% include "_also_called.html" %}
+  </div>
+</div>
+</body>
+</html>

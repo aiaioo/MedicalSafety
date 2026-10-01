@@ -32,7 +32,10 @@
 <main class="account-page">
   <section>
     <h2>Details</h2>
-    <p class="modal-hint">Signed in as {{ g.user.email }}</p>
+    <p class="modal-hint">Signed in as {{ g.user.email }}
+      {% if g.user.email_verified %}&middot; email verified
+      {% else %}&middot; <span id="verifyStatus">email not yet verified.
+        <button type="button" class="btn" id="verifyResend">Send verification email</button></span>{% endif %}</p>
     <div class="account-photo">
       <img id="photoImg" alt="Your photo"{% if not profile.has_photo %} hidden{% endif %} src="{{ url_for('account_photo') }}{% if profile.has_photo %}?v=0{% endif %}">
       <div class="placeholder" id="photoPlaceholder"{% if profile.has_photo %} hidden{% endif %}></div>
@@ -126,6 +129,15 @@
   $("photoRemove").addEventListener("click", async () => {
     try { await api({{ url_for('api_account_photo')|tojson }}, "DELETE"); setPhoto(false); }
     catch (e) { show($("detailsError"), e.message); }
+  });
+
+  // Email verification
+  if ($("verifyResend")) $("verifyResend").addEventListener("click", async () => {
+    $("verifyResend").disabled = true;
+    try {
+      await api({{ url_for('auth.resend_verification')|tojson }}, "POST");
+      $("verifyStatus").textContent = "verification email sent: check your inbox.";
+    } catch (e) { $("verifyStatus").textContent = e.message; }
   });
 
   // Password

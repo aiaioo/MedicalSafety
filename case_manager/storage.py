@@ -1064,6 +1064,65 @@ def set_password_hash(user_id: int, password_hash: str, keep_token_hash: str) ->
 
 
 # ---------------------------------------------------------------------------
+# Emailed one-time links: email verification and password reset (see
+# db/migrations/027_email_verification.sql). Only the token's hash is stored.
+# ---------------------------------------------------------------------------
+
+def create_email_token(user_id: int, purpose: str, token_hash: str, expires_at: datetime) -> None:
+    """Records a new link token, replacing this user's earlier one for the
+    same purpose and sweeping out expired ones while it's at it."""
+    with _cursor() as cur:
+        cur.execute(
+            "DELETE FROM email_tokens WHERE expires_at <= now() OR (user_id = %s AND purpose = %s)",
+            (user_id, purpose),
+        )
+        cur.execute(
+            "INSERT INTO email_tokens (token_hash, user_id, purpose, expires_at) VALUES (%s, %s, %s, %s)",
+            (token_hash, user_id, purpose, expires_at),
+        )
+
+
+def email_token_is_valid(token_hash: str, purpose: str) -> bool:
+    """Whether the token exists and hasn't expired, without using it up."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM email_tokens WHERE token_hash = %s AND purpose = %s AND expires_at > now()",
+            (token_hash, purpose),
+        )
+        return cur.fetchone() is not None
+
+
+def take_email_token(token_hash: str, purpose: str) -> int | None:
+    """Uses up a still-unexpired token and returns its user's id (None if it
+    doesn't exist, was already used, or has expired)."""
+    with _cursor() as cur:
+        cur.execute(
+            "DELETE FROM email_tokens WHERE token_hash = %s AND purpose = %s AND expires_at > now() RETURNING user_id",
+            (token_hash, purpose),
+        )
+        row = cur.fetchone()
+    return row["user_id"] if row else None
+
+
+def mark_email_verified(user_id: int) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = %s", (user_id,))
+
+
+def reset_password(user_id: int, password_hash: str) -> None:
+    """Saves a new password hash after a reset link was used: signs the user
+    out everywhere (whoever knew the old password included), and counts the
+    email address as verified, since the link reached its owner."""
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = %s, email_verified_at = COALESCE(email_verified_at, now()) WHERE id = %s",
+            (password_hash, user_id),
+        )
+        cur.execute("DELETE FROM user_sessions WHERE user_id = %s", (user_id,))
+        cur.execute("DELETE FROM email_tokens WHERE user_id = %s AND purpose = 'reset'", (user_id,))
+
+
+# ---------------------------------------------------------------------------
 # Allegations (+ inculpatory/exculpatory evidence, + "to prove" items each
 # optionally linking some of that evidence, + linked cases)
 # ---------------------------------------------------------------------------
@@ -1244,7 +1303,7 @@ def create_user(email: str, password_hash: str) -> dict | None:
 def get_user_by_email(email: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, is_admin, is_content_creator FROM users WHERE lower(email) = lower(%s)",
+            "SELECT id, email, password_hash, is_admin, is_content_creator, email_verified_at FROM users WHERE lower(email) = lower(%s)",
             (email,),
         )
         row = cur.fetchone()
@@ -1268,7 +1327,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_admin, u.is_content_creator
+            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_admin, u.is_content_creator, u.email_verified_at
             FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
