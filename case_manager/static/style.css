@@ -937,7 +937,7 @@ a.tag:hover { background: #d7deec; }
 
 /* Viewers can read a report but not change it: hide the editing controls
    and the snippet Insert buttons. */
-#docApp.report-readonly #fmtControls,
+#docApp.report-readonly #fmtControls > *,
 #docApp.report-readonly .insert-snippet,
 #docApp.report-readonly #saveBtn,
 #docApp.report-readonly #saveStatus { display: none; }
