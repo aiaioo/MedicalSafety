@@ -160,7 +160,8 @@
   </section>
   {% endif %}
 </main>
-{% if is_admin %}<script src="{{ url_for('static', filename='dist/title-template-editor.bundle.js') }}"></script>{% endif %}
+{% if is_admin %}<script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
+<script src="{{ url_for('static', filename='dist/title-template-editor.bundle.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='admin.js') }}"></script>
 </body>
 </html>

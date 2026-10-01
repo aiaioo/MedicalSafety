@@ -976,8 +976,11 @@ a.tag:hover { background: #d7deec; }
 
 /* Cause title template editor (admin page) */
 .title-template-rte { border: 1px solid #cfd4e0; border-radius: 6px; background: white; }
-.title-template-toolbar { border: none; border-bottom: 1px solid #e0e2e8; flex-wrap: wrap; }
-.title-template-colour { width: 32px; height: 28px; padding: 0; border: 1px solid #cfd4e0; background: none; }
+.title-template-toolbar { border-radius: 6px 6px 0 0; padding: 6px 10px; gap: 6px; }
 .title-template-surface { padding: 10px 14px; min-height: 120px; }
 .title-template-surface .tiptap-content { outline: none; min-height: 100px; }
 .title-template-surface .tiptap-content p { margin: 0; min-height: 1.2em; }
+.modal-field .title-template-toolbar select.fmt-select { width: auto; max-width: 160px; margin: 0; padding: 6px 8px; }
+.modal-field .title-template-toolbar select.fmt-select-narrow { width: 56px; }
+.modal-field .title-template-toolbar .color-popover { width: 240px; }
+.title-template-toolbar .color-popover { z-index: 100; }
