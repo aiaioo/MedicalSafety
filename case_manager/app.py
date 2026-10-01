@@ -550,6 +550,7 @@ ALLEGATION_MAX_TEXT_CHARS = 10_000
 EVIDENCE_MAX_ITEMS = 300
 CASE_MAX_COURT_CHARS = 200
 CASE_MAX_NUMBER_CHARS = 100
+CASE_ROLES = ("Complainant", "Plaintiff", "Appellant", "Defendant", "Petitioner", "Claimant")
 CASE_MAX_PARTIES = 50
 CASE_MAX_PARTY_CHARS = 300
 CAUSE_TITLE_FONTS = ("", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri")
@@ -605,7 +606,9 @@ def sanitize_cause_title_settings(body, existing):
             doc = None
     doc = sanitize_report_doc(doc, CAUSE_TITLE_TEMPLATE_MAX_CHARS) if isinstance(doc, dict) else None
     known_ids = {t["id"] for t in storage.list_cause_title_templates()}
+    role = body.get("case_role", existing.get("case_role", CASE_ROLES[0]))
     return {
+        "case_role": role if role in CASE_ROLES else CASE_ROLES[0],
         "court_location": _sanitize_text(body.get("court_location", existing.get("court_location", "")), CASE_MAX_COURT_CHARS),
         "cause_title_template_id": template_id if template_id in known_ids else None,
         "cause_title_one_line_parties": bool(body.get("cause_title_one_line_parties", existing.get("cause_title_one_line_parties", False))),
