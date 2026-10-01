@@ -1214,9 +1214,11 @@ import { Pagination, repaginate } from "./pagination.js";
     if (current) {
       caseSetupBody.innerHTML =
         `<p>This report is associated with the case <strong>${escapeHtml(current.name)}</strong>.</p>` +
-        '<button type="button" id="insertCauseTitleBtn">Insert cause title</button> ' +
-        `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Cause title builder</a> ` +
-        '<button type="button" id="caseDissociateBtn">Dissociate from case</button>';
+        '<div class="modal-btn-stack">' +
+        `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Cause title builder</a>` +
+        '<button type="button" class="btn" id="insertCauseTitleBtn">Insert cause title</button>' +
+        '<button type="button" class="btn" id="caseDissociateBtn">Dissociate from case</button>' +
+        '</div>';
       document.getElementById("insertCauseTitleBtn").addEventListener("click", insertCauseTitle);
       document.getElementById("caseDissociateBtn").addEventListener("click", () => updateCaseLink("DELETE", current.id));
       return;
@@ -1227,7 +1229,7 @@ import { Pagination, repaginate } from "./pagination.js";
     caseSetupBody.innerHTML =
       '<label class="modal-field">Associate this report with case' +
       `<select id="caseSetupSelect">${options}</select></label>` +
-      '<button type="button" id="caseAssociateBtn">Associate</button>';
+      '<div class="modal-btn-stack"><button type="button" class="btn" id="caseAssociateBtn">Associate</button></div>';
     document.getElementById("caseAssociateBtn").addEventListener("click", () =>
       updateCaseLink("POST", document.getElementById("caseSetupSelect").value)
     );

@@ -526,6 +526,9 @@ a.tag:hover { background: #d7deec; }
 }
 .modal-actions button:last-child { background: #2266dd; color: white; border-color: #2266dd; }
 
+.modal-btn-stack { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin-top: 14px; }
+.modal-btn-stack .btn { padding: 10px 16px; font-size: 15px; text-align: center; text-decoration: none; }
+
 /* ---- allegations workspace ---- */
 #allegationsApp { display: flex; flex-direction: column; width: 100%; height: 100vh; }
 .allegations-layout { flex: 1; min-height: 0; display: flex; justify-content: center; overflow: auto; }
