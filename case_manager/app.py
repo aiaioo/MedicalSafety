@@ -2761,6 +2761,14 @@ def annexure_selected_pages(d, page_count):
     return parse_page_range(d["page_range"], page_count) or []
 
 
+def _tabs_as_spaces(nodes):
+    """`nodes` with every tab in its text replaced by six non-breaking spaces, as the PDF does, so text laid out with tabs
+    takes the same width in Word (whose own tab stops are much wider and make such lines wrap)."""
+    return [{**n, "text": n["text"].replace("\t", "\u00a0" * 6)} if n.get("type") == "text" and "text" in n
+            else {**n, "content": _tabs_as_spaces(n["content"])} if n.get("content") else n
+            for n in nodes]
+
+
 def list_of_documents_docx(ctx, rows):
     """The List of Documents as a Word file: `ctx` as from annexure_list_context(include_doc=True), `rows` as for list_of_documents_html."""
     doc = DocxDocument()
@@ -2774,9 +2782,12 @@ def list_of_documents_docx(ctx, rows):
 
     cause = (ctx.get("causeTitleDoc") or {}).get("content")
     if cause:
-        _docx_render_blocks(cause, doc, max_width_emu)
+        _docx_render_blocks(_tabs_as_spaces(cause), doc, max_width_emu)
         font, size = _docx_clean_font_name(ctx.get("causeFont") or ""), ctx.get("causeFontSize")
         for p in doc.paragraphs:
+            # As in the PDF, where the List of Documents CSS gives every paragraph no margin and a 1.4 line height.
+            p.paragraph_format.space_before = p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = 1.4
             for run in p.runs:
                 if font and run.font.name is None:
                     run.font.name = font
