@@ -2701,10 +2701,11 @@ def generate_cause_title_doc(case, templates):
     return {"type": "doc", "content": blocks}
 
 
-def annexure_list_context(report):
+def annexure_list_context(report, include_doc=False):
     """What the List of Documents shows besides the table: the cause title as
     HTML ("" when the report has no case with one), its font, and the court
-    location. Taken from the report's first case the user can view."""
+    location. Taken from the report's first case the user can view.
+    `include_doc` also returns the cause title's ProseMirror doc as "causeTitleDoc"."""
     case = next((c for c in (storage.get_case(cid) for cid in report.get("case_ids", []) if has_role("case", cid, "viewer")) if c), None)
     ctx = {"causeTitleHtml": "", "causeFont": "", "causeFontSize": 0, "location": ""}
     if case is None:
@@ -2724,6 +2725,8 @@ def annexure_list_context(report):
         doc = generate_cause_title_doc(case, templates)
     doc = sanitize_report_doc(doc, CAUSE_TITLE_TEMPLATE_MAX_CHARS)
     ctx["causeTitleHtml"] = _json_blocks_to_html(doc.get("content") or [])
+    if include_doc:
+        ctx["causeTitleDoc"] = doc
     ctx["causeFont"] = case.get("cause_title_font") or ""
     ctx["causeFontSize"] = case.get("cause_title_font_size") or 0
     return ctx
@@ -2737,6 +2740,60 @@ def annexure_page_range(start, end, pn):
         return "-"
     a, b = lo - skip + first, end - skip + first
     return str(a) if a == b else f"{a}-{b}"
+
+
+def annexure_selected_pages(d, page_count):
+    """The 1-based source pages of annexed document `d` that the annexure includes."""
+    if d["page_mode"] == "all":
+        return range(1, page_count + 1)
+    if d["page_mode"] == "snippets":
+        return [p for p in d["snippet_pages"] if p <= page_count]
+    return parse_page_range(d["page_range"], page_count) or []
+
+
+def list_of_documents_docx(ctx, rows):
+    """The List of Documents as a Word file: `ctx` as from annexure_list_context(include_doc=True), `rows` as for list_of_documents_html."""
+    doc = DocxDocument()
+    doc.styles["Normal"].font.name = "Times New Roman"
+    doc.styles["Normal"].font.size = Pt(12)
+    section = doc.sections[0]
+    section.page_width, section.page_height = Pt(595.28), Pt(841.89)
+    for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
+        setattr(section, side, Pt(64))
+    max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+
+    cause = (ctx.get("causeTitleDoc") or {}).get("content")
+    if cause:
+        _docx_render_blocks(cause, doc, max_width_emu)
+    else:
+        for _ in range(LIST_OF_DOCUMENTS_BLANK_LINES):
+            doc.add_paragraph()
+    heading = doc.add_paragraph()
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    heading.paragraph_format.space_before = Pt(16)
+    heading.paragraph_format.space_after = Pt(12)
+    run = heading.add_run("List of Documents")
+    run.bold = run.underline = True
+
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    for cell, text in zip(table.rows[0].cells, ("Sl.No.", "Particulars", "Pg.Nos.")):
+        cell.paragraphs[0].add_run(text).bold = True
+    for i, (text, pages) in enumerate(rows, 1):
+        for cell, value in zip(table.add_row().cells, (str(i), text, pages)):
+            cell.paragraphs[0].add_run(value)
+    for row in table.rows:
+        for j, width in enumerate((Pt(60), int(max_width_emu - Pt(60) - Pt(80)), Pt(80))):
+            row.cells[j].width = width
+        for j in (0, 2):
+            row.cells[j].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    place = doc.add_paragraph(ctx.get("location") or "")
+    place.paragraph_format.space_before = Pt(24)
+    doc.add_paragraph("Date:")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 def list_of_documents_html(ctx, rows):
@@ -2879,12 +2936,7 @@ def api_report_annexure_export(report_id):
         for d in payload["documents"]:
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
             with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
-                if d["page_mode"] == "all":
-                    pages = range(1, src.page_count + 1)
-                elif d["page_mode"] == "snippets":
-                    pages = [p for p in d["snippet_pages"] if p <= src.page_count]
-                else:
-                    pages = parse_page_range(d["page_range"], src.page_count) or []
+                pages = annexure_selected_pages(d, src.page_count)
                 if payload["annotations"] != "none":
                     for n, raw_anns in storage.get_all_annotations(d["id"]).items():
                         if n.isdigit() and 1 <= int(n) <= src.page_count:
@@ -2915,6 +2967,39 @@ def api_report_annexure_export(report_id):
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}-annexure.pdf"'
+    return resp
+
+
+@app.route("/api/report/<report_id>/annexure/list.docx")
+def api_report_annexure_list_docx(report_id):
+    """The annexure's List of Documents as a Word file (whether or not the PDF includes it)."""
+    check_report_id(report_id)
+    require_role("report", report_id)
+    report = storage.get_report(report_id)
+    if report is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    if not payload["documents"]:
+        raise DocumentError("The annexure is empty — add a document before downloading", 400)
+
+    dn, pn = payload["docNumbers"], payload["pageNumbers"]
+    rows = []
+    shown = 0  # annexure pages laid out so far, across documents
+    for d in payload["documents"]:
+        pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
+            count = len(annexure_selected_pages(d, src.page_count))
+        if count:
+            text = (d["description"] or d["title"]).strip()
+            rows.append((f"{doc_number_label(dn, len(rows))} - {text}" if dn["enabled"] else text,
+                         annexure_page_range(shown, shown + count - 1, pn)))
+            shown += count
+
+    data = list_of_documents_docx(annexure_list_context(report, include_doc=True), rows)
+    resp = Response(data, mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    resp.headers["Cache-Control"] = "no-store"
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
+    resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}-list-of-documents.docx"'
     return resp
 
 
