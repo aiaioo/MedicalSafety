@@ -44,14 +44,25 @@
   // ---------------------------------------------------------------------
   // Tabs
   // ---------------------------------------------------------------------
+  // The URL hash (e.g. /admin#titles) selects a tab, so other pages can link
+  // straight to one; clicking a tab keeps the hash in step.
+  function showTab(name) {
+    const tab = $('.admin-tab[data-tab="' + name + '"]');
+    if (!tab) return false;
+    $$(".admin-tab").forEach((t) => t.classList.remove("active"));
+    $$(".admin-panel").forEach((p) => p.classList.remove("active"));
+    tab.classList.add("active");
+    $("#tab-" + name).classList.add("active");
+    return true;
+  }
   $$(".admin-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      $$(".admin-tab").forEach((t) => t.classList.remove("active"));
-      $$(".admin-panel").forEach((p) => p.classList.remove("active"));
-      tab.classList.add("active");
-      $("#tab-" + tab.dataset.tab).classList.add("active");
+      showTab(tab.dataset.tab);
+      history.replaceState(null, "", "#" + tab.dataset.tab);
     });
   });
+  showTab(location.hash.slice(1));
+  window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
   // ---------------------------------------------------------------------
   // Users: disk usage formatting + role toggles

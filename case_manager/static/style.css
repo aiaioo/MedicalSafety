@@ -295,7 +295,7 @@ a.tag:hover { background: #d7deec; }
    content-level rules target that child (given the "tiptap-content" class
    via editorProps.attributes), while #editor above stays the page-shaped
    background/padding wrapper around it. */
-.editor .tiptap-content { outline: none; }
+.editor .tiptap-content { outline: none; tab-size: 40px; }
 .editor .tiptap-content:empty::before { content: attr(data-placeholder); color: #9aa0ad; }
 
 /* ---- margin guides: dashed outline showing the printable area on each
@@ -970,15 +970,17 @@ a.tag:hover { background: #d7deec; }
 .cause-title-controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
 .cause-title-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #46536b; }
 .cause-title-controls select, .cause-title-controls input { padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; font-family: inherit; }
-.cause-title-line { margin: 0; }
+.cause-title-line { margin: 0; tab-size: 40px; }
 .cause-title-preview { white-space: pre-wrap; border: 1px solid #d5dae3; border-radius: 10px; padding: 18px 22px; background: white; line-height: 1.5; margin-bottom: 24px; }
 .cause-title-template-editor textarea { width: 100%; box-sizing: border-box; min-height: 140px; font-family: monospace; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
 
 /* Cause title template editor (admin page) */
-.title-template-rte { border: 1px solid #cfd4e0; border-radius: 6px; background: white; }
+/* Same width as a report/article page (794px, 48px side margins), so text that
+   fits here fits there. */
+.title-template-rte { width: 796px; max-width: 100%; box-sizing: border-box; border: 1px solid #cfd4e0; border-radius: 6px; background: white; }
 .title-template-toolbar { border-radius: 6px 6px 0 0; padding: 6px 10px; gap: 6px; }
-.title-template-surface { padding: 10px 14px; min-height: 120px; }
-.title-template-surface .tiptap-content { outline: none; min-height: 100px; }
+.title-template-surface { padding: 10px 48px; min-height: 120px; line-height: 1.5; }
+.title-template-surface .tiptap-content { outline: none; min-height: 100px; tab-size: 40px; white-space: pre-wrap; }
 .title-template-surface .tiptap-content p { margin: 0; min-height: 1.2em; }
 .modal-field .title-template-toolbar select.fmt-select { width: auto; max-width: 160px; margin: 0; padding: 6px 8px; }
 .modal-field .title-template-toolbar select.fmt-select-narrow { width: 56px; }

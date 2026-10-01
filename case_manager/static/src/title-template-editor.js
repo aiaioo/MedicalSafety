@@ -9,6 +9,7 @@ import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { handleTabCharacter } from "./tabKey.js";
 
 const FONTS = ["Arial", "Georgia", "Times New Roman", "Garamond", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri"];
 const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 24, 30, 36];
@@ -92,6 +93,12 @@ window.createTitleTemplateEditor = function (container, body) {
     onSelectionUpdate: syncToolbar,
     onUpdate: syncToolbar,
   });
+
+  surface.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    handleTabCharacter(editor, e);
+  }, true);
 
   const sep = () => { const e = document.createElement("span"); e.className = "toolbar-sep"; return e; };
   const fontSel = select("Font", FONTS.map((f) => [f, f, `font-family:'${f}'`]), (v) => editor.chain().focus().setFontFamily(`'${v}'`).run());

@@ -1041,7 +1041,7 @@ def _json_inline_to_html(nodes):
     for node in nodes:
         t = node.get("type")
         if t == "text":
-            html = html_escape(node.get("text", ""))
+            html = html_escape(node.get("text", "")).replace("\t", "&nbsp;" * 6)  # a tab is 40px wide; HTML collapses a raw tab
             href = None
             for mark in node.get("marks") or []:
                 mt = mark.get("type")

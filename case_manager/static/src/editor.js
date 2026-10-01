@@ -12,6 +12,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
@@ -622,8 +623,7 @@ import { Pagination, repaginate } from "./pagination.js";
     if (e.target.closest && e.target.closest(".page-break")) e.preventDefault();
   });
 
-  // Tab/Shift+Tab: sink/lift within a list, else nudge the current block's
-  // left margin (see BlockIndent). Enter on an empty list item exits the
+  // Tab/Shift+Tab: sink/lift within a list, else type/remove a tab character. Enter on an empty list item exits the
   // list outright, regardless of nesting depth (see listNumbering.js).
   editorEl.addEventListener(
     "keydown",
@@ -633,7 +633,7 @@ import { Pagination, repaginate } from "./pagination.js";
         const dir = e.shiftKey ? -1 : 1;
         if (dir === 1 && editor.can().sinkListItem("listItem")) editor.chain().focus().sinkListItem("listItem").run();
         else if (dir === -1 && editor.can().liftListItem("listItem")) editor.chain().focus().liftListItem("listItem").run();
-        else editor.chain().focus().indentBlock(dir).run();
+        else handleTabCharacter(editor, e);
         return;
       }
       if (e.key === "Enter" && !e.shiftKey) {

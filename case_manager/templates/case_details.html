@@ -18,7 +18,7 @@
     <a class="btn docbar-lead" href="{{ url_for('cases_view') }}">&larr; Cases</a>
     <div class="docbar-center"><span class="doc-name doc-name-static" id="caseTitle">Case details</span></div>
     <span id="saveStatus" class="save-status"></span>
-    {% if is_admin %}<a class="btn" style="margin-left: auto;" href="{{ url_for('admin_view') }}">Cause title templates</a>{% endif %}
+    {% if is_admin %}<a class="btn" style="margin-left: auto;" href="{{ url_for('admin_view') }}#titles">Cause title templates</a>{% endif %}
   </header>
 
   <main class="allegations-layout" style="display:block; max-width: 980px; margin: 24px auto; padding: 0 20px 40px;">

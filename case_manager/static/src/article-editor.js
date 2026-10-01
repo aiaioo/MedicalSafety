@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
@@ -277,7 +278,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
 
   editor.view.dom.setAttribute("data-placeholder", "Start writing your webpage.");
 
-  // Tab/Shift+Tab sink/lift within a list, same as the report editor.
+  // Tab/Shift+Tab sink/lift within a list, else type/remove a tab character,
+  // same as the report editor.
   editorEl.addEventListener(
     "keydown",
     (e) => {
@@ -285,6 +287,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       e.preventDefault();
       if (!e.shiftKey && editor.can().sinkListItem("listItem")) editor.chain().focus().sinkListItem("listItem").run();
       else if (e.shiftKey && editor.can().liftListItem("listItem")) editor.chain().focus().liftListItem("listItem").run();
+      else handleTabCharacter(editor, e);
     },
     true
   );
