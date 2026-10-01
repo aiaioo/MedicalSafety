@@ -711,6 +711,12 @@ a.tag:hover { background: #d7deec; }
 }
 .hearing-doc-remove-btn:hover { background: #f7e8e6; color: #c0392b; }
 
+/* ---- one-off notice shown at the top of a page ---- */
+.flash-notice {
+  margin: 0 0 16px; padding: 10px 14px; background: #fff6e0; border: 1px solid #ecd48a;
+  border-radius: 6px; font-size: 13px; color: #6b5310;
+}
+
 /* ---- allegations: case-filter banner ---- */
 .allegations-filter-bar {
   margin: 0 0 14px; padding: 8px 10px; background: #eef1f7; border-radius: 6px;

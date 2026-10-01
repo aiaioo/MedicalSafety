@@ -13,6 +13,9 @@
      data-report="{{ report_id }}"
      data-can-edit="{{ '1' if can_edit else '' }}"
      data-can-create="{{ '1' if can_create else '' }}"
+     data-case-details-url="{{ url_for('case_details_view') }}"
+     data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
+     data-templates-url="{{ url_for('api_cause_title_templates') }}"
      data-reports-url="{{ url_for('api_reports') }}"
      data-preselect-source="{{ preselect_source }}"
      data-preselect-type="{{ preselect_type }}"
@@ -185,6 +188,7 @@
         </label>
         <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document &raquo;</a>
         <button type="button" class="btn" id="caseSetupBtn" style="display:none">Case setup &hellip;</button>
+        <button type="button" class="btn" id="insertCauseTitleBtn" style="display:none">Insert cause title</button>
       </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
@@ -351,6 +355,7 @@ try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?re
 </script>{% endif %}
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
+<script src="{{ url_for('static', filename='cause-title.js') }}"></script>
 <script src="{{ url_for('static', filename='dist/editor.bundle.js') }}"></script>
 </body>
 </html>

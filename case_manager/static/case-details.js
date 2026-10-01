@@ -83,66 +83,7 @@
   // -------------------------------------------------------------------
   // Cause title
   // -------------------------------------------------------------------
-  function partiesText(side) {
-    const names = data.parties.filter((p) => p.side === side && p.name.trim()).map((p) => p.name.trim());
-    if (data.cause_title_one_line_parties) return names.length > 1 ? `${names[0]} and Ors.` : names.join("");
-    return names.length > 1 ? names.map((n, i) => `${i + 1}. ${n}`).join("\n") : names.join("");
-  }
-
-  function currentTemplate() {
-    return templates.find((t) => t.id === data.cause_title_template_id) || templates[0] || null;
-  }
-
-  // Template bodies are ProseMirror docs (JSON strings) from the admin page's
-  // rich-text editor; older ones are plain text, one paragraph per line.
-  function templateDoc(body) {
-    if (typeof body === "string" && body.trimStart().startsWith("{")) {
-      try {
-        const doc = JSON.parse(body);
-        if (doc && doc.type === "doc") return doc;
-      } catch (e) { /* plain text that merely starts with a brace */ }
-    }
-    return { type: "doc", content: String(body).split(/\r?\n/).map((line) => ({ type: "paragraph", content: line ? [{ type: "text", text: line }] : [] })) };
-  }
-
-  function placeholderValues() {
-    return {
-      COURT_NAME: data.court.toUpperCase() || "[COURT_NAME]",
-      COURT_LOCATION: data.court_location.toUpperCase() || "[COURT_LOCATION]",
-      CASE_NUMBER: data.case_number.toUpperCase() || "[CASE_NUMBER]",
-      PLAINTIFFS: partiesText("complainant") || "[PLAINTIFFS]",
-      RESPONDENTS: partiesText("respondent") || "[RESPONDENTS]",
-    };
-  }
-
-  // One pass over the text, so a party name that happens to contain a
-  // placeholder is never substituted a second time. A value with line breaks
-  // (the party lists) becomes text + hardBreak nodes, keeping the marks.
-  function substituteNode(node, values) {
-    const text = node.text.replace(/\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]/g, (_, k) => values[k]);
-    const out = [];
-    text.split("\n").forEach((line, i) => {
-      if (i) out.push({ type: "hardBreak" });
-      if (line) out.push({ ...node, text: line });
-    });
-    return out;
-  }
-
-  // The cause title as a ProseMirror doc: the chosen template with the
-  // placeholders filled in.
-  function generateCauseDoc() {
-    const template = currentTemplate();
-    if (!template) return { type: "doc", content: [{ type: "paragraph" }] };
-    const values = placeholderValues();
-    const doc = templateDoc(template.body);
-    return {
-      type: "doc",
-      content: (doc.content || []).map((block) => {
-        const content = (block.content || []).flatMap((n) => (n.type === "text" ? substituteNode(n, values) : [n]));
-        return { ...block, content };
-      }),
-    };
-  }
+  const generateCauseDoc = () => window.CauseTitle.generate(data, templates);
 
   let titleEditor = null;
 
@@ -295,7 +236,7 @@
 
     const templateSelect = bodyEl.querySelector("#templateSelect");
     templateSelect.innerHTML = templates.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join("");
-    const current = currentTemplate();
+    const current = window.CauseTitle.currentTemplate(data, templates);
     if (current) templateSelect.value = current.id;
     templateSelect.addEventListener("change", () => {
       data.cause_title_template_id = templateSelect.value;
@@ -367,6 +308,20 @@
     }
   }
 
+  // The report editor sends people here (with ?notice=no-cause-title) when
+  // they ask to insert a cause title that has not been generated yet.
+  function showNotice() {
+    const params = new URLSearchParams(location.search);
+    if (params.get("notice") !== "no-cause-title") return;
+    const el = document.createElement("div");
+    el.className = "flash-notice";
+    el.textContent = "No cause title has been generated for this case yet. Fill in the court, case number and parties, choose a template, and then go back to your report to insert it.";
+    bodyEl.parentNode.insertBefore(el, bodyEl);
+    params.delete("notice");
+    const qs = params.toString();
+    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
+  }
+
   async function load() {
     try {
       const [caseRes, templatesRes] = await Promise.all([fetch(caseUrl), fetch(templatesUrl)]);
@@ -376,6 +331,7 @@
       data.cause_title_doc = data.cause_title_doc ? JSON.parse(data.cause_title_doc) : null;
       templates = templatesRes.ok ? await templatesRes.json() : [];
       render();
+      showNotice();
     } catch (e) {
       bodyEl.innerHTML = `<p class="empty">Failed to load case: ${escapeHtml(e.message)}</p>`;
     }
