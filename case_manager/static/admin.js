@@ -230,23 +230,23 @@
   if (templateListEl) {
     const editors = new Map(); // template card -> rich-text editor
     $$(".template-body", templateListEl).forEach((el) => {
-      editors.set(el.closest("[data-template-id]"), window.createTitleTemplateEditor(el, el.dataset.body));
+      const card = el.closest("[data-template-id]");
+      editors.set(card, window.createTitleTemplateEditor(el, el.dataset.body, () => saveTemplate(card)));
     });
-    const newEditor = window.createTitleTemplateEditor($("#newTemplateBody"), "");
-    templateListEl.addEventListener("click", async (e) => {
-      const card = e.target.closest("[data-template-id]");
-      if (!card) return;
-      const id = card.dataset.templateId;
+    const newEditor = window.createTitleTemplateEditor($("#newTemplateBody"), "", () => $("#addTemplateBtn").click());
+    async function saveTemplate(card) {
       const status = $(".role-save-status", card);
-      if (e.target.classList.contains("template-save")) {
-        try {
-          await api("/api/cause-title-template/" + encodeURIComponent(id), "PUT",
-            { name: $(".template-name", card).value, body: editors.get(card).getBody() });
-          status.textContent = "Saved";
-        } catch (err) {
-          status.textContent = err.message;
-        }
+      try {
+        await api("/api/cause-title-template/" + encodeURIComponent(card.dataset.templateId), "PUT",
+          { name: $(".template-name", card).value, body: editors.get(card).getBody() });
+        status.textContent = "Saved";
+      } catch (err) {
+        status.textContent = err.message;
       }
+    }
+    templateListEl.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-template-id]");
+      if (card && e.target.classList.contains("template-save")) saveTemplate(card);
     });
     $$(".template-delete", templateListEl).forEach((btn) => {
       wireConfirmDelete(btn, async () => {

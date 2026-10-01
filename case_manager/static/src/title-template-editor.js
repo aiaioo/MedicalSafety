@@ -70,7 +70,9 @@ function select(title, options, onChange) {
   return s;
 }
 
-window.createTitleTemplateEditor = function (container, body) {
+window.createTitleTemplateEditor = function (container, body, onSave, onChange) {
+  let baseFont = DEFAULT_FONT;
+  let baseSize = DEFAULT_SIZE;
   container.classList.add("title-template-rte");
   const toolbar = document.createElement("div");
   toolbar.className = "toolbar doc-toolbar title-template-toolbar";
@@ -91,7 +93,15 @@ window.createTitleTemplateEditor = function (container, body) {
     content: parseBody(body),
     editorProps: { attributes: { class: "tiptap-content", style: `font-family:'${DEFAULT_FONT}';font-size:${DEFAULT_SIZE}pt` } },
     onSelectionUpdate: syncToolbar,
-    onUpdate: syncToolbar,
+    onUpdate: () => { syncToolbar(); if (onChange) onChange(); },
+  });
+
+  // Ctrl/Cmd+S saves (the browser's own "save page" is suppressed).
+  surface.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      if (onSave) onSave();
+    }
   });
 
   surface.addEventListener("keydown", (e) => {
@@ -144,9 +154,9 @@ window.createTitleTemplateEditor = function (container, body) {
   function syncToolbar() {
     const style = editor.getAttributes("textStyle");
     const font = (style.fontFamily || "").replace(/['"]/g, "");
-    fontSel.value = FONTS.includes(font) ? font : DEFAULT_FONT;
+    fontSel.value = FONTS.includes(font) ? font : baseFont;
     const size = (style.fontSize || "").replace(/pt$/, "");
-    sizeSel.value = SIZES.map(String).includes(size) ? size : String(DEFAULT_SIZE);
+    sizeSel.value = SIZES.map(String).includes(size) ? size : String(baseSize);
     const color = style.color || DEFAULT_COLOR;
     colourSwatch.style.background = color;
     selectColour(color);
@@ -159,6 +169,19 @@ window.createTitleTemplateEditor = function (container, body) {
     // The body to save: the doc as a JSON string.
     getBody: () => JSON.stringify(editor.getJSON()),
     isEmpty: () => !editor.getText().trim(),
-    setBody: (b) => { editor.commands.setContent(parseBody(b)); },
+    // Replaces the content without counting as a user edit (no onChange).
+    setBody: (b) => { editor.commands.setContent(parseBody(b), { emitUpdate: false }); },
+    // The font/size unformatted text shows in (and the toolbar reports).
+    setBaseStyle: (font, sizePt) => {
+      baseFont = font || DEFAULT_FONT;
+      baseSize = sizePt || DEFAULT_SIZE;
+      editor.view.dom.style.fontFamily = `'${baseFont}'`;
+      editor.view.dom.style.fontSize = baseSize + "pt";
+      syncToolbar();
+    },
+    setEditable: (on) => {
+      editor.setEditable(on);
+      toolbar.style.display = on ? "" : "none";
+    },
   };
 };

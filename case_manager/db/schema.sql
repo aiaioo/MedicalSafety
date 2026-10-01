@@ -138,6 +138,7 @@ CREATE TABLE cases (
     cause_title_template_id TEXT,
     cause_title_font        TEXT NOT NULL DEFAULT '',
     cause_title_font_size   INTEGER NOT NULL DEFAULT 0,
+    cause_title_doc         TEXT,   -- hand-edited cause title (ProseMirror JSON); NULL: generated from the template
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

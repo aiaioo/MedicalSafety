@@ -527,10 +527,20 @@ def sanitize_cause_title_settings(body, existing):
     font = body.get("cause_title_font", existing.get("cause_title_font", ""))
     size = body.get("cause_title_font_size", existing.get("cause_title_font_size", 0))
     template_id = body.get("cause_title_template_id", existing.get("cause_title_template_id"))
+    # A hand-edited cause title (ProseMirror doc); null/absent-with-no-saved
+    # one means "generate it from the template".
+    doc = body["cause_title_doc"] if "cause_title_doc" in body else existing.get("cause_title_doc")
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except ValueError:
+            doc = None
+    doc = sanitize_report_doc(doc, CAUSE_TITLE_TEMPLATE_MAX_CHARS) if isinstance(doc, dict) else None
     known_ids = {t["id"] for t in storage.list_cause_title_templates()}
     return {
         "court_location": _sanitize_text(body.get("court_location", existing.get("court_location", "")), CASE_MAX_COURT_CHARS),
         "cause_title_template_id": template_id if template_id in known_ids else None,
+        "cause_title_doc": json.dumps(doc, separators=(",", ":")) if doc is not None else None,
         "cause_title_font": font if font in CAUSE_TITLE_FONTS else "",
         "cause_title_font_size": size if isinstance(size, int) and not isinstance(size, bool)
                                  and CAUSE_TITLE_MIN_FONT_SIZE <= size <= CAUSE_TITLE_MAX_FONT_SIZE else 0,

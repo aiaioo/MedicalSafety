@@ -43,6 +43,8 @@
     saveTimer = setTimeout(save, 600);
   }
 
+  const saveNow = () => save();
+
   async function save() {
     clearTimeout(saveTimer);
     setStatus("Saving…");
@@ -58,6 +60,7 @@
           cause_title_template_id: data.cause_title_template_id,
           cause_title_font: data.cause_title_font,
           cause_title_font_size: data.cause_title_font_size,
+          cause_title_doc: data.cause_title_doc,
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
@@ -110,46 +113,61 @@
     };
   }
 
-  function textNodeEl(node, values) {
-    // One pass over the text, so a party name that happens to contain a
-    // placeholder is never substituted a second time.
-    const span = document.createElement("span");
-    span.textContent = node.text.replace(/\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]/g, (_, k) => values[k]);
-    for (const mark of node.marks || []) {
-      const a = mark.attrs || {};
-      if (mark.type === "bold") span.style.fontWeight = "bold";
-      else if (mark.type === "italic") span.style.fontStyle = "italic";
-      else if (mark.type === "underline" || mark.type === "strike") {
-        const kind = mark.type === "underline" ? "underline" : "line-through";
-        span.style.textDecoration = (span.style.textDecoration + " " + kind).trim();
-      } else if (mark.type === "textStyle") {
-        if (a.fontFamily) span.style.fontFamily = a.fontFamily;
-        if (a.fontSize) span.style.fontSize = a.fontSize;
-        if (a.color) span.style.color = a.color;
-      }
-    }
-    return span;
+  // One pass over the text, so a party name that happens to contain a
+  // placeholder is never substituted a second time. A value with line breaks
+  // (the party lists) becomes text + hardBreak nodes, keeping the marks.
+  function substituteNode(node, values) {
+    const text = node.text.replace(/\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]/g, (_, k) => values[k]);
+    const out = [];
+    text.split("\n").forEach((line, i) => {
+      if (i) out.push({ type: "hardBreak" });
+      if (line) out.push({ ...node, text: line });
+    });
+    return out;
   }
 
-  function renderCauseTitle() {
-    const el = bodyEl.querySelector("#causeTitlePreview");
-    el.textContent = "";
-    el.style.fontFamily = data.cause_title_font || "";
-    el.style.fontSize = (data.cause_title_font_size || DEFAULT_FONT_SIZE) + "pt";
+  // The cause title as a ProseMirror doc: the chosen template with the
+  // placeholders filled in.
+  function generateCauseDoc() {
     const template = currentTemplate();
-    if (!template) return;
+    if (!template) return { type: "doc", content: [{ type: "paragraph" }] };
     const values = placeholderValues();
-    for (const block of templateDoc(template.body).content || []) {
-      const p = document.createElement("p");
-      p.className = "cause-title-line";
-      if (block.attrs && block.attrs.textAlign) p.style.textAlign = block.attrs.textAlign;
-      for (const node of block.content || []) {
-        if (node.type === "text") p.appendChild(textNodeEl(node, values));
-        else if (node.type === "hardBreak") p.appendChild(document.createElement("br"));
-      }
-      if (!p.firstChild) p.appendChild(document.createElement("br"));
-      el.appendChild(p);
-    }
+    const doc = templateDoc(template.body);
+    return {
+      type: "doc",
+      content: (doc.content || []).map((block) => {
+        const content = (block.content || []).flatMap((n) => (n.type === "text" ? substituteNode(n, values) : [n]));
+        return { ...block, content };
+      }),
+    };
+  }
+
+  let titleEditor = null;
+
+  // Until the user edits the title by hand it follows the template and the
+  // case's details; after that their version is kept (data.cause_title_doc)
+  // until they clear it.
+  function renderCauseTitle() {
+    if (!titleEditor) return;
+    titleEditor.setBaseStyle(data.cause_title_font, data.cause_title_font_size);
+    if (!data.cause_title_doc) titleEditor.setBody(JSON.stringify(generateCauseDoc()));
+    const edited = !!data.cause_title_doc;
+    const resetBtn = bodyEl.querySelector("#resetCauseTitleBtn");
+    resetBtn.disabled = !edited || !canEdit();
+    bodyEl.querySelector("#causeTitleHint").textContent = edited ? "Edited by hand" : "Generated from the template";
+  }
+
+  function onCauseTitleEdited() {
+    data.cause_title_doc = JSON.parse(titleEditor.getBody());
+    renderCauseTitle();
+    scheduleSave();
+  }
+
+  function resetCauseTitle() {
+    if (!data.cause_title_doc || !confirm("Discard your changes to the cause title and start again from the template?")) return;
+    data.cause_title_doc = null;
+    renderCauseTitle();
+    scheduleSave();
   }
 
   // -------------------------------------------------------------------
@@ -251,7 +269,11 @@
         <label>Font <select id="fontSelect"></select></label>
         <label>Size (pt) <input type="number" id="fontSizeInput" min="6" max="72" style="width: 70px"></label>
       </div>
-      <div class="cause-title-preview" id="causeTitlePreview"></div>
+      <div class="cause-title-actions">
+        <button type="button" class="btn" id="resetCauseTitleBtn" title="Discard your edits and regenerate the title from the template">Clear changes</button>
+        <span class="hint" id="causeTitleHint"></span>
+      </div>
+      <div class="cause-title-editor" id="causeTitleEditor"></div>
       <div class="parties-columns" id="partiesColumns"></div>`;
 
     for (const [id, key] of [["courtInput", "court"], ["courtLocationInput", "court_location"], ["caseNumberInput", "case_number"]]) {
@@ -313,8 +335,14 @@
       columnsEl.appendChild(col);
     }
 
+    titleEditor = window.createTitleTemplateEditor(bodyEl.querySelector("#causeTitleEditor"), JSON.stringify(data.cause_title_doc || generateCauseDoc()),
+      () => { if (canEdit()) saveNow(); }, () => { if (canEdit()) onCauseTitleEdited(); });
+    bodyEl.querySelector("#resetCauseTitleBtn").addEventListener("click", resetCauseTitle);
     renderCauseTitle();
-    if (!canEdit()) window.ReadOnlyLock.lock(bodyEl);
+    if (!canEdit()) {
+      window.ReadOnlyLock.lock(bodyEl);
+      titleEditor.setEditable(false);
+    }
   }
 
   async function load() {
@@ -323,6 +351,7 @@
       if (!caseRes.ok) throw new Error((await caseRes.json().catch(() => ({}))).error || caseRes.statusText);
       data = await caseRes.json();
       data.parties = Array.isArray(data.parties) ? data.parties : [];
+      data.cause_title_doc = data.cause_title_doc ? JSON.parse(data.cause_title_doc) : null;
       templates = templatesRes.ok ? await templatesRes.json() : [];
       render();
     } catch (e) {
