@@ -124,6 +124,11 @@
   // Details
   // City: a drop-down of major cities (plus Other) for countries we have a list for, else free text.
   const CITIES = {{ cities|tojson }}, DEFAULT_CITY = {{ default_cities|tojson }};
+  // "Mumbai" or "bombay" matches "Bombay (Mumbai)": compare against each name in the entry.
+  function matchCity(list, saved) {
+    const want = saved.toLowerCase();
+    return list.find(c => c.toLowerCase().split(/\s*[()]\s*/).includes(want));
+  }
   function renderCities(keepSaved) {
     const list = CITIES[$("country").value], sel = $("citySelect"), txt = $("city");
     if (!list) { sel.hidden = true; txt.hidden = false; return; }
@@ -131,7 +136,8 @@
     sel.innerHTML = "";
     sel.add(new Option("Select a city", ""));
     for (const c of list.concat(["Other"])) sel.add(new Option(c, c));
-    if (saved && list.includes(saved)) { sel.value = saved; txt.value = ""; }
+    const match = saved && matchCity(list, saved);
+    if (match) { sel.value = match; txt.value = ""; }
     else { sel.value = saved ? "Other" : (DEFAULT_CITY[$("country").value] || ""); if (!saved) txt.value = ""; }
     sel.hidden = false; syncCityText();
   }
