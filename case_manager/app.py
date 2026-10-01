@@ -74,7 +74,7 @@ REPORT_PAGE_NUMBER_POSITIONS = {
 }
 REPORT_PAGE_NUMBER_FONTS = {
     "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
-    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
+    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'", "'Bookman Old Style'", "Calibri",
 }
 PAGE_NUMBER_TEXT_DROP = 0.18  # tuned so the number's glyphs sit optically centred in the outline
 ANNEXURE_PAGE_NUMBER_BAND = 46  # pt of header/footer band the annexure page numbers sit in (the preview mirrors it)
@@ -484,7 +484,7 @@ CASE_MAX_COURT_CHARS = 200
 CASE_MAX_NUMBER_CHARS = 100
 CASE_MAX_PARTIES = 50
 CASE_MAX_PARTY_CHARS = 300
-CAUSE_TITLE_FONTS = ("", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New")
+CAUSE_TITLE_FONTS = ("", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri")
 CAUSE_TITLE_MIN_FONT_SIZE, CAUSE_TITLE_MAX_FONT_SIZE = 6, 72
 CAUSE_TITLE_TEMPLATE_MAX_CHARS = 5000
 CASE_MAX_DATE_CHARS = 40

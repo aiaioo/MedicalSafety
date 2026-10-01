@@ -95,7 +95,7 @@ import { Pagination, repaginate } from "./pagination.js";
   // document.html (and with REPORT_PAGE_NUMBER_FONTS in app.py).
   const PAGE_NUMBER_FONTS = new Set([
     "Arial", "Georgia", "'Times New Roman'", "'Courier New'",
-    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'",
+    "Verdana", "'Trebuchet MS'", "'Comic Sans MS'", "'Bookman Old Style'", "Calibri",
   ]);
   const PAGE_NUMBER_FONT_SIZE_MIN = 6;
   const PAGE_NUMBER_FONT_SIZE_MAX = 72;

@@ -10,7 +10,7 @@
   const bodyEl = document.getElementById("caseDetailsBody");
   const saveStatusEl = document.getElementById("saveStatus");
 
-  const FONTS = ["", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New"];
+  const FONTS = ["", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri"];
   const DEFAULT_FONT_SIZE = 14;
   const SIDES = [
     { side: "complainant", heading: "Complainants", add: "+ Add complainant" },
