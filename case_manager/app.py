@@ -486,7 +486,7 @@ CASE_MAX_PARTIES = 50
 CASE_MAX_PARTY_CHARS = 300
 CAUSE_TITLE_FONTS = ("", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri")
 CAUSE_TITLE_MIN_FONT_SIZE, CAUSE_TITLE_MAX_FONT_SIZE = 6, 72
-CAUSE_TITLE_TEMPLATE_MAX_CHARS = 5000
+CAUSE_TITLE_TEMPLATE_MAX_CHARS = 20000
 CASE_MAX_DATE_CHARS = 40
 HEARING_MAX_ITEMS = 300
 HEARING_DOC_MAX_ITEMS = 100
@@ -2752,11 +2752,24 @@ def api_cause_title_template(template_id):
 
 def _cause_title_template_fields(data):
     name = _sanitize_text(data.get("name"), 200)
-    body = data.get("body")
-    body = body.strip("\r\n")[:CAUSE_TITLE_TEMPLATE_MAX_CHARS] if isinstance(body, str) else ""
-    if not name or not body.strip():
+    # The body is a ProseMirror doc (as a JSON string, or an object) from the
+    # admin page's rich-text editor.
+    raw = data.get("body")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    doc = sanitize_report_doc(raw, CAUSE_TITLE_TEMPLATE_MAX_CHARS)
+    if not name or not _doc_has_text(doc):
         raise DocumentError("A template needs a name and some text", 400)
-    return name, body
+    return name, json.dumps(doc, separators=(",", ":"))
+
+
+def _doc_has_text(node):
+    if node.get("type") == "text":
+        return bool(node.get("text", "").strip())
+    return any(_doc_has_text(c) for c in node.get("content", []))
 
 
 # ---------------------------------------------------------------------------

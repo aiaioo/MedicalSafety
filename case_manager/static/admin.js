@@ -217,6 +217,11 @@
   // ---------------------------------------------------------------------
   const templateListEl = $("#titleTemplateList");
   if (templateListEl) {
+    const editors = new Map(); // template card -> rich-text editor
+    $$(".template-body", templateListEl).forEach((el) => {
+      editors.set(el.closest("[data-template-id]"), window.createTitleTemplateEditor(el, el.dataset.body));
+    });
+    const newEditor = window.createTitleTemplateEditor($("#newTemplateBody"), "");
     templateListEl.addEventListener("click", async (e) => {
       const card = e.target.closest("[data-template-id]");
       if (!card) return;
@@ -225,7 +230,7 @@
       if (e.target.classList.contains("template-save")) {
         try {
           await api("/api/cause-title-template/" + encodeURIComponent(id), "PUT",
-            { name: $(".template-name", card).value, body: $(".template-body", card).value });
+            { name: $(".template-name", card).value, body: editors.get(card).getBody() });
           status.textContent = "Saved";
         } catch (err) {
           status.textContent = err.message;
@@ -247,7 +252,7 @@
       const errEl = $("#templateError");
       try {
         await api("/api/cause-title-templates", "POST",
-          { name: $("#newTemplateName").value, body: $("#newTemplateBody").value });
+          { name: $("#newTemplateName").value, body: newEditor.getBody() });
         show(errEl, "");
         location.reload();
       } catch (err) {

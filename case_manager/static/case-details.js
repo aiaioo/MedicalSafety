@@ -88,26 +88,68 @@
     return templates.find((t) => t.id === data.cause_title_template_id) || templates[0] || null;
   }
 
-  // One pass over the template, so a party name that happens to contain a
-  // placeholder is never substituted a second time.
-  function generateCauseTitle() {
-    const template = currentTemplate();
-    if (!template) return "";
-    const values = {
+  // Template bodies are ProseMirror docs (JSON strings) from the admin page's
+  // rich-text editor; older ones are plain text, one paragraph per line.
+  function templateDoc(body) {
+    if (typeof body === "string" && body.trimStart().startsWith("{")) {
+      try {
+        const doc = JSON.parse(body);
+        if (doc && doc.type === "doc") return doc;
+      } catch (e) { /* plain text that merely starts with a brace */ }
+    }
+    return { type: "doc", content: String(body).split(/\r?\n/).map((line) => ({ type: "paragraph", content: line ? [{ type: "text", text: line }] : [] })) };
+  }
+
+  function placeholderValues() {
+    return {
       COURT_NAME: data.court || "[COURT_NAME]",
       COURT_LOCATION: data.court_location || "[COURT_LOCATION]",
       CASE_NUMBER: data.case_number || "[CASE_NUMBER]",
       PLAINTIFFS: partiesText("complainant") || "[PLAINTIFFS]",
       RESPONDENTS: partiesText("respondent") || "[RESPONDENTS]",
     };
-    return template.body.replace(/\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]/g, (_, k) => values[k]);
+  }
+
+  function textNodeEl(node, values) {
+    // One pass over the text, so a party name that happens to contain a
+    // placeholder is never substituted a second time.
+    const span = document.createElement("span");
+    span.textContent = node.text.replace(/\[(COURT_NAME|COURT_LOCATION|CASE_NUMBER|PLAINTIFFS|RESPONDENTS)\]/g, (_, k) => values[k]);
+    for (const mark of node.marks || []) {
+      const a = mark.attrs || {};
+      if (mark.type === "bold") span.style.fontWeight = "bold";
+      else if (mark.type === "italic") span.style.fontStyle = "italic";
+      else if (mark.type === "underline" || mark.type === "strike") {
+        const kind = mark.type === "underline" ? "underline" : "line-through";
+        span.style.textDecoration = (span.style.textDecoration + " " + kind).trim();
+      } else if (mark.type === "textStyle") {
+        if (a.fontFamily) span.style.fontFamily = a.fontFamily;
+        if (a.fontSize) span.style.fontSize = a.fontSize;
+        if (a.color) span.style.color = a.color;
+      }
+    }
+    return span;
   }
 
   function renderCauseTitle() {
     const el = bodyEl.querySelector("#causeTitlePreview");
-    el.textContent = generateCauseTitle();
+    el.textContent = "";
     el.style.fontFamily = data.cause_title_font || "";
     el.style.fontSize = (data.cause_title_font_size || DEFAULT_FONT_SIZE) + "pt";
+    const template = currentTemplate();
+    if (!template) return;
+    const values = placeholderValues();
+    for (const block of templateDoc(template.body).content || []) {
+      const p = document.createElement("p");
+      p.className = "cause-title-line";
+      if (block.attrs && block.attrs.textAlign) p.style.textAlign = block.attrs.textAlign;
+      for (const node of block.content || []) {
+        if (node.type === "text") p.appendChild(textNodeEl(node, values));
+        else if (node.type === "hardBreak") p.appendChild(document.createElement("br"));
+      }
+      if (!p.firstChild) p.appendChild(document.createElement("br"));
+      el.appendChild(p);
+    }
   }
 
   // -------------------------------------------------------------------

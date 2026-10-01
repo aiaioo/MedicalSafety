@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife && esbuild static/src/article-editor.js --bundle --outfile=static/dist/article.bundle.js --format=iife",
+    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife && esbuild static/src/article-editor.js --bundle --outfile=static/dist/article.bundle.js --format=iife && esbuild static/src/title-template-editor.js --bundle --outfile=static/dist/title-template-editor.bundle.js --format=iife",
     "watch": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife --watch"
   },
   "dependencies": {

@@ -140,12 +140,12 @@
   <section class="admin-panel" id="tab-titles">
     <p class="modal-hint">Templates for the cause title generated on a case's details page. Use the placeholders
       <code>[COURT_NAME]</code>, <code>[COURT_LOCATION]</code>, <code>[CASE_NUMBER]</code>,
-      <code>[PLAINTIFFS]</code> and <code>[RESPONDENTS]</code>; line breaks are kept.</p>
+      <code>[PLAINTIFFS]</code> and <code>[RESPONDENTS]</code>; use the toolbar to set the font, size, alignment and emphasis.</p>
     <div id="titleTemplateList">
       {% for t in title_templates %}
       <div class="website-card cause-title-template-editor" data-template-id="{{ t.id }}">
         <label class="modal-field">Name <input type="text" class="template-name" value="{{ t.name }}" maxlength="200" style="width:100%;padding:6px 8px;border:1px solid #cfd4e0;border-radius:6px;box-sizing:border-box"></label>
-        <label class="modal-field">Text <textarea class="template-body">{{ t.body }}</textarea></label>
+        <div class="modal-field">Text <div class="template-body" data-body="{{ t.body }}"></div></div>
         <div style="margin-top:8px;display:flex;gap:8px"><button type="button" class="btn template-save">Save</button><button type="button" class="btn card-delete-btn template-delete" title="Delete template">&#10005;</button><span class="role-save-status"></span></div>
       </div>
       {% endfor %}
@@ -153,13 +153,14 @@
     <div class="website-card cause-title-template-editor">
       <h3>Add a template</h3>
       <label class="modal-field">Name <input type="text" id="newTemplateName" maxlength="200" style="width:100%;padding:6px 8px;border:1px solid #cfd4e0;border-radius:6px;box-sizing:border-box"></label>
-      <label class="modal-field">Text <textarea id="newTemplateBody" placeholder="BEFORE THE [COURT_NAME] AT [COURT_LOCATION]&#10;[CASE_NUMBER]&#10;BETWEEN:&#10;[PLAINTIFFS]&#10;AND:&#10;[RESPONDENTS]"></textarea></label>
+      <div class="modal-field">Text <div id="newTemplateBody"></div></div>
       <div style="margin-top:8px"><button type="button" class="btn" id="addTemplateBtn">Add template</button></div>
       <p id="templateError" class="error-message" style="display:none"></p>
     </div>
   </section>
   {% endif %}
 </main>
+{% if is_admin %}<script src="{{ url_for('static', filename='dist/title-template-editor.bundle.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='admin.js') }}"></script>
 </body>
 </html>
