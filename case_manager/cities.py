@@ -3,13 +3,14 @@ Countries without an entry here get a free-text City field; every list is follow
 
 CITIES_BY_COUNTRY: dict[str, list[str]] = {
     "India": [
-        "Agra", "Ahmedabad", "Allahabad (Prayagraj)", "Amritsar", "Aurangabad", "Bangalore (Bengaluru)", "Bhopal",
-        "Bhubaneswar", "Bombay (Mumbai)", "Calicut (Kozhikode)", "Chandigarh", "Madras (Chennai)", "Coimbatore", "Dehradun", "Delhi", "Faridabad", "Ghaziabad",
-        "Goa", "Gurugram", "Guwahati", "Gwalior", "Hyderabad", "Indore", "Jabalpur", "Jaipur", "Jalandhar",
-        "Jamshedpur", "Jodhpur", "Kanpur", "Kochi", "Kolkata", "Lucknow", "Ludhiana", "Madurai",
-        "Mangaluru", "Meerut", "Mysuru", "Nagpur", "Nashik", "Navi Mumbai", "Noida", "Patna", "Pune",
-        "Raipur", "Rajkot", "Ranchi", "Srinagar", "Surat", "Thane", "Thiruvananthapuram", "Tiruchirappalli",
-        "Vadodara", "Varanasi", "Vijayawada", "Visakhapatnam",
+        "Agra", "Ahmedabad", "Allahabad (Prayagraj)", "Amritsar", "Aurangabad", "Bangalore (Bengaluru)",
+        "Baroda (Vadodara)", "Bhopal", "Bhubaneswar", "Bombay (Mumbai)", "Calicut (Kozhikode)", "Chandigarh",
+        "Cochin (Kochi)", "Coimbatore", "Dehradun", "Delhi", "Faridabad", "Ghaziabad", "Goa", "Gurugram",
+        "Guwahati", "Gwalior", "Hyderabad", "Indore", "Jabalpur", "Jaipur", "Jalandhar", "Jamshedpur",
+        "Jodhpur", "Kanpur", "Kolkata", "Lucknow", "Ludhiana", "Madras (Chennai)", "Madurai",
+        "Mangalore (Mangaluru)", "Meerut", "Mysuru", "Nagpur", "Nashik", "Navi Mumbai", "Noida", "Patna",
+        "Pune", "Raipur", "Rajkot", "Ranchi", "Srinagar", "Surat", "Thane", "Thiruvananthapuram",
+        "Trichy (Tiruchirappalli)", "Varanasi", "Vijayawada", "Visakhapatnam",
     ],
     "United States": [
         "Atlanta", "Austin", "Baltimore", "Boston", "Charlotte", "Chicago", "Cleveland", "Columbus", "Dallas",
