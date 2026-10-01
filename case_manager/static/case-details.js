@@ -10,7 +10,7 @@
   const bodyEl = document.getElementById("caseDetailsBody");
   const saveStatusEl = document.getElementById("saveStatus");
 
-  const CASE_ROLES = ["Complainant", "Plaintiff", "Appellant", "Defendant", "Petitioner", "Claimant"];
+  const CASE_ROLES = ["Complainant", "Plaintiff", "Appellant", "Defendant", "Petitioner", "Claimant", "Respondent"];
   const FONTS = ["", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri"];
   const DEFAULT_FONT_SIZE = 14;
   const SIDES = [
@@ -58,6 +58,7 @@
           case_number: data.case_number,
           court_location: data.court_location,
           case_role: data.case_role,
+          party_in_person: data.party_in_person,
           parties: data.parties,
           cause_title_template_id: data.cause_title_template_id,
           cause_title_font: data.cause_title_font,
@@ -216,6 +217,7 @@
             ${CASE_ROLES.map((r) => `<option value="${r}">${r}</option>`).join("")}
           </select>
         </label>
+        <label class="toggle-label"><input type="checkbox" id="partyInPersonInput"> Is party in person</label>
       </div>
       <div class="allegations-column-head"><h2>Cause title</h2></div>
       <div class="cause-title-controls">
@@ -245,6 +247,13 @@
     roleSelect.value = data.case_role || CASE_ROLES[0];
     roleSelect.addEventListener("change", () => {
       data.case_role = roleSelect.value;
+      scheduleSave();
+    });
+
+    const inPersonInput = bodyEl.querySelector("#partyInPersonInput");
+    inPersonInput.checked = !!data.party_in_person;
+    inPersonInput.addEventListener("change", () => {
+      data.party_in_person = inPersonInput.checked;
       scheduleSave();
     });
 

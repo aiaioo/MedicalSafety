@@ -137,6 +137,7 @@ CREATE TABLE cases (
     summary     TEXT NOT NULL DEFAULT '',
     court_location          TEXT NOT NULL DEFAULT '',
     case_role               TEXT NOT NULL DEFAULT 'Complainant',
+    party_in_person         BOOLEAN NOT NULL DEFAULT false,
     cause_title_template_id TEXT,
     cause_title_font        TEXT NOT NULL DEFAULT '',
     cause_title_font_size   INTEGER NOT NULL DEFAULT 0,
