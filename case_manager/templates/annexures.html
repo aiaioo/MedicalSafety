@@ -26,11 +26,11 @@
         <button type="button" class="btn" id="addBtn" style="display: table; margin-top: 6px;">Add</button>
         <a class="btn" id="downloadBtn" style="display: table; margin-top: 6px;" href="{{ url_for('api_report_annexure_export', report_id=report_id) }}">Download annexure as PDF</a>
         <a class="btn" id="downloadListBtn" style="display: table; margin-top: 6px;" href="{{ url_for('api_report_annexure_list_docx', report_id=report_id) }}">Download LoD as Word</a>
+        <label class="annex-toggle"><input type="checkbox" id="listOfDocumentsEnabled"> Add a List of Documents (LoD) page at the top</label>
       </div>
       <h3>Annexed documents</h3>
       <p class="empty" style="margin-top: 0">Drag to reorder.</p>
       <div id="annexList" class="annex-list"></div>
-      <label class="annex-toggle"><input type="checkbox" id="listOfDocumentsEnabled"> Add a List of Documents (LoD) page at the top</label>
       <div class="annex-toggle" id="annotationsChoice" role="radiogroup" aria-label="Annotations">
         <label class="annex-radio"><input type="radio" name="annexAnnotations" value="none"> Omit annotations</label>
         <label class="annex-radio"><input type="radio" name="annexAnnotations" value="blackouts"> Include only blackouts</label>

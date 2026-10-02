@@ -1215,7 +1215,7 @@ import { Pagination, repaginate } from "./pagination.js";
       caseSetupBody.innerHTML =
         `<p>This report is associated with the case <strong>${escapeHtml(current.name)}</strong>.</p>` +
         '<div class="modal-btn-stack">' +
-        `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Cause title builder</a>` +
+        `<a class="btn" id="caseDetailsLink" href="${escapeHtml(appEl.dataset.caseDetailsUrl)}?case=${encodeURIComponent(current.id)}">Edit cause title</a>` +
         '<button type="button" class="btn" id="insertCauseTitleBtn">Insert cause title</button>' +
         '<button type="button" class="btn" id="caseDissociateBtn">Dissociate from case</button>' +
         '</div>';
