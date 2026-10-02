@@ -1010,7 +1010,8 @@ a.tag:hover { background: #d7deec; }
 
 /* Case details: the cause title is the same rich-text editor as the admin templates. */
 .cause-title-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-.cause-title-editor { margin-bottom: 24px; }
+.cause-title-editor { margin-bottom: 8px; }
+.cause-title-actions-below { margin-bottom: 24px; }
 .cause-title-editor.title-template-rte { width: 796px; }
 .cause-title-editor .title-template-surface .tiptap-content p { margin: 0; }
 

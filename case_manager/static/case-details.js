@@ -11,8 +11,6 @@
   const saveStatusEl = document.getElementById("saveStatus");
 
   const CASE_ROLES = ["Complainant", "Plaintiff", "Appellant", "Defendant", "Petitioner", "Claimant", "Respondent"];
-  const FONTS = ["", "Times New Roman", "Georgia", "Garamond", "Arial", "Helvetica", "Verdana", "Courier New", "Bookman Old Style", "Calibri"];
-  const DEFAULT_FONT_SIZE = 14;
   const SIDES = [
     { side: "complainant", heading: "Complainants", add: "+ Add complainant" },
     { side: "respondent", heading: "Respondents", add: "+ Add respondent" },
@@ -44,9 +42,16 @@
     saveTimer = setTimeout(save, 600);
   }
 
-  const saveNow = () => save();
+  function flash(el) {
+    if (!el) return;
+    el.classList.remove("save-flash");
+    void el.offsetWidth;
+    el.classList.add("save-flash");
+  }
 
-  async function save() {
+  const saveNow = (flashEl) => save(flashEl);
+
+  async function save(flashEl) {
     clearTimeout(saveTimer);
     setStatus("Saving…");
     try {
@@ -74,6 +79,7 @@
       data.cause_title_font = saved.cause_title_font;
       data.cause_title_font_size = saved.cause_title_font_size;
       setStatus("Saved");
+      flash(flashEl);
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }
@@ -222,15 +228,16 @@
       <div class="allegations-column-head"><h2>Cause title</h2></div>
       <div class="cause-title-controls">
         <label>Template <select id="templateSelect"></select></label>
-        <label>Font <select id="fontSelect"></select></label>
-        <label>Size (pt) <input type="number" id="fontSizeInput" min="6" max="72" style="width: 70px"></label>
         <label class="toggle-label"><input type="checkbox" id="oneLinePartiesInput"> Short party names</label>
       </div>
       <div class="cause-title-actions">
-        <button type="button" class="btn" id="resetCauseTitleBtn" title="Discard your edits and regenerate the title from the template">Clear changes</button>
         <span class="hint" id="causeTitleHint"></span>
       </div>
       <div class="cause-title-editor" id="causeTitleEditor"></div>
+      <div class="cause-title-actions cause-title-actions-below">
+        <button type="button" class="btn" id="saveCauseTitleBtn" title="Save (Ctrl+S / Cmd+S)">Save</button>
+        <button type="button" class="btn" id="resetCauseTitleBtn" title="Discard your edits and regenerate the title from the template">Clear changes</button>
+      </div>
       <div class="parties-columns" id="partiesColumns"></div>`;
 
     for (const [id, key] of [["courtInput", "court"], ["courtLocationInput", "court_location"], ["caseNumberInput", "case_number"]]) {
@@ -263,25 +270,6 @@
     if (current) templateSelect.value = current.id;
     templateSelect.addEventListener("change", () => {
       data.cause_title_template_id = templateSelect.value;
-      renderCauseTitle();
-      scheduleSave();
-    });
-
-    const fontSelect = bodyEl.querySelector("#fontSelect");
-    fontSelect.innerHTML = FONTS.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f || "Default")}</option>`).join("");
-    fontSelect.value = data.cause_title_font;
-    fontSelect.addEventListener("change", () => {
-      data.cause_title_font = fontSelect.value;
-      renderCauseTitle();
-      scheduleSave();
-    });
-
-    const sizeInput = bodyEl.querySelector("#fontSizeInput");
-    sizeInput.value = data.cause_title_font_size || "";
-    sizeInput.placeholder = String(DEFAULT_FONT_SIZE);
-    sizeInput.addEventListener("input", () => {
-      const n = parseInt(sizeInput.value, 10);
-      data.cause_title_font_size = n >= 6 && n <= 72 ? n : 0;
       renderCauseTitle();
       scheduleSave();
     });
@@ -321,9 +309,11 @@
       columnsEl.appendChild(col);
     }
 
-    titleEditor = window.createTitleTemplateEditor(bodyEl.querySelector("#causeTitleEditor"), JSON.stringify(data.cause_title_doc || generateCauseDoc()),
-      () => { if (canEdit()) saveNow(); }, () => { if (canEdit()) onCauseTitleEdited(); });
+    const editorEl = bodyEl.querySelector("#causeTitleEditor");
+    titleEditor = window.createTitleTemplateEditor(editorEl, JSON.stringify(data.cause_title_doc || generateCauseDoc()),
+      () => { if (canEdit()) saveNow(editorEl); }, () => { if (canEdit()) onCauseTitleEdited(); });
     bodyEl.querySelector("#resetCauseTitleBtn").addEventListener("click", resetCauseTitle);
+    bodyEl.querySelector("#saveCauseTitleBtn").addEventListener("click", () => saveNow(editorEl));
     renderCauseTitle();
     if (!canEdit()) {
       window.ReadOnlyLock.lock(bodyEl);
