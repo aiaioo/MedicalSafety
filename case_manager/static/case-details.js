@@ -36,10 +36,10 @@
   // -------------------------------------------------------------------
   // Saving
   // -------------------------------------------------------------------
-  function scheduleSave() {
+  function scheduleSave(flashEl) {
     setStatus("Unsaved changes…");
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(save, 600);
+    saveTimer = setTimeout(() => save(flashEl), 600);
   }
 
   function flash(el) {
@@ -254,7 +254,7 @@
     roleSelect.value = data.case_role || CASE_ROLES[0];
     roleSelect.addEventListener("change", () => {
       data.case_role = roleSelect.value;
-      scheduleSave();
+      scheduleSave(roleSelect);
     });
 
     const inPersonInput = bodyEl.querySelector("#partyInPersonInput");
@@ -271,7 +271,7 @@
     templateSelect.addEventListener("change", () => {
       data.cause_title_template_id = templateSelect.value;
       renderCauseTitle();
-      scheduleSave();
+      scheduleSave(templateSelect);
     });
 
     const oneLineInput = bodyEl.querySelector("#oneLinePartiesInput");
