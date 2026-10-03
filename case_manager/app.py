@@ -5,7 +5,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
-from html import escape as html_escape
+from html import escape as html_escape, unescape
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -1127,7 +1127,7 @@ def _mark_style_attrs(mark_type, attrs):
     return ""
 
 
-def _json_inline_to_html(nodes):
+def _json_inline_to_html(nodes, raw_tabs=False):
     """Renders a run of inline JSON nodes (text/hardBreak) to an HTML
     string, applying each text node's marks -- the JSON equivalent of the
     nested <strong>/<em>/... tags the old contenteditable editor produced,
@@ -1136,7 +1136,9 @@ def _json_inline_to_html(nodes):
     for node in nodes:
         t = node.get("type")
         if t == "text":
-            html = html_escape(node.get("text", "")).replace("\t", "&nbsp;" * 6)  # a tab is 40px wide; HTML collapses a raw tab
+            html = html_escape(node.get("text", ""))
+            if not raw_tabs:
+                html = html.replace("\t", "&nbsp;" * 6)  # a tab is 40px wide; HTML collapses a raw tab
             href = None
             for mark in node.get("marks") or []:
                 mt = mark.get("type")
@@ -1169,7 +1171,7 @@ def _json_block_style(attrs):
     return f' style="{html_escape("; ".join(decls), quote=True)}"' if decls else ""
 
 
-def _json_blocks_to_html(nodes, num_state=None, depth=0):
+def _json_blocks_to_html(nodes, num_state=None, depth=0, raw_tabs=False):
     """Walks the sanitized ProseMirror JSON tree, computing the same section
     numbers the live editor's ListMarkers decoration plugin renders (see
     _ListNumberingState above and static/src/listNumbering.js), and emits an
@@ -1185,11 +1187,11 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0):
         content = node.get("content") or []
         if t == "heading":
             level = attrs.get("level", 1)
-            out.append(f"<h{level}{_json_block_style(attrs)}>{_json_inline_to_html(content)}</h{level}>")
+            out.append(f"<h{level}{_json_block_style(attrs)}>{_json_inline_to_html(content, raw_tabs)}</h{level}>")
         elif t == "paragraph":
-            out.append(f"<p{_json_block_style(attrs)}>{_json_inline_to_html(content)}</p>")
+            out.append(f"<p{_json_block_style(attrs)}>{_json_inline_to_html(content, raw_tabs)}</p>")
         elif t == "blockquote":
-            out.append(f"<blockquote>{_json_blocks_to_html(content, depth=depth)}</blockquote>")
+            out.append(f"<blockquote>{_json_blocks_to_html(content, depth=depth, raw_tabs=raw_tabs)}</blockquote>")
         elif t == "horizontalRule":
             out.append("<hr>")
         elif t == "codeBlock":
@@ -1212,12 +1214,12 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0):
                 f'<img src="{html_escape(attrs.get("src", ""), quote=True)}"{style}></p>'
             )
         elif t == "bulletList":
-            out.append(f"<ul>{_json_blocks_to_html(content, depth=depth + 1)}</ul>")
+            out.append(f"<ul>{_json_blocks_to_html(content, depth=depth + 1, raw_tabs=raw_tabs)}</ul>")
         elif t == "orderedList":
             child_depth = depth + 1
             child_state = num_state or _ListNumberingState(attrs.get("numCascade"), attrs.get("numLevels"))
             child_state.enter_list(child_depth, attrs.get("start"))
-            out.append(f"<ol>{_json_blocks_to_html(content, num_state=child_state, depth=child_depth)}</ol>")
+            out.append(f"<ol>{_json_blocks_to_html(content, num_state=child_state, depth=child_depth, raw_tabs=raw_tabs)}</ol>")
         elif t == "listItem":
             marker = ""
             if num_state is not None:
@@ -1225,8 +1227,8 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0):
                 marker = html_escape(num_state.marker_text(depth))
             first = content[0] if content else None
             rest = content[1:]
-            first_html = _json_inline_to_html(first.get("content") or []) if first and first.get("type") in ("paragraph", "heading") else ""
-            out.append(f"<li>{marker}{first_html}{_json_blocks_to_html(rest, num_state=num_state, depth=depth)}</li>")
+            first_html = _json_inline_to_html(first.get("content") or [], raw_tabs) if first and first.get("type") in ("paragraph", "heading") else ""
+            out.append(f"<li>{marker}{first_html}{_json_blocks_to_html(rest, num_state=num_state, depth=depth, raw_tabs=raw_tabs)}</li>")
     return "".join(out)
 
 
@@ -2757,7 +2759,7 @@ def annexure_list_context(report, include_doc=False):
             return ctx
         doc = generate_cause_title_doc(case, templates)
     doc = sanitize_report_doc(doc, CAUSE_TITLE_TEMPLATE_MAX_CHARS)
-    ctx["causeTitleHtml"] = _json_blocks_to_html(doc.get("content") or [])
+    ctx["causeTitleHtml"] = _json_blocks_to_html(doc.get("content") or [], raw_tabs=True)  # the page lays tabs out on 40px stops, the PDF via _tabs_to_stops
     if include_doc:
         ctx["causeTitleDoc"] = doc
     ctx["causeFont"] = case.get("cause_title_font") or ""
@@ -2856,12 +2858,38 @@ def list_of_documents_docx(ctx, rows):
     return buf.getvalue()
 
 
+def _tabs_to_stops(html, font, size):
+    """`html` with each raw tab padded with non-breaking spaces up to the next 30pt (40px) tab stop, as the cause title
+    editor lays them out; fitz.Story has no tab-size. Text is measured in the nearest built-in font, so stops are close, not exact."""
+    face = "cour" if "Courier" in font else "helv" if any(f in font for f in ("Arial", "Helvetica", "Verdana", "Calibri")) else "tiro"
+    width = lambda text: fitz.get_text_length(text, fontname=face, fontsize=size)
+    space, stop = width(" "), 30.0
+    x = 0.0
+    out = []
+    for token in re.split(r"(<[^>]*>)", html):
+        if token.startswith("<"):
+            if re.match(r"</?(p|div|h\d|li|ul|ol|blockquote)\b|<br", token):
+                x = 0.0
+            out.append(token)
+            continue
+        for piece in re.split(r"(\t)", token):
+            if piece == "\t":
+                pad = max(1, round((stop - x % stop) / space))
+                out.append("&nbsp;" * pad)
+                x += pad * space
+            else:
+                x += width(unescape(piece))
+                out.append(piece)
+    return "".join(out)
+
+
 def list_of_documents_html(ctx, rows):
     """`rows`: [(particulars, page range)]."""
     cause_css = f"font-family: {ctx['causeFont']}, Times, serif;" if ctx["causeFont"] else ""
     if ctx["causeFontSize"]:
         cause_css += f" font-size: {ctx['causeFontSize']}pt;"
-    top = f'<div style="{html_escape(cause_css, quote=True)}">{ctx["causeTitleHtml"]}</div>' if ctx["causeTitleHtml"] \
+    cause_html = _tabs_to_stops(ctx["causeTitleHtml"], ctx["causeFont"], ctx["causeFontSize"] or 12)
+    top = f'<div style="{html_escape(cause_css, quote=True)}">{cause_html}</div>' if ctx["causeTitleHtml"] \
         else "<p>&nbsp;</p>" * LIST_OF_DOCUMENTS_BLANK_LINES
     body = "".join(
         f"<tr><td style=\"text-align:center\">{i}</td><td>{html_escape(text)}</td><td style=\"text-align:center\">{html_escape(pages)}</td></tr>"

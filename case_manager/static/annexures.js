@@ -87,7 +87,7 @@
     const wrap = document.createElement("div");
     wrap.className = "annex-list-page";
     const cause = l.causeTitleHtml
-      ? `<div style="${l.causeFont ? `font-family:${esc(l.causeFont)},Times,serif;` : ""}${l.causeFontSize ? `font-size:${l.causeFontSize}pt;` : ""}">${l.causeTitleHtml}</div>`
+      ? `<div style="white-space:pre-wrap;tab-size:40px;${l.causeFont ? `font-family:${esc(l.causeFont)},Times,serif;` : ""}${l.causeFontSize ? `font-size:${l.causeFontSize}pt;` : ""}">${l.causeTitleHtml}</div>`
       : '<p>&nbsp;</p>'.repeat(9);
     wrap.innerHTML = `<span class="page-label">List of Documents</span>${cause}` +
       '<p class="lod-title"><b><u>List of Documents</u></b></p>' +
