@@ -8,8 +8,9 @@
   for Flask's ``send_file`` or PyMuPDF), or a generator of chunks
   (``iter_decrypted``) for large files.
 
-The key is read through key_manager.py (see there for where it lives and how
-it is created). Losing it means losing every ``.enc`` file made with it.
+The key comes from key_manager.py, which holds it in memory only (see there);
+without it every function here raises KeyNotAvailable. Losing the key means
+losing every ``.enc`` file made with it.
 
 Format: MAGIC | 7-byte random nonce prefix | chunks. Each chunk is
 AES-256-GCM over up to CHUNK_SIZE plaintext bytes, with nonce = prefix ||
@@ -111,7 +112,7 @@ def write_encrypted(path, data):
     iterable of byte chunks. The write is atomic (temp file + rename).
     """
     dest = _enc_path(path)
-    key = key_manager.load_key(create=True)
+    key = key_manager.get_key()
     tmp = dest.with_name(dest.name + ".tmp")
     try:
         with open(tmp, "wb") as f:
@@ -128,17 +129,18 @@ def blind_index(text):
     """A deterministic keyed hash (hex) of ``text``, for looking up encrypted
     values by equality (e.g. an email address) without storing them in the
     clear. Derived from the encryption key; changes if the key does."""
-    sub_key = hmac.new(key_manager.load_key(create=True), b"encryptor blind index v1", hashlib.sha256).digest()
+    sub_key = hmac.new(key_manager.get_key(), b"encryptor blind index v1", hashlib.sha256).digest()
     return hmac.new(sub_key, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def encrypt_bytes(data):
-    """Encrypt ``data`` (same input kinds as write_encrypted) to bytes."""
-    return b"".join(_encrypt_chunks(data, key_manager.load_key(create=True)))
+def encrypt_bytes(data, key=None):
+    """Encrypt ``data`` (same input kinds as write_encrypted) to bytes, with
+    the remembered key unless ``key`` is given."""
+    return b"".join(_encrypt_chunks(data, key or key_manager.get_key()))
 
 
-def _decrypt_stream(f):
-    aead = AESGCM(key_manager.load_key(create=False))
+def _decrypt_stream(f, key=None):
+    aead = AESGCM(key or key_manager.get_key())
     block = CHUNK_SIZE + _TAG
     header = f.read(len(MAGIC) + _PREFIX_LEN)
     if len(header) != len(MAGIC) + _PREFIX_LEN or not header.startswith(MAGIC):
@@ -158,9 +160,10 @@ def _decrypt_stream(f):
         counter, cur = counter + 1, nxt
 
 
-def decrypt_bytes(blob):
-    """Decrypt bytes produced by encrypt_bytes / read from a .enc file."""
-    return b"".join(_decrypt_stream(io.BytesIO(blob)))
+def decrypt_bytes(blob, key=None):
+    """Decrypt bytes produced by encrypt_bytes / read from a .enc file, with
+    the remembered key unless ``key`` is given."""
+    return b"".join(_decrypt_stream(io.BytesIO(blob), key))
 
 
 def iter_decrypted(path):
@@ -187,6 +190,7 @@ def main(argv=None):
     c = sub.add_parser("cat", help="decrypt FILE.enc to stdout")
     c.add_argument("file")
     args = p.parse_args(argv)
+    key_manager.prompt_for_key("tty")  # stdin may carry the data, so ask on the terminal
     try:
         if args.cmd == "encrypt":
             print(write_encrypted(args.out, sys.stdin.buffer))

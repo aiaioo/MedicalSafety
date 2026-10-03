@@ -2,15 +2,15 @@
 """One-off: encrypt every existing plaintext file under the storage root.
 
 For each file under storage/ that isn't already '*.enc' it writes
-'<name>.enc' (encryptor.py format, key from .encryption.key), reads that back
+'<name>.enc' (encryptor.py format), reads that back
 and verifies it, and only then deletes the plaintext original. The docx->pdf
 render cache (storage/**/cache/) is deleted instead of converted: it is
 regenerated on demand, encrypted. Safe to re-run. Honours STORAGE_ROOT like
-the app.
+the app. The encryption key is read from stdin (a line, or typed hidden at a terminal).
 
     python db/encrypt_existing_files.py [--dry-run]
 
-Back up .encryption.key first -- without it the encrypted files are lost.
+Keep a copy of the key -- without it the encrypted files are lost.
 Note that deleting a file does not scrub its blocks from the disk; for full
 assurance also wipe/replace the underlying volume.
 """
@@ -23,11 +23,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import encryptor  # noqa: E402
+import key_manager  # noqa: E402
 
 ROOT = Path(os.environ.get("STORAGE_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 
 
 def main() -> None:
+    key_manager.prompt_for_key()
     dry_run = "--dry-run" in sys.argv
     storage = ROOT / "storage"
     done = cache = skipped = 0

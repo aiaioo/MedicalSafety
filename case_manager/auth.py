@@ -42,6 +42,8 @@ PASSWORD_MAX_CHARS = 1024  # scrypt hashes any length, but there's no reason to 
 # the sign-in page (or, for /api/ routes, answers 401).
 PUBLIC_ENDPOINTS = {
     "auth.signin", "auth.signup", "auth.unlock", "static",
+    # Open while the site is locked waiting for the encryption key -- see key_gate.py.
+    "key_gate.encryption_key", "key_gate.healthz",
     # Emailed links are opened in whatever browser the person reads mail in.
     "auth.verify_email", "auth.forgot_password", "auth.reset_password",
     # "index" itself redirects a signed-out visitor to public_view (see

@@ -7,7 +7,6 @@ export LC_ALL=C.UTF-8
 APP_DIR=${APP_DIR:-/opt/case_manager}
 ENV_FILE=/etc/case-manager/case-manager.env
 BACKUP_DIR=/var/backups/case-manager
-export ENCRYPTION_KEY_FILE=/etc/case-manager/encryption.key   # installed by deploy.sh
 SERVICE=case-manager
 # Migrations up to and including this one were applied by hand before
 # schema_migrations existed; the first run records them as done.
@@ -19,19 +18,12 @@ chown -R -h case-manager:case-manager .
 echo "--- Python dependencies"
 sudo -u case-manager .venv/bin/pip install --quiet -r requirements.txt
 
-[ -f "$ENCRYPTION_KEY_FILE" ] || { echo "Missing $ENCRYPTION_KEY_FILE" >&2; exit 1; }
-
 # Keep the systemd unit in step with the repo (it isn't covered by rsync).
 if ! cmp -s deploy/case-manager.service /etc/systemd/system/$SERVICE.service; then
   cp deploy/case-manager.service /etc/systemd/system/$SERVICE.service
   systemctl daemon-reload
   echo "updated the systemd unit"
 fi
-
-echo "--- Encrypting any plaintext files in storage/"
-# Idempotent: already-encrypted files are skipped. Must finish before the
-# restart, since the new code only reads .enc files.
-sudo -u case-manager env ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" .venv/bin/python3 db/encrypt_existing_files.py
 
 # Runs psql as the app's own database role (from DATABASE_URL), so anything a
 # migration creates is owned by it, exactly as when applied by hand.
@@ -73,38 +65,12 @@ else
   echo "no new migrations"
 fi
 
-echo "--- Encrypting any plaintext report text"
-# Idempotent; must follow the migrations (it needs reports.doc_enc) and
-# precede the restart (the new code only reads doc_enc).
-(set -a; . "$ENV_FILE"; set +a
- sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
-   .venv/bin/python3 db/encrypt_report_docs.py)
-
-echo "--- Encrypting any plaintext case and cause text"
-(set -a; . "$ENV_FILE"; set +a
- sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
-   .venv/bin/python3 db/encrypt_text_columns.py)
-
-echo "--- Encrypting any plaintext user emails and names"
-(set -a; . "$ENV_FILE"; set +a
- sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
-   .venv/bin/python3 db/encrypt_users.py)
-
-echo "--- Encrypting any plaintext annotations"
-(set -a; . "$ENV_FILE"; set +a
- sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
-   .venv/bin/python3 db/encrypt_annotations.py)
-
-echo "--- Encrypting any plaintext report images"
-(set -a; . "$ENV_FILE"; set +a
- sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
-   .venv/bin/python3 db/encrypt_report_images.py)
-
 echo "--- Restarting $SERVICE"
 systemctl restart "$SERVICE"
+# /healthz answers even while the site is locked waiting for the encryption key.
 for _ in $(seq 1 20); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/signin || true)
-  [ "$code" = 200 ] && { echo "OK: $SERVICE is answering (HTTP 200)"; exit 0; }
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/healthz || true)
+  [ "$code" = 200 ] && { echo "OK: $SERVICE is answering (HTTP 200). It is LOCKED until an administrator enters the encryption key at /encryption-key."; exit 0; }
   sleep 1
 done
 echo "FAILED: $SERVICE isn't answering (last HTTP code: $code). Recent log:" >&2

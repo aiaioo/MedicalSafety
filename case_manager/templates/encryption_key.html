@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encryption key — {{ site_name|default('') }}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+  {% if step == 'done' %}
+  <div class="modal auth-card">
+    <p class="auth-site-name">{{ site_name|default('') }}</p>
+    <h3>Encryption key loaded</h3>
+    <p class="modal-hint">The site is now open.</p>
+    <div class="modal-actions"><a class="btn" href="{{ url_for('index') }}">Continue</a></div>
+  </div>
+  {% else %}
+  <form class="modal auth-card" method="post" action="{{ url_for('key_gate.encryption_key') }}">
+    <p class="auth-site-name">{{ site_name|default('') }}</p>
+    {% if step == 'login' %}
+    <h3>Administrator login</h3>
+    <p class="modal-hint">The site is locked until the encryption key is entered.</p>
+    <input type="hidden" name="step" value="login">
+    <label class="modal-field">Login
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label class="modal-field">Password
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <label class="modal-field">Type the characters you see
+      <img class="auth-captcha" src="{{ captcha.image }}" alt="Captcha: distorted letters and digits" width="200" height="70">
+      <input type="hidden" name="captcha_id" value="{{ captcha.id }}">
+      <input type="text" name="captcha_answer" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" maxlength="10" required>
+    </label>
+    {% else %}
+    <h3>Enter the encryption key</h3>
+    <input type="hidden" name="step" value="key">
+    <input type="hidden" name="token" value="{{ token }}">
+    <label class="modal-field">Encryption key
+      <input type="password" name="key" autocomplete="off" spellcheck="false" required autofocus>
+    </label>
+    {% endif %}
+    {% if notice %}<p class="modal-hint">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="error-message">{{ error }}</p>{% endif %}
+    <div class="modal-actions">
+      <button type="submit" class="btn">{{ 'Log in' if step == 'login' else 'Unlock' }}</button>
+    </div>
+  </form>
+  {% if step == 'key' %}
+  <form class="modal auth-card" method="post" action="{{ url_for('key_gate.encryption_key') }}">
+    <h3>Change the vault password</h3>
+    {% if using_default %}
+    <p class="error-message">The default password is still in use. Please change it.</p>
+    {% endif %}
+    <input type="hidden" name="step" value="password">
+    <input type="hidden" name="token" value="{{ token }}">
+    <label class="modal-field">Current password
+      <input type="password" name="current_password" autocomplete="current-password" required>
+    </label>
+    <label class="modal-field">New password
+      <input type="password" name="new_password" autocomplete="new-password" minlength="{{ min_chars }}" required>
+    </label>
+    <label class="modal-field">Confirm new password
+      <input type="password" name="confirm_password" autocomplete="new-password" minlength="{{ min_chars }}" required>
+    </label>
+    <div class="modal-actions"><button type="submit" class="btn">Change password</button></div>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
+</body>
+</html>

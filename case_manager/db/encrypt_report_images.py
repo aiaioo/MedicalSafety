@@ -4,11 +4,12 @@
 Rows already holding encryptor.py output (they start with its magic bytes; a
 JPEG never does) are skipped, so it is safe to re-run. Each image is
 decrypted again and compared before the row is committed. No schema change.
-Honours DATABASE_URL and ENCRYPTION_KEY_FILE like the app.
+Honours DATABASE_URL like the app. The encryption key is read from stdin
+(a line, or typed hidden at a terminal).
 
     python db/encrypt_report_images.py
 
-Back up .encryption.key first. Run VACUUM FULL report_images afterwards so
+Keep a copy of the key. Run VACUUM FULL report_images afterwards so
 Postgres drops the old plaintext rows (older database dumps still hold it).
 """
 
@@ -22,9 +23,11 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import encryptor  # noqa: E402
+import key_manager  # noqa: E402
 
 
 def main() -> None:
+    key_manager.prompt_for_key()
     conn = psycopg2.connect(os.environ.get("DATABASE_URL", "postgresql:///case_manager"))
     done = skipped = 0
     with conn, conn.cursor() as cur:

@@ -2,11 +2,12 @@
 """One-off: encrypt every user's email and full name in place, fill in
 users.email_hash (the lookup key, see storage._email_hash), and drop the old
 lower(email) unique index. Run after db/migrations/042_encrypt_user_identity.sql.
-Safe to re-run. Honours DATABASE_URL and ENCRYPTION_KEY_FILE like the app.
+Safe to re-run. Honours DATABASE_URL like the app. The encryption key is read from stdin
+(a line, or typed hidden at a terminal).
 
     python db/encrypt_users.py
 
-Back up .encryption.key first -- the email lookup hashes depend on it too.
+Keep a copy of the key -- the email lookup hashes depend on it too.
 Run VACUUM FULL users afterwards so Postgres drops the old plaintext rows
 (older database dumps still hold it). Note users.storage_dir (the per-user
 storage folder name) is an unsalted hash of the email and is left as is.
@@ -21,6 +22,7 @@ from pathlib import Path
 import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import key_manager  # noqa: E402
 import storage  # noqa: E402
 
 
@@ -35,6 +37,7 @@ def _plain(value: str) -> str:
 
 
 def main() -> None:
+    key_manager.prompt_for_key()
     conn = psycopg2.connect(os.environ.get("DATABASE_URL", "postgresql:///case_manager"))
     done = 0
     with conn, conn.cursor() as cur:

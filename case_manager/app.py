@@ -22,6 +22,7 @@ from flask import Flask, Request, Response, abort, g, jsonify, redirect, render_
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
+import key_gate
 import mailer
 import storage
 from cities import CITIES_BY_COUNTRY, DEFAULT_CITY_BY_COUNTRY
@@ -224,6 +225,9 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scann
 _proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
 if _proxy_hops:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops, x_proto=_proxy_hops)
+# Keeps the site closed until the encryption key has been entered -- must be
+# registered before auth.bp, whose gate reads encrypted columns. See key_gate.py.
+app.register_blueprint(key_gate.bp)
 # Sign-up/sign-in/sign-out, plus a before-request gate that keeps every other
 # route behind a signed-in session and sets g.user -- see auth.py.
 app.register_blueprint(auth.bp)
@@ -4366,4 +4370,6 @@ if __name__ == "__main__":
     import os
 
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="127.0.0.1", port=port, debug=True)
+    # No reloader: the encryption key is held only in this process's memory, and a
+    # reload would start a new process that has to be unlocked again at /encryption-key.
+    app.run(host="127.0.0.1", port=port, debug=True, use_reloader=False)

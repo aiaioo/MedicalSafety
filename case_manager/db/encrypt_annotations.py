@@ -4,12 +4,12 @@
 Rows holding no shapes at all are deleted (a page with no annotations has no
 row). Run after db/migrations/041_encrypt_annotations.sql. Each row is
 decrypted again and compared before it is committed. Safe to re-run: rows
-that already have shapes_enc are skipped. Honours DATABASE_URL and
-ENCRYPTION_KEY_FILE like the app.
+that already have shapes_enc are skipped. Honours DATABASE_URL like the app. The encryption key is read from stdin
+(a line, or typed hidden at a terminal).
 
     python db/encrypt_annotations.py
 
-Back up .encryption.key first. Run VACUUM FULL document_annotations
+Keep a copy of the key. Run VACUUM FULL document_annotations
 afterwards so Postgres drops the old plaintext rows (older database dumps
 still hold it).
 """
@@ -23,10 +23,12 @@ from pathlib import Path
 import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import key_manager  # noqa: E402
 import storage  # noqa: E402
 
 
 def main() -> None:
+    key_manager.prompt_for_key()
     conn = psycopg2.connect(os.environ.get("DATABASE_URL", "postgresql:///case_manager"))
     done = emptied = 0
     with conn, conn.cursor() as cur:

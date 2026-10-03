@@ -27,15 +27,18 @@ WorkingDirectory=/opt/case_manager
 EnvironmentFile=/etc/case-manager/case-manager.env
 ExecStart=/opt/case_manager/.venv/bin/gunicorn \
     --bind 127.0.0.1:8000 \
-    --workers 3 \
+    --workers 1 \
+    --threads 8 \
     --timeout 120 \
     --worker-tmp-dir /dev/shm \
     app:app
-# Key for encryptor.py; installed (chmod 600, owned by this user) by deploy.sh.
-Environment=ENCRYPTION_KEY_FILE=/etc/case-manager/encryption.key
 Restart=on-failure
 RestartSec=3
 
+# One worker process (with threads): the encryption key is held only in the
+# memory of the process it was entered into (see key_manager.py), so it must be
+# the only one.
+#
 # Basic hardening -- this process only needs to read its own code/venv, read
 # and write under storage/ inside WorkingDirectory, and talk to
 # Postgres over the network/socket named in DATABASE_URL.

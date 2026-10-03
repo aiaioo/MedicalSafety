@@ -109,3 +109,25 @@ cd /opt/case_manager && sudo -u case-manager git pull
 sudo -u case-manager .venv/bin/pip install -r requirements.txt gunicorn
 sudo systemctl restart case-manager
 ```
+
+## The encryption key
+
+The key that encrypts stored files and database content is never written to
+disk or kept in the deploy: it lives only in the running server's memory
+(`key_manager.py`). Every start of the service begins **locked** -- all pages
+redirect to `/encryption-key`, `/api/` calls answer 503, and only `/healthz`
+stays open (it reports `key_loaded`). To unlock, open `/encryption-key`, log
+in as the key vault admin (login `key_vault_admin`; it is not an app user), and
+enter the key. A key is accepted only if it decrypts `key_check.enc`.
+
+- The vault admin starts with a default password (see `key_gate.py`). Change it
+  on first login using the form on that page; it is stored hashed in the
+  `key_vault_admin` table.
+- The service runs a single gunicorn worker (with threads) because the key
+  exists only in the process it was entered into. A crash or restart -- including
+  every deploy -- locks the site again until the key is re-entered.
+- The one-off conversion scripts in `db/` (`encrypt_*.py`) read the key from
+  stdin, e.g. `python3 db/encrypt_users.py < keyfile`, or typed at a terminal.
+- `python3 key_manager.py generate` makes a new key (and `key_check.enc` if it
+  is absent). Keep a copy of the key somewhere safe: without it the encrypted
+  data cannot be recovered.

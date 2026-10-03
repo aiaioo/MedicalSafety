@@ -6,12 +6,12 @@ plus the titles/descriptions of documents and the names of reports.
 Each non-empty value becomes 'enc1:<base64 ciphertext>' (storage._enc_text);
 empty values and NULLs are left alone. Values that already decrypt are
 skipped, so it is safe to re-run. Every value is decrypted again and compared
-before the transaction commits. No schema change. Honours DATABASE_URL and
-ENCRYPTION_KEY_FILE like the app.
+before the transaction commits. No schema change. Honours DATABASE_URL like the app. The encryption key is read from stdin
+(a line, or typed hidden at a terminal).
 
     python db/encrypt_text_columns.py
 
-Back up .encryption.key first. Run VACUUM FULL on the tables afterwards so
+Keep a copy of the key. Run VACUUM FULL on the tables afterwards so
 Postgres drops the old plaintext rows (older database dumps still hold it).
 """
 
@@ -25,6 +25,7 @@ import psycopg2
 from cryptography.fernet import InvalidToken
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import key_manager  # noqa: E402
 import storage  # noqa: E402
 
 TABLES = {
@@ -50,6 +51,7 @@ def _already_encrypted(value: str) -> bool:
 
 
 def main() -> None:
+    key_manager.prompt_for_key()
     conn = psycopg2.connect(os.environ.get("DATABASE_URL", "postgresql:///case_manager"))
     counts = {}
     with conn, conn.cursor() as cur:

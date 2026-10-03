@@ -1504,6 +1504,26 @@ def record_signup_attempt(ip: str, limit: int, window_seconds: int) -> bool:
     return True
 
 
+def get_key_vault_admin_password_hash() -> str | None:
+    """The key vault admin's own password hash (see key_gate.py), or None if
+    the password has never been changed from the built-in default."""
+    with _cursor() as cur:
+        cur.execute("SELECT password_hash FROM key_vault_admin WHERE id = 1")
+        row = cur.fetchone()
+    return row["password_hash"] if row else None
+
+
+def set_key_vault_admin_password_hash(password_hash: str) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO key_vault_admin (id, password_hash) VALUES (1, %s)
+            ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash, changed_at = now()
+            """,
+            (password_hash,),
+        )
+
+
 def create_signup_captcha(captcha_id: str, answer: str, expires_at: datetime) -> None:
     """Records a captcha challenge, sweeping out expired ones while it's at it."""
     with _cursor() as cur:
