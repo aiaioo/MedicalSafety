@@ -29,6 +29,7 @@ ExecStart=/opt/case_manager/.venv/bin/gunicorn \
     --bind 127.0.0.1:8000 \
     --workers 3 \
     --timeout 120 \
+    --worker-tmp-dir /dev/shm \
     app:app
 Restart=on-failure
 RestartSec=3

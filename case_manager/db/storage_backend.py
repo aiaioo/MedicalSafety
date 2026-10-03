@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
+
+import encryptor
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +128,6 @@ class LocalFilesystemStorage(StorageBackend):
     def exists(self, key: str) -> bool:
         return self._resolve(key).exists()
 
-    def copy_in(self, key: str, source_path: Path) -> None:
-        """Migration/import helper: register an existing file at `key`
-        without reading it into memory first."""
-        dest = self._resolve(key)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.resolve() != source_path.resolve():
-            shutil.copy2(source_path, dest)
-
 
 class S3Storage(StorageBackend):
     """Sketch of the eventual object-storage backend -- not wired up yet.
@@ -177,6 +170,42 @@ class S3Storage(StorageBackend):
         )
 
 
+class EncryptedStorage(StorageBackend):
+    """Wraps another backend so that nothing but ciphertext ever reaches it.
+
+    Bytes are encrypted in memory (encryptor.py) before being handed to the
+    inner backend and decrypted in memory on the way back; the inner key gets
+    a '.enc' suffix. Callers keep using the plain keys from the functions
+    above and never see the difference.
+    """
+
+    def __init__(self, inner: StorageBackend):
+        self.inner = inner
+
+    @staticmethod
+    def _enc_key(key: str) -> str:
+        return key + encryptor.SUFFIX
+
+    def read_bytes(self, key: str) -> bytes:
+        return encryptor.decrypt_bytes(self.inner.read_bytes(self._enc_key(key)))
+
+    def write_bytes(self, key: str, data: bytes) -> None:
+        self.inner.write_bytes(self._enc_key(key), encryptor.encrypt_bytes(data))
+
+    def delete(self, key: str) -> None:
+        self.inner.delete(self._enc_key(key))
+
+    def exists(self, key: str) -> bool:
+        return self.inner.exists(self._enc_key(key))
+
+    def url_for(self, key: str) -> Optional[str]:
+        return None  # a direct URL would serve ciphertext; bytes must come through read_bytes
+
+    @property
+    def root(self) -> Path:
+        return self.inner.root
+
+
 # ---------------------------------------------------------------------------
 # The single place that decides which backend is active.
 # ---------------------------------------------------------------------------
@@ -207,4 +236,5 @@ def get_storage_backend() -> StorageBackend:
         _backend = S3Storage(bucket, prefix, client=boto3.client("s3"))
     else:
         raise ValueError(f"unknown STORAGE_BACKEND: {kind!r}")
+    _backend = EncryptedStorage(_backend)
     return _backend

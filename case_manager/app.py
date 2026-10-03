@@ -18,7 +18,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 from PIL import Image, ImageOps, UnidentifiedImageError
-from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Request, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
@@ -204,7 +204,16 @@ def stamp_doc_numbers(doc, dn, pn, m, first_pages):
                               f'<p style="{css}">{html_escape(doc_number_label(dn, n))}</p>')
 
 
+class InMemoryUploadRequest(Request):
+    """Keep every uploaded file in memory. Werkzeug's default spools uploads
+    over 500 KB into a temp file on disk, which would be unencrypted."""
+
+    def _get_file_stream(self, total_content_length, content_type, filename=None, content_length=None):
+        return io.BytesIO()
+
+
 app = Flask(__name__)
+app.request_class = InMemoryUploadRequest
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
 # Behind a reverse proxy every request arrives from the proxy's address, so
 # take the client's from X-Forwarded-For -- but only as many proxies' worth as

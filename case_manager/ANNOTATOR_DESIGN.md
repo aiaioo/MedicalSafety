@@ -13,7 +13,6 @@ at `/annotations` and is implemented across:
   `.viewer-layout`, `.page-wrap`, `.context-menu`, `.sidebar`/`.snippet-*`)
 - `app.py` — document resolution, page rasterization, annotation storage, snippet
   extraction, annotated-PDF download
-- `converters.py` — headless-LibreOffice `.docx`/`.doc` → PDF conversion
 
 ## Document model: everything becomes a PDF page raster
 
@@ -27,13 +26,7 @@ browser, and PDFs and converted Word docs are visually indistinguishable to the 
 the app once resolved.
 
 - **PDF source** (`storage/<owner>/documents/<id>.pdf`): used directly.
-- **Word source** (`storage/<owner>/documents/<id>.docx` or `.doc`): converted once via `convert_to_pdf`
-  (`converters.py`, shells out to `soffice --headless --convert-to pdf`) into
-  `storage/<owner>/cache/<id>.pdf`. Re-converted automatically if the source file's mtime is
-  newer than the cached PDF's, so editing the source Word doc and reloading picks up the
-  change without any manual cache-busting. If LibreOffice (`soffice`/`libreoffice`) isn't
-  on `PATH`, this raises a `ConversionError` with instructions (install LibreOffice, or
-  drop a same-named `.pdf` into `storage/<owner>/documents/` yourself).
+- **Word source**: no longer supported -- only PDFs can be uploaded, and Word conversion was removed.
 - `doc_id` is validated everywhere via `DOC_ID_RE` (`^[A-Za-z0-9_-]+$`) before touching
   the filesystem — the main defense against path traversal through a user-controllable
   id.

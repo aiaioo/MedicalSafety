@@ -35,11 +35,9 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import tempfile
 import uuid
 from collections.abc import Collection
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlsplit
 
 import psycopg2
@@ -47,9 +45,8 @@ import psycopg2.errors
 import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
-from converters import ConversionError, convert_to_pdf
 from db.storage_backend import (
-    LocalFilesystemStorage, cache_storage_dir, document_storage_key, get_storage_backend, owner_dir_name,
+    LocalFilesystemStorage, document_storage_key, get_storage_backend, owner_dir_name,
     snippet_storage_key,
 )
 
@@ -161,19 +158,8 @@ _LINKED_IDS_SQL = """
 
 
 # ---------------------------------------------------------------------------
-# Documents (metadata) + their bytes + the docx->pdf render cache
+# Documents (metadata) + their bytes
 # ---------------------------------------------------------------------------
-
-_BASE_DIR = Path(__file__).resolve().parent
-
-
-def _conversion_cache_dir(owner: str | None) -> Path:
-    return _BASE_DIR / cache_storage_dir(owner)
-
-
-def _conversion_cache_path(document_id: str, owner: str | None) -> Path:
-    return _conversion_cache_dir(owner) / f"{document_id}.pdf"
-
 
 def _document_location(document_id: str) -> tuple[str, str | None] | None:
     """(doc_type, storage owner folder) -- everything needed to build a
@@ -312,37 +298,18 @@ def delete_document(document_id: str) -> None:
     # delete fails afterwards the worst case is a stray file, never a row
     # whose file is missing.
     get_storage_backend().delete(document_storage_key(document_id, doc_type, owner))
-    _conversion_cache_path(document_id, owner).unlink(missing_ok=True)
 
 
 def get_document_pdf_bytes(document_id: str) -> bytes:
-    """The document's content as PDF bytes -- straight from storage for a
-    native PDF, or converted-and-cached (LibreOffice, run at most once per
-    document since uploads are never replaced in place) for a Word doc."""
+    """The document's PDF bytes, straight from storage. Only PDFs can be
+    uploaded; a document of any other type is an error."""
     location = _document_location(document_id)
     if location is None:
         raise StorageError(f"No document with id {document_id!r}")
     doc_type, owner = location
-
-    backend = get_storage_backend()
-    if doc_type == "pdf":
-        return backend.read_bytes(document_storage_key(document_id, "pdf", owner))
-
-    cache_dir = _conversion_cache_dir(owner)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = _conversion_cache_path(document_id, owner)
-    if not cache_path.exists():
-        source_bytes = backend.read_bytes(document_storage_key(document_id, doc_type, owner))
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            source_path = Path(tmp_dir) / f"{document_id}.{doc_type}"
-            source_path.write_bytes(source_bytes)
-            try:
-                converted = convert_to_pdf(source_path, cache_dir)
-            except ConversionError as exc:
-                raise StorageError(str(exc)) from exc
-            if converted != cache_path:
-                converted.replace(cache_path)
-    return cache_path.read_bytes()
+    if doc_type != "pdf":
+        raise StorageError(f"Document {document_id!r} is a .{doc_type} file; only PDFs are supported")
+    return get_storage_backend().read_bytes(document_storage_key(document_id, "pdf", owner))
 
 
 # ---------------------------------------------------------------------------

@@ -142,28 +142,41 @@ def write_encrypted(path, data):
     return dest
 
 
+def encrypt_bytes(data):
+    """Encrypt ``data`` (same input kinds as write_encrypted) to bytes."""
+    return b"".join(_encrypt_chunks(data, _load_key(create=True)))
+
+
+def _decrypt_stream(f):
+    aead = AESGCM(_load_key(create=False))
+    block = CHUNK_SIZE + _TAG
+    header = f.read(len(MAGIC) + _PREFIX_LEN)
+    if len(header) != len(MAGIC) + _PREFIX_LEN or not header.startswith(MAGIC):
+        raise InvalidToken("not an encryptor file")
+    prefix = header[len(MAGIC):]
+    counter = 0
+    cur = f.read(block)
+    while True:
+        nxt = f.read(block) if len(cur) == block else b""
+        last = not nxt
+        try:
+            yield aead.decrypt(_nonce(prefix, counter, last), cur, None)
+        except InvalidTag:
+            raise InvalidToken("wrong key or corrupted file") from None
+        if last:
+            return
+        counter, cur = counter + 1, nxt
+
+
+def decrypt_bytes(blob):
+    """Decrypt bytes produced by encrypt_bytes / read from a .enc file."""
+    return b"".join(_decrypt_stream(io.BytesIO(blob)))
+
+
 def iter_decrypted(path):
     """Generator yielding the decrypted contents of ``path`` chunk by chunk."""
-    key = _load_key(create=False)
-    aead = AESGCM(key)
-    block = CHUNK_SIZE + _TAG
     with open(_enc_path(path), "rb") as f:
-        header = f.read(len(MAGIC) + _PREFIX_LEN)
-        if len(header) != len(MAGIC) + _PREFIX_LEN or not header.startswith(MAGIC):
-            raise InvalidToken("not an encryptor file")
-        prefix = header[len(MAGIC):]
-        counter = 0
-        cur = f.read(block)
-        while True:
-            nxt = f.read(block) if len(cur) == block else b""
-            last = not nxt
-            try:
-                yield aead.decrypt(_nonce(prefix, counter, last), cur, None)
-            except InvalidTag:
-                raise InvalidToken("wrong key or corrupted file") from None
-            if last:
-                return
-            counter, cur = counter + 1, nxt
+        yield from _decrypt_stream(f)
 
 
 def read_encrypted(path):
