@@ -16,6 +16,7 @@ import { ParagraphSpacing, hasStandardSpacing, tightenParagraphs } from "./parag
 import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
+import { Fragment } from "@tiptap/pm/model";
 import { ResizableImage, SnippetRef, setSelectedImageAlign, isImageSelected, setSnippetRefs, snippetSource } from "./resizableImage.js";
 import {
   OrderedList,
