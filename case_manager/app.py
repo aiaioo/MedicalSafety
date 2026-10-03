@@ -1743,6 +1743,28 @@ def api_set_show_advanced():
     return jsonify({"show": show})
 
 
+@app.route("/api/report-sections", methods=["GET", "PUT"])
+def api_report_sections():
+    """The user's reports-page sections (names, order, and which report
+    cards sit in each; unlisted reports are in the implicit General)."""
+    if request.method == "GET":
+        return jsonify(storage.get_report_sections(g.user.id))
+    data = request.get_json(silent=True)
+    if not isinstance(data, list) or len(data) > 100:
+        return jsonify({"error": "sections must be a list"}), 400
+    clean = []
+    for sec in data:
+        if not (isinstance(sec, dict) and isinstance(sec.get("id"), str) and isinstance(sec.get("name"), str)
+                and isinstance(sec.get("reports"), list)):
+            return jsonify({"error": "invalid section"}), 400
+        clean.append({
+            "id": sec["id"][:40], "name": sec["name"].strip()[:80],
+            "reports": [r[:100] for r in sec["reports"][:2000] if isinstance(r, str)],
+        })
+    storage.set_report_sections(g.user.id, clean)
+    return jsonify(clean)
+
+
 ACCOUNT_FIELD_MAX_CHARS = 100
 PHOTO_MAX_PIXELS = 512
 DEFAULT_COUNTRY = "India"

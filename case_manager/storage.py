@@ -32,6 +32,7 @@ HTTP error shape they want; this module doesn't know about Flask.
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import tempfile
@@ -1117,6 +1118,22 @@ def set_default_cause(user_id: int, cause_id: str) -> None:
 def set_show_advanced(user_id: int, show: bool) -> None:
     with _cursor() as cur:
         cur.execute("UPDATE users SET show_advanced = %s WHERE id = %s", (show, user_id))
+
+
+def get_report_sections(user_id: int) -> list:
+    """The user's reports-page layout: [{"id", "name", "reports": [...]}]."""
+    with _cursor() as cur:
+        cur.execute("SELECT report_sections FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    return row["report_sections"] if row else []
+
+
+def set_report_sections(user_id: int, sections: list) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE users SET report_sections = %s::jsonb WHERE id = %s",
+            (json.dumps(sections), user_id),
+        )
 
 
 def get_profile(user_id: int) -> dict:

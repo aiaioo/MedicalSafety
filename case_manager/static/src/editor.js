@@ -304,20 +304,42 @@ import { Pagination, repaginate } from "./pagination.js";
 
   // ---- Landing page sections ----
   // Users organise report cards into named sections. "General" is implicit
-  // and holds every report not assigned elsewhere. The layout is kept in
-  // localStorage (per user): [{id, name, reports: [reportId, ...]}].
-  const sectionsKey = "reportSections:" + (appEl.dataset.userId || "");
-  function loadSections() {
-    try {
-      const v = JSON.parse(localStorage.getItem(sectionsKey));
-      if (Array.isArray(v)) return v;
-    } catch (e) {}
-    return [];
-  }
+  // and holds every report not assigned elsewhere. The layout is stored on
+  // the user's account (users.report_sections): [{id, name, reports: [...]}].
+  const sectionsUrl = appEl.dataset.sectionsUrl;
+  const legacySectionsKey = "reportSections:" + (appEl.dataset.userId || "");
+  let saveTimer = null;
   function saveSections() {
-    try { localStorage.setItem(sectionsKey, JSON.stringify(sections)); } catch (e) {}
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      fetch(sectionsUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sections),
+      }).catch((e) => console.error("Could not save sections", e));
+    }, 200);
   }
-  let sections = loadSections();
+  async function loadSections() {
+    try {
+      const res = await fetch(sectionsUrl);
+      if (!res.ok) return [];
+      const server = await res.json();
+      if (server.length) return server;
+      // One-time import of a layout saved in this browser before it moved
+      // to the database.
+      const old = JSON.parse(localStorage.getItem(legacySectionsKey));
+      if (Array.isArray(old) && old.length) {
+        localStorage.removeItem(legacySectionsKey);
+        sections = old;
+        saveSections();
+        return old;
+      }
+      return server;
+    } catch (e) {
+      return [];
+    }
+  }
+  let sections = [];
   let landingReports = [];
   const addSectionBtn = document.getElementById("addSectionBtn");
 
@@ -449,7 +471,7 @@ import { Pagination, repaginate } from "./pagination.js";
   async function loadLanding() {
     if (!reportListLanding) return;
     try {
-      landingReports = await fetchReports();
+      [landingReports, sections] = await Promise.all([fetchReports(), loadSections()]);
       renderLanding();
     } catch (e) {
       console.error(e);
