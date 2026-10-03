@@ -1184,12 +1184,13 @@ def get_photo(user_id: int) -> bytes | None:
     with _cursor() as cur:
         cur.execute("SELECT photo FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
-    return bytes(row["photo"]) if row and row["photo"] is not None else None
+    return encryptor.decrypt_bytes(bytes(row["photo"])) if row and row["photo"] is not None else None
 
 
 def set_photo(user_id: int, photo: bytes | None) -> None:
     with _cursor() as cur:
-        cur.execute("UPDATE users SET photo = %s WHERE id = %s", (photo, user_id))
+        cur.execute("UPDATE users SET photo = %s WHERE id = %s",
+                    (None if photo is None else encryptor.encrypt_bytes(photo), user_id))
 
 
 def set_password_hash(user_id: int, password_hash: str, keep_token_hash: str) -> None:
