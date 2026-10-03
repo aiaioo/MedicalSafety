@@ -1065,11 +1065,17 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
 
 
 def annexure_ref_texts(report_id):
-    """{document id: {source page (int): "Annexure P-1, page 3"}} for every page the report's annexure
-    includes, as the annexure numbers them now. Page numbers are left off when the annexure is unnumbered."""
+    return annexure_ref_data(report_id)[0]
+
+
+def annexure_ref_data(report_id):
+    """(texts, positions, total): texts is {document id: {source page (int): "Annexure P-1, page 3"}} for every
+    page the report's annexure includes, as the annexure numbers them now (page numbers are left off when the
+    annexure is unnumbered); positions maps (document id, source page) to that page's 0-based index among the
+    annexure's document pages (not counting the List of Documents); total is how many such pages there are."""
     payload = _annexure_payload(report_id, storage.get_annexure(report_id))
     dn, pn = payload["docNumbers"], payload["pageNumbers"]
-    refs, shown, numbered = {}, 0, 0
+    refs, positions, shown, numbered = {}, {}, 0, 0
     for d in payload["documents"]:
         pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
         with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
@@ -1082,8 +1088,9 @@ def annexure_ref_texts(report_id):
         for i, p in enumerate(pages):
             number = annexure_page_range(shown + i, shown + i, pn) if pn["position"] != "none" else "-"
             texts.setdefault(p, label if number == "-" else f"{label}, page {number}")
+            positions.setdefault((d["id"], p), shown + i)
         shown += len(pages)
-    return refs
+    return refs, positions, shown
 
 
 ANNEX_REF_MISSING = "[not in annexure]"
@@ -1096,24 +1103,29 @@ def snippet_source(src):
     return (m.group(1), int(m.group(2))) if m else None
 
 
-def resolve_snippet_refs(node, refs):
+def resolve_snippet_refs(node, refs, links=False):
     """`node` with each snippet image that has a refStyle replaced by what that style shows: the image and a
     paragraph of its annexure reference ("both"), or just the paragraph ("reference"), aligned like the image.
-    `refs` is as from annexure_ref_texts."""
+    `refs` is as from annexure_ref_texts. With `links`, the images and reference paragraphs that point at an annexed
+    page carry an "annexLink" attr ("<document id>:<page>") for the PDF to turn into a link to that page."""
     if not isinstance(node, dict) or "content" not in node:
         return node
     content = []
     for child in node["content"]:
         attrs = child.get("attrs") or {} if isinstance(child, dict) else {}
         source = snippet_source(attrs.get("src")) if child.get("type") == "image" else None
-        if source is None or attrs.get("refStyle") not in ("both", "reference"):
-            content.append(resolve_snippet_refs(child, refs))
+        if source is None:
+            content.append(resolve_snippet_refs(child, refs, links))
             continue
-        text = refs.get(source[0], {}).get(source[1], ANNEX_REF_MISSING)
+        text = refs.get(source[0], {}).get(source[1])
+        link = {"annexLink": f"{source[0]}:{source[1]}"} if links and text else {}
+        if attrs.get("refStyle") not in ("both", "reference"):
+            content.append({**child, "attrs": {**attrs, **link}})
+            continue
         if attrs["refStyle"] == "both":
-            content.append(child)
+            content.append({**child, "attrs": {**attrs, **link}})
         content.append({"type": "paragraph", "attrs": {"textAlign": attrs.get("align", "left")},
-                        "content": [{"type": "text", "text": text}]})
+                        "content": [{"type": "text", "text": text or ANNEX_REF_MISSING, **link}]})
     return {**node, "content": content}
 
 
@@ -1194,7 +1206,7 @@ def _json_inline_to_html(nodes, raw_tabs=False):
             html = html_escape(node.get("text", ""))
             if not raw_tabs:
                 html = html.replace("\t", "&nbsp;" * 6)  # a tab is 40px wide; HTML collapses a raw tab
-            href = None
+            href = f"#snipref:{node['annexLink']}" if node.get("annexLink") else None
             for mark in node.get("marks") or []:
                 mt = mark.get("type")
                 mattrs = mark.get("attrs") or {}
@@ -1264,10 +1276,10 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0, raw_tabs=False):
                 decls.append(f"height:{attrs.get('height', 'auto')}px")
             style = f' style="{html_escape("; ".join(decls), quote=True)}"' if decls else ""
             align = attrs.get("align", "left")
-            out.append(
-                f'<p class="img-p" style="text-align:{align}">'
-                f'<img src="{html_escape(attrs.get("src", ""), quote=True)}"{style}></p>'
-            )
+            img = f'<img src="{html_escape(attrs.get("src", ""), quote=True)}"{style}>'
+            if attrs.get("annexLink"):
+                img = f'<a href="#snipimg:{html_escape(attrs["annexLink"], quote=True)}">{img}</a>'
+            out.append(f'<p class="img-p" style="text-align:{align}">{img}</p>')
         elif t == "bulletList":
             out.append(f"<ul>{_json_blocks_to_html(content, depth=depth + 1, raw_tabs=raw_tabs)}</ul>")
         elif t == "orderedList":
@@ -1329,7 +1341,36 @@ def stamp_page_numbers(doc, pn, m):
         page.insert_htmlbox(box + (-fs, drop, fs, drop), f'<p style="{css}">{label}</p>')
 
 
-def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
+def _link_rects(pdf_bytes, found):
+    """[(page index, "<document id>:<page>", rect)] for the snippet links the story reported in `found`
+    ((page index, href, rect) per piece of linked content): one rect per reference text line and one per image,
+    the image's taken from the PDF itself since the story's own rect for it is offset."""
+    out = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        for pno in sorted({f[0] for f in found}):
+            here = [f for f in found if f[0] == pno]
+            images = doc[pno].get_image_info()
+            lines = {}
+            for _, href, r in here:
+                if href.startswith("#snipref:"):
+                    key = (href, round(r.y0, 1))
+                    lines[key] = lines[key] | r if key in lines else fitz.Rect(r)
+            out += [(pno, k[0][len("#snipref:"):], r) for k, r in lines.items()]
+            for _, href, r in here:
+                if not href.startswith("#snipimg:") or r.width <= 0:
+                    continue
+                line = next((o for _, h, o in here if h == href and o.width == 0 and abs(o.x0 - r.x0) < 0.6), None)
+                box = next((fitz.Rect(i["bbox"]) for i in images
+                            if abs(i["bbox"][0] - r.x0) < 0.6 and abs(i["bbox"][2] - r.x1) < 0.6
+                            and (line is None or line.y0 - 1 <= i["bbox"][3] <= line.y1 + 1)), None)
+                if box is not None:
+                    out.append((pno, href[len("#snipimg:"):], box))
+    return out
+
+
+def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=None):
+    """The report as a PDF. A list passed as `links` is filled with (page index, "<document id>:<page>", rect)
+    for each element carrying an "annexLink" attr."""
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
@@ -1341,13 +1382,21 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
     story = fitz.Story(html=full_html)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
-    more = 1
+    more, pno, found = 1, 0, []
     while more:
         device = writer.begin_page(mediabox)
         more, _ = story.place(where)
+        if links is not None:
+            def collect(p):
+                if p.href:
+                    found.append((pno, p.href, fitz.Rect(p.rect)))
+            story.element_positions(collect, {"page": pno})
         story.draw(device)
         writer.end_page()
+        pno += 1
     writer.close()
+    if links is not None:
+        links.extend(_link_rects(buf.getvalue(), found))
     if pn["position"] == "none":
         return buf.getvalue()
     with fitz.open(stream=buf.getvalue(), filetype="pdf") as numbered:
@@ -3180,15 +3229,28 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
-
+    texts, positions, total = annexure_ref_data(report_id)
+    payload = None
     if request.args.get("annexures") == "1":
         payload = _annexure_payload(report_id, storage.get_annexure(report_id))
-        if payload["documents"]:
-            annex_bytes = _annexure_pdf_bytes(payload)
-            with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
-                merged.insert_pdf(annex)
-                pdf_bytes = merged.tobytes()
+    # Snippets link to their annexure page only when the annexure is part of the file.
+    links = [] if payload and payload["documents"] else None
+    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, links is not None)),
+                                  data.get("margins"), data.get("pageNumbers"), links)
+
+    if links is not None:
+        annex_bytes = _annexure_pdf_bytes(payload)
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
+            report_pages = merged.page_count
+            front = annex.page_count - total  # the List of Documents, ahead of the annexed pages
+            merged.insert_pdf(annex)
+            for pno, key, rect in links:
+                doc_id, page = key.rsplit(":", 1)
+                target = positions.get((doc_id, int(page)))
+                if target is not None:
+                    merged[pno].insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": report_pages + front + target,
+                                             "to": fitz.Point(0, 0)})
+            pdf_bytes = merged.tobytes()
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"

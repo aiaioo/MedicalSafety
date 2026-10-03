@@ -1505,7 +1505,7 @@ import { Pagination, repaginate } from "./pagination.js";
   const insertStyleInputs = Array.from(document.querySelectorAll('input[name="snippetInsertStyle"]'));
   function insertStyle() {
     const checked = insertStyleInputs.find((el) => el.checked);
-    return checked ? checked.value : "image";
+    return checked ? checked.value : "both";
   }
   function showInsertStyle(style) {
     insertStyleInputs.forEach((el) => { el.checked = el.value === style; });
@@ -1515,11 +1515,10 @@ import { Pagination, repaginate } from "./pagination.js";
 
   // Gives every snippet already in the report the chosen style.
   function applyStyleToSnippets(style) {
-    const refStyle = style === "image" ? "image" : style;
     const tr = editor.state.tr;
     editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === "image" && snippetSource(node.attrs.src) && node.attrs.refStyle !== refStyle) {
-        tr.setNodeMarkup(pos, undefined, { ...node.attrs, refStyle });
+      if (node.type.name === "image" && snippetSource(node.attrs.src) && node.attrs.refStyle !== style) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, refStyle: style });
       }
     });
     if (tr.docChanged) editor.view.dispatch(tr);
