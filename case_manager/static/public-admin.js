@@ -262,8 +262,9 @@
       row.addEventListener("dragend", () => { drag = null; });
       list.appendChild(row);
     }
-    if (!sec.articles.length) list.appendChild(el("div", "pa-empty", "Drag articles here."));
-    legalEl.appendChild(list);
+    // Articles can't be dropped here (it is only for signing in), but any
+    // already placed can still be dragged out.
+    if (sec.articles.length) legalEl.appendChild(list);
   }
 
   function render() {
@@ -275,21 +276,7 @@
     for (const a of unplaced) trayGrid.appendChild(makeCard(a, null));
     if (!unplaced.length) trayGrid.appendChild(el("div", "pa-empty", "Every article is on this website."));
   }
-  const legalSec = () => sections.find((s) => s.kind === "legal_tools");
   dropZone(trayEl, null);
-  legalEl.addEventListener("dragover", (e) => {
-    const l = legalSec();
-    if (l && drag && drag.kind === "article") { e.preventDefault(); e.stopPropagation(); legalEl.classList.add("drop-target"); }
-  });
-  legalEl.addEventListener("dragleave", (e) => { if (!legalEl.contains(e.relatedTarget)) legalEl.classList.remove("drop-target"); });
-  legalEl.addEventListener("drop", (e) => {
-    const l = legalSec();
-    if (!l || !drag || drag.kind !== "article") return;
-    e.preventDefault();
-    e.stopPropagation();
-    legalEl.classList.remove("drop-target");
-    dropArticle(l.id, e.altKey);
-  });
 
   // ---- controls -----------------------------------------------------
   document.getElementById("paSite").addEventListener("change", (e) => {

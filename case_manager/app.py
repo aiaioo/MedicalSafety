@@ -4074,6 +4074,8 @@ def api_admin_article_move(article_id):
     for sid in (to_id, from_id):
         if sid is not None and not (isinstance(sid, str) and storage.section_exists(sid)):
             raise DocumentError(f"No section with id {sid!r}", 400)
+    if to_id is not None and storage.is_legal_tools_section(to_id):
+        raise DocumentError("Articles can't be placed in the sign-in panel", 400)
     storage.move_article(article_id, to_id, from_id)
     return jsonify({"ok": True})
 

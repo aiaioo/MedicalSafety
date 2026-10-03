@@ -2259,6 +2259,12 @@ def admin_website_layout(website_id: str) -> dict:
     }
 
 
+def is_legal_tools_section(section_id: str) -> bool:
+    with _cursor() as cur:
+        cur.execute("SELECT 1 FROM website_sections WHERE id = %s AND kind = 'legal_tools'", (section_id,))
+        return cur.fetchone() is not None
+
+
 def move_article(article_id: str, to_section_id: str | None, from_section_id: str | None) -> None:
     """Drag-and-drop on the public page: places the article in
     `to_section_id` and/or takes it out of `from_section_id`. An article
