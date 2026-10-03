@@ -2269,7 +2269,7 @@ def create_report_image(report_id: str, image_id: str, content_type: str, data: 
     with _cursor() as cur:
         cur.execute(
             "INSERT INTO report_images (id, report_id, content_type, data) VALUES (%s, %s, %s, %s)",
-            (image_id, report_id, content_type, data),
+            (image_id, report_id, content_type, encryptor.encrypt_bytes(data)),
         )
 
 
@@ -2277,7 +2277,9 @@ def get_report_image(image_id: str) -> dict | None:
     with _cursor() as cur:
         cur.execute("SELECT report_id, content_type, data FROM report_images WHERE id = %s", (image_id,))
         row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    return {**row, "data": encryptor.decrypt_bytes(bytes(row["data"]))}
 
 
 def list_article_images(article_id: str) -> list[dict]:
