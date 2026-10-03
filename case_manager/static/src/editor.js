@@ -17,7 +17,7 @@ import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
 import { Fragment } from "@tiptap/pm/model";
-import { ResizableImage, SnippetRef, setSelectedImageAlign, isImageSelected, setSnippetRefs, snippetSource } from "./resizableImage.js";
+import { ResizableImage, SnippetRef, SnippetRefGroups, setSelectedImageAlign, isImageSelected, setSnippetRefs, snippetSource } from "./resizableImage.js";
 import {
   OrderedList,
   ListItem,
@@ -786,6 +786,7 @@ import { Pagination, repaginate } from "./pagination.js";
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
       SnippetRef,
+      SnippetRefGroups,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
     ],
     content: "",
@@ -1492,7 +1493,7 @@ import { Pagination, repaginate } from "./pagination.js";
   async function refreshSnippetRefs() {
     try {
       const res = await fetch(`${reportUrl}/annexure/refs`);
-      if (res.ok) setSnippetRefs(await res.json());
+      if (res.ok) setSnippetRefs(await res.json(), document.getElementById("annexureLink")?.href);
     } catch (e) {
       console.error(e);
     }

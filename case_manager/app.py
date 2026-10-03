@@ -1087,29 +1087,38 @@ def annexure_ref_texts(report_id):
     return annexure_ref_data(report_id)[0]
 
 
+def annexure_ref_texts_meta(report_id):
+    data = annexure_ref_data(report_id)
+    return data[0], False, data[3]
+
+
 def annexure_ref_data(report_id):
-    """(texts, positions, total): texts is {document id: {source page (int): "Annexure P-1, page 3"}} for every
+    """(texts, positions, total, meta): texts is {document id: {source page (int): "Annexure P-1, page 3"}} for every
     page the report's annexure includes, as the annexure numbers them now (page numbers are left off when the
     annexure is unnumbered); positions maps (document id, source page) to that page's 0-based index among the
-    annexure's document pages (not counting the List of Documents); total is how many such pages there are."""
+    annexure's document pages (not counting the List of Documents); total is how many such pages there are; meta is
+    {document id: {"label", "order", "pages": {source page: {"pos", "number"}}}}, what grouped references are built from."""
     payload = _annexure_payload(report_id, storage.get_annexure(report_id))
     dn, pn = payload["docNumbers"], payload["pageNumbers"]
-    refs, positions, shown, numbered = {}, {}, 0, 0
+    refs, positions, shown, numbered, meta = {}, {}, 0, 0, {}
     for d in payload["documents"]:
         pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
         with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
             pages = list(annexure_selected_pages(d, src.page_count))
         if not pages:
             continue
+        number_docs = dn["enabled"]
         label = doc_number_label(dn, numbered) if dn["enabled"] else (d["description"] or d["title"]).strip()
         numbered += 1
         texts = refs[d["id"]] = {}
+        info = meta[d["id"]] = {"label": label, "order": numbered - 1, "numbered": number_docs, "pages": {}}
         for i, p in enumerate(pages):
             number = annexure_page_range(shown + i, shown + i, pn) if pn["position"] != "none" else "-"
+            info["pages"].setdefault(p, {"pos": shown + i, "number": number})
             texts.setdefault(p, label if number == "-" else f"{label}, page {number}")
             positions.setdefault((d["id"], p), shown + i)
         shown += len(pages)
-    return refs, positions, shown
+    return refs, positions, shown, meta
 
 
 ANNEX_REF_MISSING = "[not in annexure]"
@@ -1122,7 +1131,121 @@ def snippet_source(src):
     return (m.group(1), int(m.group(2))) if m else None
 
 
-def resolve_snippet_refs(node, refs, links=False):
+def _join_and(items):
+    """["a", "b", "c"] -> "a, b and c"."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def group_ref_pieces(entries, meta):
+    """The text of consecutive snippet references merged into one, as [(text, (document id, page) | None)] pieces
+    (a key marks a clickable piece). `entries` are (document id, page) pairs that are all in `meta`. They are grouped
+    by document (in annexure order), each document's pages sorted, runs of consecutive annexure pages shown as a
+    range ("pages 3-5") that links to its first page; documents are joined with commas and a final "and"."""
+    by_doc = {}
+    for doc_id, page in entries:
+        by_doc.setdefault(doc_id, {})[page] = meta[doc_id]["pages"][page]
+    items = []
+    for doc_id in sorted(by_doc, key=lambda d: meta[d]["order"]):
+        label, pages = meta[doc_id]["label"], sorted(by_doc[doc_id].items(), key=lambda kv: kv[1]["pos"])
+        ranges = []  # [first page, first number, last number, last pos]
+        for page, info in pages:
+            if info["number"] == "-":
+                continue
+            if ranges and info["pos"] == ranges[-1][3] + 1:
+                ranges[-1][2], ranges[-1][3] = info["number"], info["pos"]
+            else:
+                ranges.append([page, info["number"], info["number"], info["pos"]])
+        if not ranges:
+            items.append([(label, (doc_id, pages[0][0]))])
+            continue
+        parts = [(f"{label}, page{'s' if len(ranges) > 1 or ranges[0][1] != ranges[0][2] else ''} ", None)]
+        for i, (page, first, last, _) in enumerate(ranges):
+            if i:
+                parts.append((" and " if i == len(ranges) - 1 else ", ", None))
+            parts.append((first if first == last else f"{first}-{last}", (doc_id, page)))
+        items.append(parts)
+    pieces = []
+    for i, parts in enumerate(items):
+        if i:
+            pieces.append((" and " if i == len(items) - 1 else ", ", None))
+        pieces += parts
+    return pieces
+
+
+REF_TEXTBLOCKS = ("paragraph", "heading")
+
+
+def _is_blank_inline(n):
+    return n.get("type") == "hardBreak" or (n.get("type") == "text" and not (n.get("text") or "").strip())
+
+
+def group_adjacent_refs(children, meta, links):
+    """`children` (the content of one container) with each run of two or more snippetRef nodes that have only
+    whitespace, line breaks or blank paragraphs between them replaced by one merged reference (see group_ref_pieces)
+    where the run starts."""
+    blocks = [list(c.get("content") or []) if c.get("type") in REF_TEXTBLOCKS else None for c in children]
+    runs, cur, pending, seen = [], None, [], []
+
+    def end():
+        nonlocal cur
+        if cur and len(cur["refs"]) > 1:
+            runs.append(cur)
+        cur = None
+
+    for bi, inline in enumerate(blocks):
+        if inline is None:
+            end()
+            continue
+        if cur:
+            seen.append(bi)
+        for ii, n in enumerate(inline):
+            source = snippet_source((n.get("attrs") or {}).get("src")) if n.get("type") == "snippetRef" else None
+            if source and source[1] in meta.get(source[0], {}).get("pages", {}):
+                if cur is None:
+                    cur, pending, seen = {"refs": [(bi, ii, source)], "span": [], "blocks": [bi]}, [], [bi]
+                else:
+                    cur["span"] += pending
+                    pending = []
+                    cur["refs"].append((bi, ii, source))
+                    cur["blocks"] = list(seen)
+            elif _is_blank_inline(n):
+                pending.append((bi, ii))
+            else:
+                end()
+    end()
+    if not runs:
+        return children
+
+    drop, merged, empty_check = set(), {}, set()
+    for run in runs:
+        (bi, ii, _), rest = run["refs"][0], run["refs"][1:]
+        drop.update(run["span"])
+        drop.update((b, i) for b, i, _ in rest)
+        empty_check.update(run["blocks"][1:])
+        pieces = group_ref_pieces([s for _, _, s in run["refs"]], meta)
+        merged[(bi, ii)] = [
+            {"type": "text", "text": text, **({"annexLink": f"{key[0]}:{key[1]}"} if links and key else {})}
+            for text, key in pieces
+        ]
+    out = []
+    for bi, child in enumerate(children):
+        inline = blocks[bi]
+        if inline is None:
+            out.append(child)
+            continue
+        new = []
+        for ii, n in enumerate(inline):
+            if (bi, ii) in merged:
+                new += merged[(bi, ii)]
+            elif (bi, ii) not in drop:
+                new.append(n)
+        if not new and bi in empty_check:
+            continue
+        out.append({**child, "content": new} if new or "content" in child else child)
+    return out
+
+
+def resolve_snippet_refs(node, refs, links=False, meta=None):
     """`node` with each snippet image that has a refStyle replaced by what that style shows: the image and a
     paragraph of its annexure reference ("both"), or just the paragraph ("reference"), aligned like the image.
     `refs` is as from annexure_ref_texts. With `links`, the images and reference paragraphs that point at an annexed
@@ -1130,7 +1253,7 @@ def resolve_snippet_refs(node, refs, links=False):
     if not isinstance(node, dict) or "content" not in node:
         return node
     content = []
-    for child in node["content"]:
+    for child in group_adjacent_refs(node["content"], meta, links) if meta else node["content"]:
         attrs = child.get("attrs") or {} if isinstance(child, dict) else {}
         if child.get("type") == "snippetRef":
             # Inline reference-only snippet: becomes a run of text inside its paragraph.
@@ -1141,7 +1264,7 @@ def resolve_snippet_refs(node, refs, links=False):
             continue
         source = snippet_source(attrs.get("src")) if child.get("type") == "image" else None
         if source is None:
-            content.append(resolve_snippet_refs(child, refs, links))
+            content.append(resolve_snippet_refs(child, refs, links, meta))
             continue
         text = refs.get(source[0], {}).get(source[1])
         link = {"annexLink": f"{source[0]}:{source[1]}"} if links and text else {}
@@ -3183,7 +3306,8 @@ def api_report_annexure_refs(report_id):
     """The current text of each annexure reference the report editor can show, by document id and source page."""
     check_report_id(report_id)
     require_role("report", report_id, "viewer")
-    return jsonify(annexure_ref_texts(report_id))
+    texts, _, _, meta = annexure_ref_data(report_id)
+    return jsonify({"texts": texts, "meta": meta})
 
 
 @app.route("/api/report/<report_id>/annexure/export")
@@ -3255,13 +3379,13 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    texts, positions, total = annexure_ref_data(report_id)
+    texts, positions, total, meta = annexure_ref_data(report_id)
     payload = None
     if request.args.get("annexures") == "1":
         payload = _annexure_payload(report_id, storage.get_annexure(report_id))
     # Snippets link to their annexure page only when the annexure is part of the file.
     links = [] if payload and payload["documents"] else None
-    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, links is not None)),
+    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, links is not None, meta)),
                                   data.get("margins"), data.get("pageNumbers"), links)
 
     if links is not None:
@@ -3300,7 +3424,7 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
+    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))), data.get("margins"), data.get("pageNumbers"))
 
     resp = Response(
         docx_bytes,

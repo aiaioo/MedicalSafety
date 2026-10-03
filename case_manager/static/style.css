@@ -1046,3 +1046,5 @@ a.tag:hover { background: #d7deec; }
 .editor .tiptap-content .img-wrap .snippet-ref.missing { color: #a33; }
 .editor .tiptap-content .snippet-ref-inline.missing { color: #a33; }
 .editor .tiptap-content .snippet-ref-inline.ProseMirror-selectednode { outline: 2px solid #2266dd; }
+.editor .tiptap-content .snippet-ref-hidden { display: none; }
+.editor .tiptap-content .snippet-ref-group a.snippet-ref-link { color: inherit; text-decoration: underline; cursor: pointer; }

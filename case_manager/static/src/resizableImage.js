@@ -15,6 +15,8 @@
 // document transform, so the handles can safely live inside the image's
 // own wrapper this time.
 import { Node } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { Image as BaseImage } from "@tiptap/extension-image";
 
 // Snippet images show, per their `refStyle` attr, the image alone ("image"),
@@ -25,7 +27,10 @@ import { Image as BaseImage } from "@tiptap/extension-image";
 // on export.
 const MISSING_REF = "[not in annexure]";
 let refs = {};
+let refMeta = {};
+let annexureUrl = "";
 const views = new Set();
+const refListeners = new Set();
 
 // The source document id and page a snippet image's src points at, or null.
 export function snippetSource(src) {
@@ -33,9 +38,168 @@ export function snippetSource(src) {
   return m ? { docId: m[1], page: parseInt(m[2], 10) } : null;
 }
 
-export function setSnippetRefs(next) {
-  refs = next || {};
+// `next` is {texts: {docId: {page: text}}, meta: {docId: {label, order, pages: {page: {pos, number}}}}}.
+export function setSnippetRefs(next, annexureHref) {
+  refs = (next && next.texts) || {};
+  refMeta = (next && next.meta) || {};
+  if (annexureHref) annexureUrl = annexureHref;
   views.forEach((render) => render());
+  refListeners.forEach((fn) => fn());
+}
+
+// Pieces of the merged text for consecutive references, mirroring the server's
+// group_ref_pieces: [{text, key?: {docId, page}}] -- a key marks a clickable piece.
+function joinAnd(n, i) {
+  return i === 0 ? "" : i === n - 1 ? " and " : ", ";
+}
+
+function groupRefPieces(sources) {
+  const byDoc = new Map();
+  sources.forEach(({ docId, page }) => {
+    if (!byDoc.has(docId)) byDoc.set(docId, new Map());
+    byDoc.get(docId).set(page, refMeta[docId].pages[page]);
+  });
+  const docIds = [...byDoc.keys()].sort((a, b) => refMeta[a].order - refMeta[b].order);
+  const pieces = [];
+  docIds.forEach((docId, di) => {
+    if (di) pieces.push({ text: joinAnd(docIds.length, di) });
+    const label = refMeta[docId].label;
+    const pages = [...byDoc.get(docId).entries()].sort((a, b) => a[1].pos - b[1].pos);
+    const ranges = [];
+    pages.forEach(([page, info]) => {
+      if (info.number === "-") return;
+      const last = ranges[ranges.length - 1];
+      if (last && info.pos === last.pos + 1) Object.assign(last, { last: info.number, pos: info.pos });
+      else ranges.push({ page, first: info.number, last: info.number, pos: info.pos });
+    });
+    if (!ranges.length) {
+      pieces.push({ text: label, key: { docId, page: pages[0][0] } });
+      return;
+    }
+    const plural = ranges.length > 1 || ranges[0].first !== ranges[0].last;
+    pieces.push({ text: `${label}, page${plural ? "s" : ""} ` });
+    ranges.forEach((r, i) => {
+      if (i) pieces.push({ text: joinAnd(ranges.length, i) });
+      pieces.push({ text: r.first === r.last ? r.first : `${r.first}-${r.last}`, key: { docId, page: r.page } });
+    });
+  });
+  return pieces;
+}
+
+const TEXTBLOCKS = new Set(["paragraph", "heading"]);
+
+// Runs of two or more snippetRef nodes with only whitespace, line breaks or
+// blank paragraphs between them (mirrors the server's group_adjacent_refs).
+// Each run: {refs: [{pos, node, source}], hide: [{from, to}] (inline ranges),
+// blocks: [{pos, node}] (textblocks the run spans, the first one holds the merged reference)}.
+function findRefRuns(container, base, runs) {
+  let cur = null;
+  let pending = [];
+  let seen = [];
+  const end = () => {
+    if (cur && cur.refs.length > 1) runs.push(cur);
+    cur = null;
+  };
+  container.forEach((child, offset) => {
+    const pos = base + offset;
+    if (!TEXTBLOCKS.has(child.type.name)) {
+      end();
+      if (!child.isLeaf && !child.isTextblock) findRefRuns(child, pos + 1, runs);
+      return;
+    }
+    const block = { pos, node: child };
+    if (cur) seen.push(block);
+    child.forEach((n, off) => {
+      const npos = pos + 1 + off;
+      const source = n.type.name === "snippetRef" ? snippetSource(n.attrs.src) : null;
+      if (source && refMeta[source.docId]?.pages[source.page]) {
+        if (!cur) {
+          cur = { refs: [{ pos: npos, node: n, source }], hide: [], blocks: [block] };
+          pending = [];
+          seen = [block];
+        } else {
+          cur.hide.push(...pending);
+          pending = [];
+          cur.refs.push({ pos: npos, node: n, source });
+          cur.blocks = seen.slice();
+        }
+      } else if (n.type.name === "hardBreak" || (n.isText && !n.text.trim())) {
+        if (cur) pending.push({ from: npos, to: npos + n.nodeSize });
+      } else {
+        end();
+      }
+    });
+  });
+  end();
+}
+
+function mergedRefWidget(run) {
+  return () => {
+    const dom = document.createElement("span");
+    dom.className = "snippet-ref-inline snippet-ref-group";
+    groupRefPieces(run.refs.map((r) => r.source)).forEach(({ text, key }) => {
+      if (!key) {
+        dom.appendChild(document.createTextNode(text));
+        return;
+      }
+      const a = document.createElement("a");
+      a.textContent = text;
+      a.className = "snippet-ref-link";
+      a.href = annexureUrl || "#";
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.title = "Open the annexure";
+      dom.appendChild(a);
+    });
+    return dom;
+  };
+}
+
+// Shows each run of consecutive references as one merged reference, leaving
+// the underlying nodes untouched (the server merges the same runs on export).
+const groupKey = new PluginKey("snippetRefGroups");
+export const SnippetRefGroups = Node.create({
+  name: "snippetRefGroups",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: groupKey,
+        view(view) {
+          const refresh = () => view.dispatch(view.state.tr.setMeta(groupKey, true));
+          refListeners.add(refresh);
+          return { destroy: () => refListeners.delete(refresh) };
+        },
+        state: {
+          init: (_, state) => build(state.doc),
+          apply: (tr, old) => (tr.docChanged || tr.getMeta(groupKey) ? build(tr.doc) : old),
+        },
+        props: { decorations: (state) => groupKey.getState(state) },
+      }),
+    ];
+  },
+});
+
+function build(doc) {
+  const runs = [];
+  findRefRuns(doc, 0, runs);
+  const decos = [];
+  runs.forEach((run) => {
+    const first = run.refs[0];
+    decos.push(Decoration.widget(first.pos, mergedRefWidget(run), { side: -1, key: `ref-group-${first.pos}-${run.refs.length}` }));
+    run.refs.forEach((r) => decos.push(Decoration.node(r.pos, r.pos + r.node.nodeSize, { class: "snippet-ref-hidden" })));
+    run.hide.forEach(({ from, to }) => decos.push(Decoration.inline(from, to, { class: "snippet-ref-hidden" })));
+    // Blocks after the first disappear once nothing else is left in them.
+    run.blocks.slice(1).forEach(({ pos, node }) => {
+      let rest = false;
+      node.forEach((n, off) => {
+        const p = pos + 1 + off;
+        const inRun = run.refs.some((r) => r.pos === p) || run.hide.some((h) => h.from === p);
+        if (!inRun) rest = true;
+      });
+      if (!rest) decos.push(Decoration.node(pos, pos + node.nodeSize, { class: "snippet-ref-hidden" }));
+    });
+  });
+  return DecorationSet.create(doc, decos);
 }
 
 function applyWrapperAttrs(wrapper, img, attrs) {
