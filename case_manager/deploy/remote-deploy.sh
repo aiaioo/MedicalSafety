@@ -85,6 +85,11 @@ echo "--- Encrypting any plaintext case and cause text"
  sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
    .venv/bin/python3 db/encrypt_text_columns.py)
 
+echo "--- Encrypting any plaintext user emails and names"
+(set -a; . "$ENV_FILE"; set +a
+ sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
+   .venv/bin/python3 db/encrypt_users.py)
+
 echo "--- Encrypting any plaintext annotations"
 (set -a; . "$ENV_FILE"; set +a
  sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \

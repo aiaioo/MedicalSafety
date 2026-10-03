@@ -391,7 +391,7 @@ def list_snippets(document_id: str, page: int | None = None, include_creator: bo
             "rect": {"x": r["rect_x"], "y": r["rect_y"], "w": r["rect_w"], "h": r["rect_h"]},
             "annotated": r["annotated"],
             "created_at": _iso(r["created_at"]),
-            **({"created_by_email": r["creator_email"]} if include_creator else {}),
+            **({"created_by_email": _dec_text(r["creator_email"])} if include_creator else {}),
         }
         for r in rows
     ]
@@ -1167,14 +1167,16 @@ def get_profile(user_id: int) -> dict:
             "SELECT full_name, city, country, photo IS NOT NULL AS has_photo FROM users WHERE id = %s",
             (user_id,),
         )
-        return dict(cur.fetchone())
+        row = dict(cur.fetchone())
+    row["full_name"] = _dec_text(row["full_name"])
+    return row
 
 
 def set_profile(user_id: int, full_name: str, city: str, country: str) -> None:
     with _cursor() as cur:
         cur.execute(
             "UPDATE users SET full_name = %s, city = %s, country = %s WHERE id = %s",
-            (full_name, city, country, user_id),
+            (_enc_text(full_name), city, country, user_id),
         )
 
 
@@ -1424,16 +1426,22 @@ def set_allegation_order(order: list[str]) -> list[str]:
 # a session token's SHA-256, never the token the browser holds.
 # ---------------------------------------------------------------------------
 
+def _email_hash(email: str) -> str:
+    """Lookup key for an email (emails are stored encrypted): a keyed hash of
+    the lowercased address."""
+    return encryptor.blind_index(email.strip().lower())
+
+
 def create_user(email: str, password_hash: str) -> dict | None:
     """{"id", "email", "password_hash"} for the new user, or None if that
     email (case-insensitively) is already registered."""
     try:
         with _cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, password_hash, storage_dir) VALUES (%s, %s, %s) RETURNING id, email, password_hash",
-                (email, password_hash, owner_dir_name(email)),
+                "INSERT INTO users (email, email_hash, password_hash, storage_dir) VALUES (%s, %s, %s, %s) RETURNING id, password_hash",
+                (_enc_text(email), _email_hash(email), password_hash, owner_dir_name(email)),
             )
-            return dict(cur.fetchone())
+            return {**cur.fetchone(), "email": email}
     except psycopg2.errors.UniqueViolation:
         return None
 
@@ -1441,11 +1449,11 @@ def create_user(email: str, password_hash: str) -> dict | None:
 def get_user_by_email(email: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, is_admin, is_content_creator, email_verified_at FROM users WHERE lower(email) = lower(%s)",
-            (email,),
+            "SELECT id, email, password_hash, is_admin, is_content_creator, email_verified_at FROM users WHERE email_hash = %s",
+            (_email_hash(email),),
         )
         row = cur.fetchone()
-    return dict(row) if row else None
+    return {**row, "email": _dec_text(row["email"])} if row else None
 
 
 def create_session(user_id: int, token_hash: str, expires_at: datetime) -> None:
@@ -1472,7 +1480,7 @@ def get_session_user(token_hash: str) -> dict | None:
             (token_hash,),
         )
         row = cur.fetchone()
-    return dict(row) if row else None
+    return {**row, "email": _dec_text(row["email"])} if row else None
 
 
 def delete_session(token_hash: str) -> None:
@@ -1485,6 +1493,7 @@ def record_signup_attempt(ip: str, limit: int, window_seconds: int) -> bool:
     within the last `window_seconds`; returns whether it was allowed.
     Refused attempts aren't recorded, so the window slides rather than
     extending itself."""
+    ip = encryptor.blind_index(ip)  # keys can embed email addresses, so never store them as given
     with _cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (ip,))  # serialize this IP's checks across workers
         cur.execute("DELETE FROM signup_attempts WHERE attempted_at <= now() - make_interval(secs => %s)", (window_seconds,))
@@ -1671,7 +1680,7 @@ def list_collaborations(user_id: int) -> list[dict]:
         mine = r["inviter_id"] == user_id
         status = "confirmed" if r["status"] == "confirmed" else ("sent" if mine else "received")
         items.append({
-            "id": r["id"], "other_id": r["other_id"], "email": r["email"], "status": status, "at": _iso(r["at"]),
+            "id": r["id"], "other_id": r["other_id"], "email": _dec_text(r["email"]), "status": status, "at": _iso(r["at"]),
             "is_new": status == "received" or (status == "confirmed" and mine and not r["inviter_seen"]),
         })
     return items
@@ -2038,7 +2047,7 @@ def admin_list_users() -> list[dict]:
         rows = cur.fetchall()
     return [
         {
-            "id": r["id"], "email": r["email"], "is_admin": r["is_admin"], "is_content_creator": r["is_content_creator"],
+            "id": r["id"], "email": _dec_text(r["email"]), "is_admin": r["is_admin"], "is_content_creator": r["is_content_creator"],
             "created_at": _iso(r["created_at"]),
             "causes": r["causes"], "cases": r["cases"], "allegations": r["allegations"],
             "documents": r["documents"], "reports": r["reports"],

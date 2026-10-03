@@ -34,6 +34,8 @@ Command line (stdin/stdout only, so no plaintext file is ever created):
 
 import argparse
 import base64
+import hashlib
+import hmac
 import io
 import os
 import struct
@@ -140,6 +142,14 @@ def write_encrypted(path, data):
         if tmp.exists():
             tmp.unlink()
     return dest
+
+
+def blind_index(text):
+    """A deterministic keyed hash (hex) of ``text``, for looking up encrypted
+    values by equality (e.g. an email address) without storing them in the
+    clear. Derived from the encryption key; changes if the key does."""
+    sub_key = hmac.new(_load_key(create=True), b"encryptor blind index v1", hashlib.sha256).digest()
+    return hmac.new(sub_key, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def encrypt_bytes(data):
