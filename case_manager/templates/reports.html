@@ -201,6 +201,13 @@
       <div id="reportSnippetList" class="snippet-list">
         <p class="empty">Pick a source document above to see its snippets here.</p>
       </div>
+      <h3 class="annex-section-divider">Snippet insertion style</h3>
+      <div class="insert-style" role="radiogroup" aria-label="Snippet insertion style">
+        <label><input type="radio" name="snippetInsertStyle" value="snippets" checked> Insert only snippets</label>
+        <label><input type="radio" name="snippetInsertStyle" value="both"> Insert snippets and references</label>
+        <label><input type="radio" name="snippetInsertStyle" value="references"> Insert only references</label>
+        <p class="empty" style="margin: 0">A reference is the snippet's annexure document number and page number. It updates as the annexure is reordered or renumbered, and is filled in when the report is exported.</p>
+      </div>
       <h3 class="annex-section-divider">Page numbers</h3>
       <div class="annex-numbering">
         <label class="modal-field">Page number position

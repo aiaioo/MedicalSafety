@@ -977,7 +977,7 @@ def _sanitize_marks(raw):
 
 REPORT_BLOCK_TYPES = {
     "paragraph", "heading", "bulletList", "orderedList", "listItem",
-    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak",
+    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak", "annexRef",
 }
 
 
@@ -1029,6 +1029,13 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
             if levels:
                 clean_attrs["numLevels"] = levels
                 clean_attrs["numCascade"] = bool(attrs.get("numCascade"))
+        if t == "annexRef":
+            doc_id, page, file = attrs.get("docId"), attrs.get("page"), attrs.get("file")
+            if not (isinstance(doc_id, str) and DOC_ID_RE.match(doc_id) and isinstance(page, int) and page >= 1):
+                return None
+            clean_attrs.update(docId=doc_id, page=page)
+            if isinstance(file, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", file):
+                clean_attrs["file"] = file
         if t == "image":
             src = _safe_url(attrs.get("src"))
             if not src:
@@ -1045,7 +1052,7 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
         if clean_attrs:
             out["attrs"] = clean_attrs
 
-        if t not in ("image", "hardBreak"):
+        if t not in ("image", "hardBreak", "annexRef"):
             content = []
             for child in node.get("content") or []:
                 cleaned = sanitize_node(child)
@@ -1060,6 +1067,43 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
         if cleaned is not None:
             content.append(cleaned)
     return {"type": "doc", "content": content}
+
+
+def annexure_ref_texts(report_id):
+    """{document id: {source page (int): "Annexure P-1, page 3"}} for every page the report's annexure
+    includes, as the annexure numbers them now. Page numbers are left off when the annexure is unnumbered."""
+    payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    dn, pn = payload["docNumbers"], payload["pageNumbers"]
+    refs, shown, numbered = {}, 0, 0
+    for d in payload["documents"]:
+        pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
+            pages = list(annexure_selected_pages(d, src.page_count))
+        if not pages:
+            continue
+        label = doc_number_label(dn, numbered) if dn["enabled"] else (d["description"] or d["title"]).strip()
+        numbered += 1
+        texts = refs[d["id"]] = {}
+        for i, p in enumerate(pages):
+            number = annexure_page_range(shown + i, shown + i, pn) if pn["position"] != "none" else "-"
+            texts.setdefault(p, label if number == "-" else f"{label}, page {number}")
+        shown += len(pages)
+    return refs
+
+
+ANNEX_REF_MISSING = "[not in annexure]"
+
+
+def resolve_annex_refs(node, refs):
+    """`node` with every annexRef replaced by its current text from `refs` (see annexure_ref_texts)."""
+    if not isinstance(node, dict):
+        return node
+    if node.get("type") == "annexRef":
+        attrs = node.get("attrs") or {}
+        return {"type": "text", "text": refs.get(attrs.get("docId"), {}).get(attrs.get("page"), ANNEX_REF_MISSING)}
+    if "content" in node:
+        return {**node, "content": [resolve_annex_refs(c, refs) for c in node["content"]]}
+    return node
 
 
 def inline_doc_images(node):
@@ -3048,6 +3092,14 @@ def _annexure_pdf_bytes(payload):
     return data
 
 
+@app.route("/api/report/<report_id>/annexure/refs")
+def api_report_annexure_refs(report_id):
+    """The current text of each annexure reference the report editor can show, by document id and source page."""
+    check_report_id(report_id)
+    require_role("report", report_id, "viewer")
+    return jsonify(annexure_ref_texts(report_id))
+
+
 @app.route("/api/report/<report_id>/annexure/export")
 def api_report_annexure_export(report_id):
     """The saved annexure as one PDF: the annexed documents' pages, in order."""
@@ -3117,7 +3169,7 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
+    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_annex_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
 
     if request.args.get("annexures") == "1":
         payload = _annexure_payload(report_id, storage.get_annexure(report_id))
@@ -3149,7 +3201,7 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
+    docx_bytes = render_report_docx(title, inline_doc_images(resolve_annex_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
 
     resp = Response(
         docx_bytes,

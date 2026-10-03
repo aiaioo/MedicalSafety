@@ -34,6 +34,7 @@ import {
   continueFromPreviousListAt,
   exitEmptyListItemOnEnter,
 } from "./listNumbering.js";
+import { AnnexRef, setAnnexRefs } from "./annexRef.js";
 import { Pagination, repaginate } from "./pagination.js";
 
 (function () {
@@ -784,6 +785,7 @@ import { Pagination, repaginate } from "./pagination.js";
       ParagraphSpacing,
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
+      AnnexRef,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
     ],
     content: "",
@@ -1255,6 +1257,7 @@ import { Pagination, repaginate } from "./pagination.js";
       if (!res.ok) throw new Error(await res.text());
       dirty = false;
       setStatus("Saved");
+      refreshAnnexRefs();
     } finally {
       saving = false;
       if (saveAgainAfter) {
@@ -1483,6 +1486,38 @@ import { Pagination, repaginate } from "./pagination.js";
     }
   }
 
+  // Annexure references show the annexure's current numbering, so refetch it
+  // on load, after a save (the saved snippets decide which documents are
+  // annexed) and whenever the user comes back from the Annexures page.
+  async function refreshAnnexRefs() {
+    try {
+      const res = await fetch(`${reportUrl}/annexure/refs`);
+      if (res.ok) setAnnexRefs(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  window.addEventListener("pageshow", refreshAnnexRefs);
+  window.addEventListener("focus", refreshAnnexRefs);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshAnnexRefs();
+  });
+
+  const INSERT_STYLE_KEY = "snippetInsertStyle";
+  const insertStyleInputs = document.querySelectorAll('input[name="snippetInsertStyle"]');
+  function insertStyle() {
+    const checked = document.querySelector('input[name="snippetInsertStyle"]:checked');
+    return checked ? checked.value : "snippets";
+  }
+  try {
+    const saved = localStorage.getItem(INSERT_STYLE_KEY);
+    insertStyleInputs.forEach((el) => { el.checked = el.value === saved; });
+    if (!document.querySelector('input[name="snippetInsertStyle"]:checked') && insertStyleInputs[0]) insertStyleInputs[0].checked = true;
+  } catch (e) {}
+  insertStyleInputs.forEach((el) => el.addEventListener("change", () => {
+    try { localStorage.setItem(INSERT_STYLE_KEY, insertStyle()); } catch (e) {}
+  }));
+
   async function loadSnippets() {
     const { source_doc, source_type } = currentSource();
     if (!source_doc) {
@@ -1529,8 +1564,19 @@ import { Pagination, repaginate } from "./pagination.js";
             attrs.width = Math.round(s.rect.w * pageInfo.width * PT_TO_PX);
             attrs.height = Math.round(s.rect.h * pageInfo.height * PT_TO_PX);
           }
-          editor.chain().focus().setImage(attrs).run();
+          const style = insertStyle();
+          const ref = {
+            type: "annexRef",
+            attrs: { docId: source_doc, page: s.page, file: decodeURIComponent(s.url.split("?")[0].split("/").pop()) },
+          };
+          const chain = editor.chain().focus();
+          if (style === "snippets") chain.setImage(attrs);
+          else if (style === "both") chain.setImage(attrs).insertContent({ type: "paragraph", content: [ref] });
+          else chain.insertContent({ type: "paragraph", content: [ref] });
+          chain.run();
           markDirty();
+          // A reference's document joins the annexure once saved; show its text meanwhile.
+          if (style !== "snippets") refreshAnnexRefs();
         });
         snippetListEl.appendChild(card);
       }
@@ -1574,6 +1620,7 @@ import { Pagination, repaginate } from "./pagination.js";
       updateAnnotateLink();
       refreshCaseSetup();
       loadSnippets();
+      refreshAnnexRefs();
       dirty = false;
       setStatus("");
     } catch (e) {

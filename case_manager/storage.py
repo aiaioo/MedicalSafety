@@ -568,9 +568,13 @@ def get_report(report_id: str) -> dict | None:
 
 
 def _snippet_refs(node, found: set | None = None) -> set[tuple[str, str]]:
-    """(document_id, filename) of every snippet image a Tiptap doc embeds."""
+    """(document_id, filename) of every snippet a Tiptap doc embeds as an image or cites with an annexRef."""
     found = set() if found is None else found
     if isinstance(node, dict):
+        if node.get("type") == "annexRef":
+            attrs = node.get("attrs") or {}
+            if attrs.get("docId") and attrs.get("file"):
+                found.add((attrs["docId"], attrs["file"]))
         if node.get("type") == "image":
             parts = [p for p in urlsplit((node.get("attrs") or {}).get("src", "")).path.split("/") if p]
             if len(parts) >= 4 and parts[-3:-2] == ["snippets"] and parts[-4] == "media":
