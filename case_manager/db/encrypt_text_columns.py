@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-off: encrypt, in place, the free-text columns of cases, hearings,
-case parties, causes, goals, allegations, evidence and "to prove" items.
+case parties, causes, goals, allegations, evidence and "to prove" items,
+plus the titles/descriptions of documents and the names of reports.
 
 Each non-empty value becomes 'enc1:<base64 ciphertext>' (storage._enc_text);
 empty values and NULLs are left alone. Values that already decrypt are
@@ -27,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import storage  # noqa: E402
 
 TABLES = {
+    "documents": ("title", "description"),
+    "reports": ("name",),
     "cases": ("name", "court", "case_number", "summary", "court_location", "cause_title_doc"),
     "hearings": ("hearing_date", "title", "summary"),
     "case_parties": ("name",),

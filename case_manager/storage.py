@@ -212,7 +212,8 @@ def list_documents(user_id: int) -> list[dict]:
         )
         rows = cur.fetchall()
     return [
-        {"id": r["id"], "type": r["doc_type"], "title": r["title"], "description": r["description"], "role": r["role"],
+        {"id": r["id"], "type": r["doc_type"], "title": _dec_text(r["title"]), "description": _dec_text(r["description"]),
+         "role": r["role"],
          "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"]),
          "snippet_count": r["snippet_count"]}
         for r in rows
@@ -234,24 +235,24 @@ def get_document_title(document_id: str) -> str:
     with _cursor() as cur:
         cur.execute("SELECT title FROM documents WHERE id = %s", (document_id,))
         row = cur.fetchone()
-    return row["title"] if row and row["title"] else document_id
+    return _dec_text(row["title"]) if row and row["title"] else document_id
 
 
 def set_document_title(document_id: str, title: str) -> None:
     with _cursor() as cur:
-        cur.execute("UPDATE documents SET title = %s WHERE id = %s", (title, document_id))
+        cur.execute("UPDATE documents SET title = %s WHERE id = %s", (_enc_text(title), document_id))
 
 
 def get_document_description(document_id: str) -> str:
     with _cursor() as cur:
         cur.execute("SELECT description FROM documents WHERE id = %s", (document_id,))
         row = cur.fetchone()
-    return row["description"] if row else ""
+    return _dec_text(row["description"]) if row else ""
 
 
 def set_document_description(document_id: str, description: str) -> None:
     with _cursor() as cur:
-        cur.execute("UPDATE documents SET description = %s WHERE id = %s", (description, document_id))
+        cur.execute("UPDATE documents SET description = %s WHERE id = %s", (_enc_text(description), document_id))
 
 
 def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int, link: tuple[str, str]) -> None:
@@ -267,7 +268,7 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
     with _cursor() as cur:
         cur.execute(
             "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
-            (document_id, doc_type, document_id, owner),
+            (document_id, doc_type, _enc_text(document_id), owner),
         )
         _grant(cur, owner_id, "source", document_id, "owner")
         _link(cur, "source", document_id, *link)
@@ -519,7 +520,7 @@ def _report_row_to_dict(row: dict) -> dict:
     source_doc = row["source_document_id"] or ""
     return {
         "id": row["id"],
-        "name": row["name"],
+        "name": _dec_text(row["name"]),
         "doc": _decrypt_report_doc(row["doc_enc"]),
         "source_doc": source_doc,
         "source_type": _doc_family(row["source_doc_type"]) if source_doc else "pdf",
@@ -556,7 +557,7 @@ def list_reports(user_id: int) -> list[dict]:
         source_doc = r["source_document_id"] or ""
         items.append({
             "id": r["id"],
-            "name": r["name"],
+            "name": _dec_text(r["name"]),
             "source_doc": source_doc,
             "source_type": _doc_family(r["source_doc_type"]) if source_doc else "pdf",
             "cause_ids": list(r["cause_ids"]),
@@ -613,7 +614,7 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
                 doc = NULL, source_document_id = EXCLUDED.source_document_id,
                 margins = EXCLUDED.margins, page_numbers = EXCLUDED.page_numbers, updated_at = EXCLUDED.updated_at
             """,
-            (report_id, data["name"], encrypt_report_doc(data["doc"]), _first_image_src(data["doc"]),
+            (report_id, _enc_text(data["name"]), encrypt_report_doc(data["doc"]), _first_image_src(data["doc"]),
              data["source_doc"] or None,
              psycopg2.extras.Json(data["margins"]), psycopg2.extras.Json(data["pageNumbers"]),
              data["created_at"], data["updated_at"]),
@@ -1608,15 +1609,8 @@ _OBJECT_TITLES = {
     "report": ("reports", "name"),
     "source": ("documents", "title"),
 }
-# Kinds whose title column is stored encrypted, so it can be neither read nor
+# Every kind's title column is stored encrypted, so it can be neither read nor
 # ordered by in SQL -- the listings below decrypt and sort in Python.
-_ENCRYPTED_TITLE_KINDS = ("cause", "case", "allegation")
-
-
-def _object_title(kind: str, raw: str) -> str:
-    return _dec_text(raw) if kind in _ENCRYPTED_TITLE_KINDS else raw
-
-
 SHARE_ROLES = ("viewer", "editor")
 SHARE_KINDS = tuple(_OBJECT_TITLES)
 
@@ -1753,7 +1747,7 @@ def list_owned_objects(user_id: int) -> dict[str, list[dict]]:
                 f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner'",
                 (user_id,),
             )
-            rows = [(_object_title(kind, r["title"]), r["id"]) for r in cur.fetchall()]
+            rows = [(_dec_text(r["title"]), r["id"]) for r in cur.fetchall()]
             rows.sort(key=lambda t: (t[0].lower(), t[1]))
             result[kind] = [{"id": i, "title": title or i} for title, i in rows]
     return result
@@ -1775,7 +1769,7 @@ def list_shared_objects(owner_id: int, collaborator_id: int) -> dict[str, list[d
                 f"LEFT JOIN {table} d ON d.{column} = o.id AND d.user_id = %s",
                 (owner_id, collaborator_id, collaborator_id),
             )
-            rows = [({**r, "title": _object_title(kind, r["title"])}) for r in cur.fetchall()]
+            rows = [({**r, "title": _dec_text(r["title"])}) for r in cur.fetchall()]
             rows.sort(key=lambda r: (r["title"].lower(), r["id"]))
             result[kind] = [
                 {"id": r["id"], "title": r["title"] or r["id"], "role": r["role"], "direct": r["direct"]}
@@ -1852,7 +1846,7 @@ def list_keys(owner_id: int) -> dict[str, list[dict]]:
                 f"FROM {table} k JOIN {obj_table} o ON o.id = k.{column} WHERE k.owner_id = %s",
                 (owner_id,),
             )
-            rows = [{**r, "title": _object_title(kind, r["title"])} for r in cur.fetchall()]
+            rows = [{**r, "title": _dec_text(r["title"])} for r in cur.fetchall()]
             rows.sort(key=lambda r: (r["title"].lower(), r["object_id"], r["id"]))
             result[kind] = [{**r, "title": r["title"] or r["object_id"]} for r in rows]
     return result
