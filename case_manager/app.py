@@ -1060,6 +1060,9 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
                 clean_attrs["align"] = attrs["align"]
             if attrs.get("refStyle") in ("both", "reference"):
                 clean_attrs["refStyle"] = attrs["refStyle"]
+            for key in ("joinBefore", "joinAfter"):
+                if attrs.get(key) is True:
+                    clean_attrs[key] = True
         if clean_attrs:
             out["attrs"] = clean_attrs
 

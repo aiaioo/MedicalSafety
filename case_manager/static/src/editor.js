@@ -1526,21 +1526,43 @@ import { Pagination, repaginate } from "./pagination.js";
       if (node.type.name === "image" && snippetSource(node.attrs.src)) found.push({ node, pos });
       else if (node.type.name === "snippetRef") found.push({ node, pos });
     });
-    // Last to first, so earlier positions stay valid as nodes are replaced.
+    // Last to first, so earlier positions stay valid as nodes are replaced
+    // (and each step reads tr.doc, which already has the later changes).
     for (const { node, pos } of found.reverse()) {
       const isRef = node.type.name === "snippetRef";
       if (style === "reference" && !isRef) {
-        const { src, alt, width, height, align } = node.attrs;
+        const { src, alt, width, height, align, joinBefore, joinAfter } = node.attrs;
         const ref = schema.nodes.snippetRef.create({ src, alt, width, height, align });
-        const paraAttrs = schema.nodes.paragraph.spec.attrs?.textAlign && align && align !== "left" ? { textAlign: align } : null;
-        tr.replaceWith(pos, pos + node.nodeSize, schema.nodes.paragraph.create(paraAttrs, ref));
+        const $pos = tr.doc.resolve(pos);
+        const index = $pos.index();
+        const prev = joinBefore && index > 0 ? $pos.parent.child(index - 1) : null;
+        const next = joinAfter && index + 1 < $pos.parent.childCount ? $pos.parent.child(index + 1) : null;
+        const prevOk = prev && prev.type.name === "paragraph";
+        const nextOk = next && next.type.name === "paragraph";
+        let content = ref;
+        let from = pos;
+        let to = pos + node.nodeSize;
+        let paraAttrs = schema.nodes.paragraph.spec.attrs?.textAlign && align && align !== "left" ? { textAlign: align } : null;
+        if (prevOk) {
+          content = prev.content.append(Fragment.from(content));
+          from -= prev.nodeSize;
+          paraAttrs = prev.attrs;
+        }
+        if (nextOk) {
+          content = Fragment.from(content).append(next.content);
+          to += next.nodeSize;
+          if (!prevOk) paraAttrs = next.attrs;
+        }
+        tr.replaceWith(from, to, schema.nodes.paragraph.create(paraAttrs, content));
       } else if (style !== "reference" && isRef) {
-        const $pos = doc.resolve(pos);
+        const $pos = tr.doc.resolve(pos);
         const parent = $pos.parent;
         if (!parent.isTextblock) continue;
-        const image = schema.nodes.image.create({ ...node.attrs, refStyle: style });
         const before = parent.content.cut(0, $pos.parentOffset);
         const after = parent.content.cut($pos.parentOffset + node.nodeSize);
+        const image = schema.nodes.image.create({
+          ...node.attrs, refStyle: style, joinBefore: before.size > 0, joinAfter: after.size > 0,
+        });
         const pieces = [];
         if (before.size) pieces.push(parent.type.create(parent.attrs, before));
         pieces.push(image);

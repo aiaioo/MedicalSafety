@@ -100,6 +100,11 @@ export const ResizableImage = BaseImage.extend({
         parseHTML: () => "left",
         renderHTML: () => ({}),
       },
+      // Set when the image was split out of a paragraph (by switching an inline
+      // reference to an image): the text before/after it was cut into separate
+      // paragraphs, which switching back to "Only reference" rejoins.
+      joinBefore: { default: false, parseHTML: () => false, renderHTML: () => ({}) },
+      joinAfter: { default: false, parseHTML: () => false, renderHTML: () => ({}) },
       refStyle: {
         default: "image",
         parseHTML: (el) => el.getAttribute("data-ref-style") || "image",
