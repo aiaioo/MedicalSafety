@@ -73,6 +73,13 @@ else
   echo "no new migrations"
 fi
 
+echo "--- Encrypting any plaintext report text"
+# Idempotent; must follow the migrations (it needs reports.doc_enc) and
+# precede the restart (the new code only reads doc_enc).
+(set -a; . "$ENV_FILE"; set +a
+ sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
+   .venv/bin/python3 db/encrypt_report_docs.py)
+
 echo "--- Restarting $SERVICE"
 systemctl restart "$SERVICE"
 for _ in $(seq 1 20); do

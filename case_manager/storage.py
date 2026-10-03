@@ -40,6 +40,7 @@ from collections.abc import Collection
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
+import encryptor
 import psycopg2
 import psycopg2.errors
 import psycopg2.extras
@@ -459,8 +460,29 @@ def read_snippet_bytes(document_id: str, filename: str) -> bytes | None:
 # Reports
 # ---------------------------------------------------------------------------
 
+def _first_image_src(node) -> str | None:
+    """src of the first image in a Tiptap doc (document order), or None."""
+    if isinstance(node, dict):
+        if node.get("type") == "image" and (node.get("attrs") or {}).get("src"):
+            return node["attrs"]["src"]
+        for child in node.get("content") or []:
+            if (src := _first_image_src(child)) is not None:
+                return src
+    return None
+
+
+def encrypt_report_doc(doc: dict | None) -> bytes | None:
+    """A report's ProseMirror JSON as encrypted bytes (None stays None: an
+    old-format report that must be re-saved)."""
+    return None if doc is None else encryptor.encrypt_bytes(json.dumps(doc, ensure_ascii=False).encode("utf-8"))
+
+
+def _decrypt_report_doc(blob) -> dict | None:
+    return None if blob is None else json.loads(encryptor.decrypt_bytes(bytes(blob)).decode("utf-8"))
+
+
 _REPORT_COLUMNS = """
-    r.id, r.name, r.doc, r.source_document_id, d.doc_type AS source_doc_type,
+    r.id, r.name, r.doc_enc, r.source_document_id, d.doc_type AS source_doc_type,
     r.margins, r.page_numbers, r.created_at, r.updated_at,
 """ + _LINKED_IDS_SQL.format(table_prefix="report", key="report_id", alias="r")
 
@@ -470,7 +492,7 @@ def _report_row_to_dict(row: dict) -> dict:
     return {
         "id": row["id"],
         "name": row["name"],
-        "doc": row["doc"],
+        "doc": _decrypt_report_doc(row["doc_enc"]),
         "source_doc": source_doc,
         "source_type": _doc_family(row["source_doc_type"]) if source_doc else "pdf",
         "cause_ids": list(row["cause_ids"]),
@@ -493,7 +515,7 @@ def list_reports(user_id: int) -> list[dict]:
             SELECT r.id, r.name, r.source_document_id, d.doc_type AS source_doc_type,
                    r.created_at, r.updated_at, ur.role, {links},
                    (SELECT count(*) FROM report_snippets rs WHERE rs.report_id = r.id) AS snippet_count,
-                   jsonb_path_query_first(r.doc, '$.** ? (@.type == "image").attrs.src') #>> '{{}}' AS thumbnail_url
+                   r.thumbnail_url
             FROM reports r
             JOIN eff_user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
             LEFT JOIN documents d ON d.id = r.source_document_id
@@ -556,13 +578,15 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
     with _cursor() as cur:
         cur.execute(
             """
-            INSERT INTO reports (id, name, doc, source_document_id, margins, page_numbers, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO reports (id, name, doc_enc, thumbnail_url, source_document_id, margins, page_numbers, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name, doc = EXCLUDED.doc, source_document_id = EXCLUDED.source_document_id,
+                name = EXCLUDED.name, doc_enc = EXCLUDED.doc_enc, thumbnail_url = EXCLUDED.thumbnail_url,
+                doc = NULL, source_document_id = EXCLUDED.source_document_id,
                 margins = EXCLUDED.margins, page_numbers = EXCLUDED.page_numbers, updated_at = EXCLUDED.updated_at
             """,
-            (report_id, data["name"], psycopg2.extras.Json(data["doc"]), data["source_doc"] or None,
+            (report_id, data["name"], encrypt_report_doc(data["doc"]), _first_image_src(data["doc"]),
+             data["source_doc"] or None,
              psycopg2.extras.Json(data["margins"]), psycopg2.extras.Json(data["pageNumbers"]),
              data["created_at"], data["updated_at"]),
         )
