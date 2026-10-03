@@ -215,6 +215,8 @@ function applyWrapperAttrs(wrapper, img, attrs) {
   const style = source && (attrs.refStyle === "both" || attrs.refStyle === "reference") ? attrs.refStyle : "image";
   img.style.display = style === "reference" ? "none" : "";
   wrapper.classList.toggle("img-wrap-ref-only", style === "reference");
+  // Whole annexed pages sit side by side, as many as fit a line.
+  wrapper.classList.toggle("img-wrap-page", /\/p\d+_page\.png$/.test((attrs.src || "").split("?")[0]));
   const caption = wrapper.querySelector(".snippet-ref");
   if (caption) {
     const text = style === "image" ? "" : (refs[source.docId] || {})[source.page] || MISSING_REF;

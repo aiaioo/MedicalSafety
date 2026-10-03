@@ -1275,18 +1275,60 @@ def group_adjacent_refs(children, meta, links):
     return out
 
 
+def is_page_image_src(src):
+    """Whether `src` is a whole annexed page (see render_page_image) rather than a snippet crop."""
+    return bool(PAGE_IMAGE_RE.match(urlsplit(src or "").path.rsplit("/", 1)[-1]))
+
+
+PAGE_ROW_MAX = 3
+PAGE_ROW_GAP_PX = 8
+
+
+def split_page_rows(node, content_px):
+    """`node` with each pageRow (a run of annexed page images, as made by resolve_snippet_refs) cut into rows of as
+    many as fit `content_px` wide, at most PAGE_ROW_MAX -- the editor flows them the same way."""
+    if not isinstance(node, dict) or "content" not in node:
+        return node
+    out = []
+    for child in node["content"]:
+        if child.get("type") != "pageRow":
+            out.append(split_page_rows(child, content_px))
+            continue
+        cells = child["content"]
+        widest = max(_page_cell_width(c) for c in cells)
+        cols = max(1, min(PAGE_ROW_MAX, int((content_px + PAGE_ROW_GAP_PX) // (widest + PAGE_ROW_GAP_PX))))
+        out += [{"type": "pageRow", "content": cells[i:i + cols]} for i in range(0, len(cells), cols)]
+    return {**node, "content": out}
+
+
+def _page_cell_width(cell):
+    image = next((n for n in cell.get("content") or [] if n.get("type") == "image"), None)
+    return ((image or {}).get("attrs") or {}).get("width") or 300
+
+
 def resolve_snippet_refs(node, refs, links=False, meta=None):
     """`node` with each snippet image that has a refStyle replaced by what that style shows: the image and a
     paragraph of its annexure reference ("both"), or just the paragraph ("reference"), aligned like the image.
     `refs` is as from annexure_ref_texts. With `links`, the images and reference paragraphs that point at an annexed
-    page carry an "annexLink" attr ("<document id>:<page>") for the PDF to turn into a link to that page."""
+    page carry an "annexLink" attr ("<document id>:<page>") for the PDF to turn into a link to that page. Runs of two
+    or more annexed page images (with their references) become one pageRow of pageCells, see split_page_rows."""
     if not isinstance(node, dict) or "content" not in node:
         return node
-    content = []
+    content, cells = [], []
+
+    def flush():
+        if len(cells) > 1:
+            content.append({"type": "pageRow", "content": list(cells)})
+        else:
+            for cell in cells:
+                content.extend(cell["content"])
+        cells.clear()
+
     for child in group_adjacent_refs(node["content"], meta, links) if meta else node["content"]:
         attrs = child.get("attrs") or {} if isinstance(child, dict) else {}
         if child.get("type") == "snippetRef":
             # Inline reference-only snippet: becomes a run of text inside its paragraph.
+            flush()
             source = snippet_source(attrs.get("src"))
             text = refs.get(source[0], {}).get(source[1]) if source else None
             link = {"annexLink": f"{source[0]}:{source[1]}"} if links and text else {}
@@ -1294,17 +1336,25 @@ def resolve_snippet_refs(node, refs, links=False, meta=None):
             continue
         source = snippet_source(attrs.get("src")) if child.get("type") == "image" else None
         if source is None:
+            flush()
             content.append(resolve_snippet_refs(child, refs, links, meta))
             continue
         text = refs.get(source[0], {}).get(source[1])
         link = {"annexLink": f"{source[0]}:{source[1]}"} if links and text else {}
+        pieces = []
         if attrs.get("refStyle") not in ("both", "reference"):
-            content.append({**child, "attrs": {**attrs, **link}})
-            continue
-        if attrs["refStyle"] == "both":
-            content.append({**child, "attrs": {**attrs, **link}})
-        content.append({"type": "paragraph", "attrs": {"textAlign": attrs.get("align", "left")},
-                        "content": [{"type": "text", "text": text or ANNEX_REF_MISSING, **link}]})
+            pieces.append({**child, "attrs": {**attrs, **link}})
+        else:
+            if attrs["refStyle"] == "both":
+                pieces.append({**child, "attrs": {**attrs, **link}})
+            pieces.append({"type": "paragraph", "attrs": {"textAlign": attrs.get("align", "left")},
+                           "content": [{"type": "text", "text": text or ANNEX_REF_MISSING, **link}]})
+        if is_page_image_src(attrs.get("src")) and attrs.get("refStyle") != "reference":
+            cells.append({"type": "pageCell", "content": pieces})
+        else:
+            flush()
+            content.extend(pieces)
+    flush()
     return {**node, "content": content}
 
 
@@ -1347,6 +1397,9 @@ REPORT_PDF_CSS = """
   h3 { font-size: 13pt; }
   img { max-width: 100%; }
   p.img-p { margin: 12pt 0; }
+  table.page-row { width: auto; margin: 12pt 0; }
+  table.page-row td { border: none; padding: 0 6pt 0 0; vertical-align: top; }
+  table.page-row p { margin: 0; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }
   ol, ul { list-style: none; margin: 0; padding-left: 0; }
@@ -1459,6 +1512,9 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0, raw_tabs=False):
             if attrs.get("annexLink"):
                 img = f'<a href="#snipimg:{html_escape(attrs["annexLink"], quote=True)}">{img}</a>'
             out.append(f'<p class="img-p" style="text-align:{align}">{img}</p>')
+        elif t == "pageRow":
+            cells = "".join(f"<td>{_json_blocks_to_html(c.get('content') or [], raw_tabs=raw_tabs)}</td>" for c in content)
+            out.append(f'<table class="page-row"><tr>{cells}</tr></table>')
         elif t == "bulletList":
             out.append(f"<ul>{_json_blocks_to_html(content, depth=depth + 1, raw_tabs=raw_tabs)}</ul>")
         elif t == "orderedList":
@@ -1550,14 +1606,15 @@ def _link_rects(pdf_bytes, found):
 def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=None):
     """The report as a PDF. A list passed as `links` is filled with (page index, "<document id>:<page>", rect)
     for each element carrying an "annexLink" attr."""
+    m = sanitize_margins(margins)
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
+    doc_json = split_page_rows(doc_json, where.width * 96 / 72)
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
 
-    m = sanitize_margins(margins)
     pn = sanitize_page_numbers(page_numbers)
-    mediabox = fitz.paper_rect("a4")
-    where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     story = fitz.Story(html=full_html)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
@@ -1856,6 +1913,16 @@ def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
         elif t == "codeBlock":
             run = doc.add_paragraph().add_run(_flatten_json_text(node))
             run.font.name = "Courier New"
+        elif t == "pageRow":
+            table = doc.add_table(rows=1, cols=len(content))
+            table.autofit = False
+            for cell, spec in zip(table.rows[0].cells, content):
+                cell.width = Emu(int((_page_cell_width(spec) + PAGE_ROW_GAP_PX) * EMU_PER_CSS_PX))
+                cell._tc.remove(cell.paragraphs[0]._p)
+                _docx_render_blocks(spec.get("content") or [], cell, max_width_emu)
+                if not cell.paragraphs:
+                    cell.add_paragraph()
+            doc.add_paragraph().paragraph_format.space_after = Pt(0)
         elif t == "image":
             p = doc.add_paragraph()
             p.alignment = {
@@ -1986,6 +2053,7 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None):
 
     _docx_apply_page_numbers(doc, sanitize_page_numbers(page_numbers))
 
+    doc_json = split_page_rows(doc_json, max_width_emu / EMU_PER_CSS_PX)
     _docx_render_blocks(doc_json.get("content") or [], doc, max_width_emu)
 
     buf = io.BytesIO()

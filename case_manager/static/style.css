@@ -387,6 +387,9 @@ a.tag:hover { background: #d7deec; }
 .editor .tiptap-content .img-wrap {
   display: block; position: relative; margin: 16px 0; width: fit-content;
 }
+.editor .tiptap-content .img-wrap.img-wrap-page {
+  display: inline-block; vertical-align: top; margin: 8px 8px 8px 0;
+}
 .editor .tiptap-content .img-wrap img.doc-snippet {
   display: block; border: 1px solid #e0e2e8;
 }
