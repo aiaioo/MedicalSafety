@@ -23,6 +23,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import key_gate
+import key_manager
 import mailer
 import storage
 from cities import CITIES_BY_COUNTRY, DEFAULT_CITY_BY_COUNTRY
@@ -242,6 +243,17 @@ class DocumentError(Exception):
         self.status = status
         self.unlock = unlock  # (kind, object id) whose key prompt to offer with the message
         self.signin = signin  # send a page request to the sign-in page rather than show the error
+
+
+@app.errorhandler(key_manager.KeyNotAvailable)
+def handle_key_not_available(err):
+    # Backstop for key_gate.require_key_in_memory: if a request still reaches
+    # encrypted data without the key, send it to the key entry page.
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "The encryption key has not been entered yet. An administrator must enter it."}), 503
+    if request.endpoint == "key_gate.encryption_key":
+        raise err  # never redirect the key page to itself
+    return redirect(url_for("key_gate.encryption_key"))
 
 
 @app.errorhandler(storage.DeleteBlocked)

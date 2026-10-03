@@ -28,6 +28,7 @@ from flask import Blueprint, g, jsonify, redirect, render_template, request, url
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import mailer
+import key_manager
 import storage
 
 SESSION_COOKIE = "cm_session"
@@ -252,6 +253,10 @@ def _safe_next(raw: str | None) -> str:
 @bp.before_app_request
 def load_user_and_require_signin():
     g.user = None
+    if not key_manager.KeyManager().is_key_in_memory():
+        # Sessions hold encrypted data, so nobody can be identified yet. key_gate
+        # has already turned away every route except the key-entry ones.
+        return None
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         row = storage.get_session_user(_hash_token(token))
