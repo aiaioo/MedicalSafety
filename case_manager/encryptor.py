@@ -8,10 +8,8 @@
   for Flask's ``send_file`` or PyMuPDF), or a generator of chunks
   (``iter_decrypted``) for large files.
 
-The key lives in ``.encryption.key`` next to this module (git-ignored;
-override the location with the ``ENCRYPTION_KEY_FILE`` environment variable).
-It is generated on first write with owner-only (0600) permissions. Losing it
-means losing every ``.enc`` file made with it, so back it up.
+The key is read through key_manager.py (see there for where it lives and how
+it is created). Losing it means losing every ``.enc`` file made with it.
 
 Format: MAGIC | 7-byte random nonce prefix | chunks. Each chunk is
 AES-256-GCM over up to CHUNK_SIZE plaintext bytes, with nonce = prefix ||
@@ -33,7 +31,6 @@ Command line (stdin/stdout only, so no plaintext file is ever created):
 """
 
 import argparse
-import base64
 import hashlib
 import hmac
 import io
@@ -46,30 +43,13 @@ from cryptography.exceptions import InvalidTag
 from cryptography.fernet import InvalidToken
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+import key_manager
+
 SUFFIX = ".enc"
 MAGIC = b"MSENC1"
 CHUNK_SIZE = 64 * 1024
 _TAG = 16
 _PREFIX_LEN = 7
-DEFAULT_KEY_FILE = Path(__file__).resolve().parent / ".encryption.key"
-
-
-def key_path():
-    return Path(os.environ.get("ENCRYPTION_KEY_FILE") or DEFAULT_KEY_FILE)
-
-
-def _load_key(create):
-    path = key_path()
-    if path.exists():
-        return base64.urlsafe_b64decode(path.read_bytes().strip())
-    if not create:
-        raise FileNotFoundError(f"Encryptor key file not found: {path}")
-    key = AESGCM.generate_key(256)
-    # O_EXCL + 0600 so the key is never briefly world-readable.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(base64.urlsafe_b64encode(key) + b"\n")
-    return key
 
 
 def _nonce(prefix, counter, last):
@@ -131,7 +111,7 @@ def write_encrypted(path, data):
     iterable of byte chunks. The write is atomic (temp file + rename).
     """
     dest = _enc_path(path)
-    key = _load_key(create=True)
+    key = key_manager.load_key(create=True)
     tmp = dest.with_name(dest.name + ".tmp")
     try:
         with open(tmp, "wb") as f:
@@ -148,17 +128,17 @@ def blind_index(text):
     """A deterministic keyed hash (hex) of ``text``, for looking up encrypted
     values by equality (e.g. an email address) without storing them in the
     clear. Derived from the encryption key; changes if the key does."""
-    sub_key = hmac.new(_load_key(create=True), b"encryptor blind index v1", hashlib.sha256).digest()
+    sub_key = hmac.new(key_manager.load_key(create=True), b"encryptor blind index v1", hashlib.sha256).digest()
     return hmac.new(sub_key, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def encrypt_bytes(data):
     """Encrypt ``data`` (same input kinds as write_encrypted) to bytes."""
-    return b"".join(_encrypt_chunks(data, _load_key(create=True)))
+    return b"".join(_encrypt_chunks(data, key_manager.load_key(create=True)))
 
 
 def _decrypt_stream(f):
-    aead = AESGCM(_load_key(create=False))
+    aead = AESGCM(key_manager.load_key(create=False))
     block = CHUNK_SIZE + _TAG
     header = f.read(len(MAGIC) + _PREFIX_LEN)
     if len(header) != len(MAGIC) + _PREFIX_LEN or not header.startswith(MAGIC):
