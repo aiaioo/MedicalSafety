@@ -16,7 +16,7 @@ import { ParagraphSpacing, hasStandardSpacing, tightenParagraphs } from "./parag
 import { handleTabCharacter } from "./tabKey.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
-import { ResizableImage, setSelectedImageAlign, isImageSelected, setSnippetRefs, snippetSource } from "./resizableImage.js";
+import { ResizableImage, SnippetRef, setSelectedImageAlign, isImageSelected, setSnippetRefs, snippetSource } from "./resizableImage.js";
 import {
   OrderedList,
   ListItem,
@@ -784,6 +784,7 @@ import { Pagination, repaginate } from "./pagination.js";
       ParagraphSpacing,
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
+      SnippetRef,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
     ],
     content: "",
@@ -1576,7 +1577,12 @@ import { Pagination, repaginate } from "./pagination.js";
             attrs.height = Math.round(s.rect.h * pageInfo.height * PT_TO_PX);
           }
           attrs.refStyle = insertStyle();
-          editor.chain().focus().setImage(attrs).run();
+          if (attrs.refStyle === "reference") {
+            // Inline, so the reference can sit within a line of text.
+            editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: s.url } }).run();
+          } else {
+            editor.chain().focus().setImage(attrs).run();
+          }
           markDirty();
         });
         snippetListEl.appendChild(card);

@@ -980,7 +980,7 @@ def _sanitize_marks(raw):
 
 REPORT_BLOCK_TYPES = {
     "paragraph", "heading", "bulletList", "orderedList", "listItem",
-    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak",
+    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak", "snippetRef",
 }
 
 
@@ -1032,6 +1032,9 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
             if levels:
                 clean_attrs["numLevels"] = levels
                 clean_attrs["numCascade"] = bool(attrs.get("numCascade"))
+        if t == "snippetRef":
+            src = _safe_url(attrs.get("src"))
+            return {"type": t, "attrs": {"src": src}} if src else None
         if t == "image":
             src = _safe_url(attrs.get("src"))
             if not src:
@@ -1116,6 +1119,13 @@ def resolve_snippet_refs(node, refs, links=False):
     content = []
     for child in node["content"]:
         attrs = child.get("attrs") or {} if isinstance(child, dict) else {}
+        if child.get("type") == "snippetRef":
+            # Inline reference-only snippet: becomes a run of text inside its paragraph.
+            source = snippet_source(attrs.get("src"))
+            text = refs.get(source[0], {}).get(source[1]) if source else None
+            link = {"annexLink": f"{source[0]}:{source[1]}"} if links and text else {}
+            content.append({"type": "text", "text": text or ANNEX_REF_MISSING, **link})
+            continue
         source = snippet_source(attrs.get("src")) if child.get("type") == "image" else None
         if source is None:
             content.append(resolve_snippet_refs(child, refs, links))

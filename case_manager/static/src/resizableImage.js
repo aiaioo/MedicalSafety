@@ -14,6 +14,7 @@
 // NodeSelection moves the whole node -- attrs included -- via a real
 // document transform, so the handles can safely live inside the image's
 // own wrapper this time.
+import { Node } from "@tiptap/core";
 import { Image as BaseImage } from "@tiptap/extension-image";
 
 // Snippet images show, per their `refStyle` attr, the image alone ("image"),
@@ -220,3 +221,55 @@ export function setSelectedImageAlign(editor, align) {
 export function isImageSelected(editor) {
   return editor.state.selection.node?.type.name === "image";
 }
+
+// A reference-only snippet inserted inline ("Annexure P-1, page 3" in the
+// middle of a sentence). The block-level image node can't sit inside a
+// paragraph, so this is a separate atom node; it shows the same looked-up
+// reference text and is exported as plain (linked) text.
+export const SnippetRef = Node.create({
+  name: "snippetRef",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return { src: { default: null } };
+  },
+
+  parseHTML() {
+    return [{ tag: "span[data-snippet-ref]", getAttrs: (el) => ({ src: el.getAttribute("data-snippet-ref") }) }];
+  },
+
+  renderHTML({ node }) {
+    return ["span", { "data-snippet-ref": node.attrs.src }];
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      let currentNode = node;
+      const dom = document.createElement("span");
+      dom.className = "snippet-ref-inline";
+      const render = () => {
+        const source = snippetSource(currentNode.attrs.src);
+        const text = source && (refs[source.docId] || {})[source.page];
+        dom.textContent = text || MISSING_REF;
+        dom.classList.toggle("missing", !text);
+      };
+      render();
+      views.add(render);
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== "snippetRef") return false;
+          currentNode = updated;
+          render();
+          return true;
+        },
+        destroy() {
+          views.delete(render);
+        },
+      };
+    };
+  },
+});

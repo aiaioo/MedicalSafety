@@ -1044,3 +1044,5 @@ a.tag:hover { background: #d7deec; }
 .insert-style label { font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .editor .tiptap-content .img-wrap .snippet-ref { display: block; margin-top: 4px; font-size: 0.9em; }
 .editor .tiptap-content .img-wrap .snippet-ref.missing { color: #a33; }
+.editor .tiptap-content .snippet-ref-inline.missing { color: #a33; }
+.editor .tiptap-content .snippet-ref-inline.ProseMirror-selectednode { outline: 2px solid #2266dd; }
