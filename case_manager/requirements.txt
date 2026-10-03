@@ -13,3 +13,6 @@ psycopg2-binary>=2.9
 # Production WSGI server -- see deploy/case-manager.service. Not used by
 # local development (`python3 app.py` uses Flask's own dev server instead).
 gunicorn>=22.0
+
+# File encryption -- see encryptor.py.
+cryptography>=42.0
