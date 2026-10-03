@@ -1620,7 +1620,7 @@ import { Pagination, repaginate } from "./pagination.js";
   }
 
   // Annexed documents: pick a range of each one's annexure pages (labelled
-  // with the annexure's own page numbers) to insert as images at a third of
+  // with the annexure's own page numbers) to insert as images at a quarter of
   // the page's size, or as references, per the snippet style.
   const annexedDocsEl = document.getElementById("reportAnnexedDocs");
   const annexedRanges = new Map(); // docId -> {from, to} (source pages)
@@ -1657,7 +1657,7 @@ import { Pagination, repaginate } from "./pagination.js";
       // Served as a rendered page, not a stored snippet (see render_page_image in app.py).
       for (const page of pages) {
         insertSnippet(`/media/snippets/${encodeURIComponent(d.id)}/p${page}_page.png`, `${d.title} page ${page}`,
-          info.pages[page - 1], { x: 0, y: 0, w: 1, h: 1 }, 1 / 3);
+          info.pages[page - 1], { x: 0, y: 0, w: 1, h: 1 }, 1 / 4);
       }
       markDirty();
     } catch (e) {
