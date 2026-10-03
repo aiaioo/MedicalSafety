@@ -355,33 +355,60 @@
     pnFirst.classList.toggle("invalid", !firstOk);
     pnStart.classList.toggle("invalid", !(start >= 1 && start <= 51));
     pnSize.classList.toggle("invalid", !(size >= 6 && size <= 72));
-    if (!ok) return;
+    if (!ok) return false;
     state.pageNumbers = { position: pnPosition.value, skip: start - 1, first, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
-    commit();
+    return commit();
   }
-  function readDocNumbers() {
+  function readDocNumbers(typing) {
     const first = parseInt(dnFirst.value, 10);
     const firstOk = first >= 1 && first <= 100000;
     dnFirst.classList.toggle("invalid", !firstOk);
-    if (!firstOk) return;
-    // With no name, the prefix is all that labels a document, so never leave both empty.
-    if (!dnName.value && !dnPrefix.value.trim()) dnPrefix.value = "D";
+    if (!firstOk) return false;
+    // Mid-typing, an empty prefix with no name isn't final: don't swap in the default yet.
+    if (typing === true && !dnName.value && !dnPrefix.value.trim()) return false;
+    // With no name, the prefix is all that labels a document, so never leave both empty (the case role's initial, else D).
+    if (!dnName.value && !dnPrefix.value.trim()) dnPrefix.value = (state.listOfDocuments.role || "D")[0].toUpperCase();
     state.docNumbers = { enabled: dnEnabled.checked, name: dnName.value, prefix: dnPrefix.value.trim(), first };
     for (const el of [dnName, dnPrefix, dnFirst]) el.disabled = !canEdit || !dnEnabled.checked;
-    commit();
+    return commit();
   }
-  [dnEnabled, dnName, dnPrefix, dnFirst].forEach((el) => el.addEventListener("change", readDocNumbers));
+
 
   annotationRadios.forEach((r) => r.addEventListener("change", () => {
     if (!r.checked) return;
     state.annotations = r.value;
-    commit();
+    commit().then((ok) => ok && flashSaved(r.parentElement));
   }));
   lodEnabled.addEventListener("change", () => {
     state.listOfDocuments = { ...state.listOfDocuments, enabled: lodEnabled.checked };
-    commit();
+    commit().then((ok) => ok && flashSaved(lodEnabled.parentElement));
   });
-  [pnPosition, pnStart, pnFirst, pnFont, pnSize, pnShape].forEach((el) => el.addEventListener("change", readPageNumbers));
+
+  // Sidebar settings: text/number boxes autosave shortly after typing and at once on Ctrl/Cmd+S;
+  // every setting flashes green when it has been saved.
+  function flashSaved(el) {
+    el.classList.remove("save-flash");
+    void el.offsetWidth; // restart the animation if it's already running
+    el.classList.add("save-flash");
+    el.addEventListener("animationend", () => el.classList.remove("save-flash"), { once: true });
+  }
+  function autosave(el, apply, typed) {
+    let timer = null;
+    const run = async (typing) => {
+      clearTimeout(timer);
+      if (await apply(typing)) flashSaved(el);
+    };
+    el.addEventListener("change", () => run(false));
+    if (!typed) return;
+    el.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => run(true), 600); });
+    el.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); run(false); }
+    });
+  }
+  [dnEnabled, dnName].forEach((el) => autosave(el, readDocNumbers, false));
+  [dnPrefix, dnFirst].forEach((el) => autosave(el, readDocNumbers, true));
+  [pnPosition, pnFont, pnShape].forEach((el) => autosave(el, readPageNumbers, false));
+  [pnStart, pnFirst, pnSize].forEach((el) => autosave(el, readPageNumbers, true));
 
   function render(pagesToo) {
     renderList();
@@ -403,8 +430,10 @@
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
       setStatus("Saved");
+      return true;
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
+      return false;
     }
   }
 
