@@ -2981,19 +2981,8 @@ def api_report_annexure(report_id):
     return jsonify(_annexure_payload(report_id, saved))
 
 
-@app.route("/api/report/<report_id>/annexure/export")
-def api_report_annexure_export(report_id):
-    """The saved annexure as one PDF: the annexed documents' pages, in order."""
-    check_report_id(report_id)
-    require_role("report", report_id)
-    report = storage.get_report(report_id)
-    if report is None:
-        raise DocumentError(f"No report with id {report_id!r}", 404)
-    saved = storage.get_annexure(report_id)
-    payload = _annexure_payload(report_id, saved)
-    if not payload["documents"]:
-        raise DocumentError("The annexure is empty — add a document before downloading", 400)
-
+def _annexure_pdf_bytes(payload):
+    """The annexure payload rendered as one PDF (bytes)."""
     out = fitz.open()
     first_pages = []  # index in `out` of each document's first page
     spans = []  # (document, first, last index in `out`) of each document with pages
@@ -3027,6 +3016,22 @@ def api_report_annexure_export(report_id):
         data = out.tobytes()
     finally:
         out.close()
+    return data
+
+
+@app.route("/api/report/<report_id>/annexure/export")
+def api_report_annexure_export(report_id):
+    """The saved annexure as one PDF: the annexed documents' pages, in order."""
+    check_report_id(report_id)
+    require_role("report", report_id)
+    report = storage.get_report(report_id)
+    if report is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    saved = storage.get_annexure(report_id)
+    payload = _annexure_payload(report_id, saved)
+    if not payload["documents"]:
+        raise DocumentError("The annexure is empty — add a document before downloading", 400)
+    data = _annexure_pdf_bytes(payload)
 
     resp = Response(data, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
@@ -3084,6 +3089,14 @@ def api_report_export(report_id):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
     pdf_bytes = render_report_pdf(title, inline_doc_images(doc_json), data.get("margins"), data.get("pageNumbers"))
+
+    if request.args.get("annexures") == "1":
+        payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+        if payload["documents"]:
+            annex_bytes = _annexure_pdf_bytes(payload)
+            with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
+                merged.insert_pdf(annex)
+                pdf_bytes = merged.tobytes()
 
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
