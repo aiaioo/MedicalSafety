@@ -93,12 +93,13 @@ def _credentials_ok(username: str, password: str) -> bool:
     return check_password_hash(_password_hash(), password) and user_ok
 
 
-def _page(step: str, error: str = "", status: int = 200, notice: str = ""):
+def _page(step: str, error: str = "", status: int = 200, notice: str = "", show_password: bool = False):
     token = _serializer.dumps("key-entry") if step == "key" else ""
     using_default = step == "key" and not storage.get_key_vault_admin_password_hash()
     captcha = auth.new_captcha() if step == "login" else None  # a fresh challenge every time the login form is shown
     return render_template("encryption_key.html", step=step, error=error, notice=notice, token=token,
-                           using_default=using_default, min_chars=NEW_PASSWORD_MIN_CHARS, captcha=captcha), status
+                           using_default=using_default, min_chars=NEW_PASSWORD_MIN_CHARS, captcha=captcha,
+                           show_password=show_password), status
 
 
 def _token_ok() -> bool:
@@ -139,13 +140,13 @@ def encryption_key():
         current, new = request.form.get("current_password", ""), request.form.get("new_password", "")
         if not check_password_hash(_password_hash(), current):
             _record_failure(ip)
-            return _page("key", "The current password is incorrect.", 401)
+            return _page("key", "The current password is incorrect.", 401, show_password=True)
         if new != request.form.get("confirm_password", ""):
-            return _page("key", "The new passwords do not match.", 400)
+            return _page("key", "The new passwords do not match.", 400, show_password=True)
         if not NEW_PASSWORD_MIN_CHARS <= len(new) <= NEW_PASSWORD_MAX_CHARS:
-            return _page("key", f"The new password must be at least {NEW_PASSWORD_MIN_CHARS} characters.", 400)
+            return _page("key", f"The new password must be at least {NEW_PASSWORD_MIN_CHARS} characters.", 400, show_password=True)
         storage.set_key_vault_admin_password_hash(generate_password_hash(new))
-        return _page("key", notice="Password changed.")
+        return _page("key", notice="Password changed.", show_password=True)
 
     try:  # step == "key"
         key_manager.KeyManager().remember_key(request.form.get("key", ""))

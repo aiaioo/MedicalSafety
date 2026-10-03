@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<div class="auth-page">
+<div class="auth-page auth-page-stacked">
   {% if step == 'done' %}
   <div class="modal auth-card">
     <p class="auth-site-name">{{ site_name|default('') }}</p>
@@ -48,9 +48,12 @@
     <div class="modal-actions">
       <button type="submit" class="btn">{{ 'Log in' if step == 'login' else 'Unlock' }}</button>
     </div>
+    {% if step == 'key' and not show_password %}
+    <p class="auth-switch"><a href="#change-password" id="show-change-password">Change password</a></p>
+    {% endif %}
   </form>
   {% if step == 'key' %}
-  <form class="modal auth-card" method="post" action="{{ url_for('key_gate.encryption_key') }}">
+  <form id="change-password" class="modal auth-card" method="post" action="{{ url_for('key_gate.encryption_key') }}"{% if not show_password %} hidden{% endif %}>
     <h3>Change the vault password</h3>
     {% if using_default %}
     <p class="error-message">The default password is still in use. Please change it.</p>
@@ -68,6 +71,17 @@
     </label>
     <div class="modal-actions"><button type="submit" class="btn">Change password</button></div>
   </form>
+  {% if not show_password %}
+  <script>
+    document.getElementById('show-change-password').addEventListener('click', function (e) {
+      e.preventDefault();
+      this.hidden = true;
+      var panel = document.getElementById('change-password');
+      panel.hidden = false;
+      panel.querySelector('input[name=current_password]').focus();
+    });
+  </script>
+  {% endif %}
   {% endif %}
   {% endif %}
 </div>
