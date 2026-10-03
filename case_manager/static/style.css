@@ -1027,8 +1027,8 @@ a.tag:hover { background: #d7deec; }
 .cause-title-editor.title-template-rte { width: 796px; }
 .cause-title-editor .title-template-surface .tiptap-content p { margin: 0; }
 
-/* Annexure preview of the List of Documents */
-.annex-list-page { position: relative; box-sizing: border-box; width: 992px; max-width: 100%; min-height: 1100px; margin: 0 auto 12px; padding: 64px 80px; background: #fff; color: #000; font: 16px/1.4 Times, serif; }
+/* Annexure preview of the List of Documents: A4 (794px) with the PDF's 64pt (85px) margins, so lines wrap as they do in the export */
+.annex-list-page { position: relative; box-sizing: border-box; width: 794px; max-width: 100%; min-height: 1123px; margin: 0 auto 12px; padding: 85px; background: #fff; color: #000; font: 16px/1.4 Times, serif; }
 .annex-list-page p { margin: 0; }
 .annex-list-page table { border-collapse: collapse; width: 100%; }
 .annex-list-page th, .annex-list-page td { border: 1px solid #000; padding: 5px 7px; vertical-align: top; text-align: left; }
