@@ -70,6 +70,7 @@ import { Pagination, repaginate } from "./pagination.js";
   const openDocBtn = document.getElementById("openDocBtn");
   const pageSetupBtn = document.getElementById("pageSetupBtn");
   const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+  const downloadPdfAnnexBtn = document.getElementById("downloadPdfAnnexBtn");
   const downloadDocxBtn = document.getElementById("downloadDocxBtn");
 
   const pageSetupModal = document.getElementById("pageSetupModal");
@@ -806,7 +807,7 @@ import { Pagination, repaginate } from "./pagination.js";
     });
     // Grey out everything in the File menu except the downloads.
     fileMenuDropdown.querySelectorAll("button").forEach((b) => {
-      b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn;
+      b.disabled = b !== downloadPdfBtn && b !== downloadPdfAnnexBtn && b !== downloadDocxBtn;
     });
   }
 
@@ -1315,6 +1316,14 @@ import { Pagination, repaginate } from "./pagination.js";
     try {
       await saveReport();
       window.location.href = exportUrl;
+    } catch (e) {
+      setStatus("Save failed: " + e.message, true);
+    }
+  });
+  downloadPdfAnnexBtn.addEventListener("click", async () => {
+    try {
+      await saveReport();
+      window.location.href = exportUrl + "?annexures=1";
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }

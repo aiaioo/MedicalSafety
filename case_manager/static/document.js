@@ -28,7 +28,6 @@
   const openDocBtn = document.getElementById("openDocBtn");
   const pageSetupBtn = document.getElementById("pageSetupBtn");
   const downloadPdfBtn = document.getElementById("downloadPdfBtn");
-  const downloadPdfAnnexBtn = document.getElementById("downloadPdfAnnexBtn");
   const downloadDocxBtn = document.getElementById("downloadDocxBtn");
 
   const pageSetupModal = document.getElementById("pageSetupModal");
@@ -1471,15 +1470,6 @@
     try {
       await saveReport();
       window.location.href = exportUrl;
-    } catch (e) {
-      setStatus("Save failed: " + e.message, true);
-    }
-  });
-
-  downloadPdfAnnexBtn.addEventListener("click", async () => {
-    try {
-      await saveReport();
-      window.location.href = exportUrl + "?annexures=1";
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
     }
