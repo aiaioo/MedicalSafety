@@ -151,8 +151,7 @@ Existing data was converted by one-off scripts in `db/` (`encrypt_existing_files
 - Entering the key is done by the **key vault admin**, who is *not* an app user
   and unrelated to `users.is_admin`. Accounts are looked up by an email hash
   that needs the key, so nobody can sign in before it is loaded.
-- The login name is fixed: `key_vault_admin`. The credential is stored only as a
-  hash, in the `key_vault_admin` table (migration `043_key_vault_admin.sql`),
+- The credential is stored only as a hash, in its own table (migration 043),
   which needs no key to read. See `key_gate.py` for how it is set up and
   changed.
 - The page has steps: `login` (credentials and captcha) -> `key` (enter the
@@ -170,7 +169,7 @@ Existing data was converted by one-off scripts in `db/` (`encrypt_existing_files
 
 1. Deploy (`deploy/deploy.sh`) -- the key is never part of a deploy. The
    service restarts locked.
-2. Open `/encryption-key`, log in as `key_vault_admin`, enter the key.
+2. Open `/encryption-key`, log in as the key vault admin, enter the key.
 3. Verify with `/healthz` (`key_loaded: true`).
 4. Any restart repeats steps 2-3. Back up the key offline.
 
