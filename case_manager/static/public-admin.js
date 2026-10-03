@@ -274,7 +274,7 @@
     renderLegal();
     trayGrid.innerHTML = "";
     for (const a of unplaced) trayGrid.appendChild(makeCard(a, null));
-    if (!unplaced.length) trayGrid.appendChild(el("div", "pa-empty", "Every article is on this website."));
+    if (!unplaced.length) trayGrid.appendChild(el("div", "pa-empty", "No unplaced articles: every article is already in a section of this website."));
   }
   dropZone(trayEl, null);
 
