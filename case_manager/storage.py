@@ -525,7 +525,8 @@ def list_reports(user_id: int) -> list[dict]:
             """
             SELECT r.id, r.name, r.source_document_id, d.doc_type AS source_doc_type,
                    r.created_at, r.updated_at, ur.role, {links},
-                   (SELECT count(*) FROM report_snippets rs WHERE rs.report_id = r.id) AS snippet_count
+                   (SELECT count(*) FROM report_snippets rs WHERE rs.report_id = r.id) AS snippet_count,
+                   jsonb_path_query_first(r.doc, '$.** ? (@.type == "image").attrs.src') #>> '{{}}' AS thumbnail_url
             FROM reports r
             JOIN eff_user_reports ur ON ur.report_id = r.id AND ur.user_id = %s
             LEFT JOIN documents d ON d.id = r.source_document_id
@@ -545,6 +546,7 @@ def list_reports(user_id: int) -> list[dict]:
             "case_ids": list(r["case_ids"]),
             "role": r["role"],
             "snippet_count": r["snippet_count"],
+            "thumbnail_url": r["thumbnail_url"],
             "created_at": _iso(r["created_at"]),
             "updated_at": _iso(r["updated_at"]),
         })

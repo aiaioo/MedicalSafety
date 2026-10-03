@@ -245,19 +245,39 @@ import { Pagination, repaginate } from "./pagination.js";
     });
   }
 
-  function renderReportCard(r, container, onDeleted) {
+  // `withThumbnail`: the landing grid uses the same card as the articles
+  // workspace (thumbnail = the report's first image, if it has one); the
+  // compact "Open" modal list keeps the plain card.
+  function renderReportCard(r, container, onDeleted, withThumbnail) {
     const card = document.createElement("a");
-    card.className = "report-card";
     card.href = `/reports?report=${encodeURIComponent(r.id)}`;
     const sourceLabel = r.source_doc ? `${r.source_doc} (${r.source_type})` : "No source document";
-    card.innerHTML = `
-      ${r.role === "owner" ? '<button type="button" class="report-card-delete card-delete-btn" title="Delete report">✕</button>' : ""}
-      <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>
-      <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
-      <div class="report-card-meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
-      <div class="report-card-meta" title="${escapeHtml((r.cause_titles || []).join(", "))}">Cause: ${escapeHtml((r.cause_titles || []).join(", ") || "None")}</div>
-      <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
-    const deleteBtn = card.querySelector(".report-card-delete");
+    const causes = (r.cause_titles || []).join(", ") || "None";
+    const delBtn = (cls) => r.role === "owner" ? `<button type="button" class="${cls} card-delete-btn" title="Delete report">✕</button>` : "";
+    if (withThumbnail) {
+      card.className = "article-card";
+      const thumbnail = r.thumbnail_url ? `<img class="thumbnail" draggable="false" loading="lazy" src="${escapeHtml(r.thumbnail_url)}" alt="">` : "";
+      card.innerHTML = `
+        ${delBtn("article-card-delete")}
+        ${thumbnail}
+        <div class="card-body">
+          <div class="title">${escapeHtml(r.name || r.id)}</div>
+          <div class="meta">${escapeHtml(sourceLabel)}</div>
+          <div class="meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
+          <div class="meta" title="${escapeHtml(causes)}">Cause: ${escapeHtml(causes)}</div>
+          <div class="meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>
+        </div>`;
+    } else {
+      card.className = "report-card";
+      card.innerHTML = `
+        ${delBtn("report-card-delete")}
+        <div class="report-card-name">${escapeHtml(r.name || r.id)}</div>
+        <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
+        <div class="report-card-meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
+        <div class="report-card-meta" title="${escapeHtml(causes)}">Cause: ${escapeHtml(causes)}</div>
+        <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
+    }
+    const deleteBtn = card.querySelector(".card-delete-btn");
     if (deleteBtn) wireConfirmDelete(deleteBtn, async () => {
       try {
         const res = await fetch(`/api/report/${encodeURIComponent(r.id)}`, { method: "DELETE" });
@@ -361,7 +381,7 @@ import { Pagination, repaginate } from "./pagination.js";
       : '<h3 class="section-title"></h3>';
     head.querySelector(".section-title").textContent = title;
     const grid = document.createElement("div");
-    grid.className = "report-grid report-section-grid";
+    grid.className = "article-card-grid report-section-grid";
     wrap.append(head, grid);
 
     // Drop zone for report cards.
@@ -438,7 +458,7 @@ import { Pagination, repaginate } from "./pagination.js";
         renderReportCard(r, grid, () => {
           landingReports = landingReports.filter((x) => x.id !== r.id);
           renderLanding();
-        });
+        }, true);
         const card = grid.lastElementChild;
         card.draggable = true;
         card.addEventListener("dragstart", (e) => {
