@@ -1275,8 +1275,7 @@ def stamp_page_numbers(doc, pn, m):
 def render_report_pdf(title, doc_json, margins=None, page_numbers=None):
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
-    heading = f"<h1>{html_escape(title)}</h1>" if title else ""
-    full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{heading}{numbered_body_html}</body></html>"
+    full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
 
     m = sanitize_margins(margins)
     pn = sanitize_page_numbers(page_numbers)
@@ -1701,9 +1700,6 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None):
     max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
 
     _docx_apply_page_numbers(doc, sanitize_page_numbers(page_numbers))
-
-    if title:
-        doc.add_paragraph(title, style="Heading 1")
 
     _docx_render_blocks(doc_json.get("content") or [], doc, max_width_emu)
 
