@@ -32,6 +32,7 @@ HTTP error shape they want; this module doesn't know about Flask.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -468,6 +469,25 @@ def read_snippet_bytes(document_id: str, filename: str) -> bytes | None:
 # Reports
 # ---------------------------------------------------------------------------
 
+_TEXT_PREFIX = "enc1:"
+
+
+def _enc_text(value):
+    """Free text as 'enc1:<base64 ciphertext>' for a TEXT column. None and ''
+    stay as they are (they carry no content)."""
+    if not value:
+        return value
+    return _TEXT_PREFIX + base64.b64encode(encryptor.encrypt_bytes(value.encode("utf-8"))).decode("ascii")
+
+
+def _dec_text(value):
+    if not value:
+        return value
+    if not value.startswith(_TEXT_PREFIX):
+        raise StorageError("A stored value is not encrypted; run db/encrypt_text_columns.py")
+    return encryptor.decrypt_bytes(base64.b64decode(value[len(_TEXT_PREFIX):])).decode("utf-8")
+
+
 def _first_image_src(node) -> str | None:
     """src of the first image in a Tiptap doc (document order), or None."""
     if isinstance(node, dict):
@@ -738,9 +758,9 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
         links = docs_by_hearing.get(h["id"], [])
         hearings_by_case.setdefault(h["case_id"], []).append({
             "id": h["id"],
-            "date": h["hearing_date"],
-            "title": h["title"],
-            "summary": h["summary"],
+            "date": _dec_text(h["hearing_date"]),
+            "title": _dec_text(h["title"]),
+            "summary": _dec_text(h["summary"]),
             "submitted_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "submitted"],
             "received_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "received"],
         })
@@ -748,19 +768,19 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
     return [
         {
             "id": c["id"],
-            "name": c["name"],
+            "name": _dec_text(c["name"]),
             "cause_id": c["cause_id"],
-            "court": c["court"],
-            "case_number": c["case_number"],
-            "summary": c["summary"],
-            "court_location": c["court_location"],
+            "court": _dec_text(c["court"]),
+            "case_number": _dec_text(c["case_number"]),
+            "summary": _dec_text(c["summary"]),
+            "court_location": _dec_text(c["court_location"]),
             "case_role": c["case_role"],
             "party_in_person": c["party_in_person"],
             "cause_title_template_id": c["cause_title_template_id"],
             "cause_title_font": c["cause_title_font"],
             "cause_title_font_size": c["cause_title_font_size"],
             "cause_title_one_line_parties": c["cause_title_one_line_parties"],
-            "cause_title_doc": c["cause_title_doc"],
+            "cause_title_doc": _dec_text(c["cause_title_doc"]),
             "hearings": hearings_by_case.get(c["id"], []),
             **({"role": roles[c["id"]]} if roles else {}),
             "created_at": _iso(c["created_at"]),
@@ -824,7 +844,7 @@ def get_case(case_id: str) -> dict | None:
         cur.execute("SELECT id, side, name FROM case_parties WHERE case_id = %s ORDER BY side, position", (case_id,))
         party_rows = cur.fetchall()
     case = _assemble_cases([case_row], hearing_rows, doc_link_rows)[0]
-    case["parties"] = [{"id": p["id"], "side": p["side"], "name": p["name"]} for p in party_rows]
+    case["parties"] = [{"id": p["id"], "side": p["side"], "name": _dec_text(p["name"])} for p in party_rows]
     return case
 
 
@@ -846,10 +866,10 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
                 cause_title_one_line_parties = EXCLUDED.cause_title_one_line_parties,
                 cause_title_doc = EXCLUDED.cause_title_doc, updated_at = EXCLUDED.updated_at
             """,
-            (case_id, data["cause_id"], data["name"], data["court"], data["case_number"], data["summary"],
-             data.get("court_location", ""), data.get("case_role", "Complainant"), bool(data.get("party_in_person", False)), data.get("cause_title_template_id"),
+            (case_id, data["cause_id"], _enc_text(data["name"]), _enc_text(data["court"]), _enc_text(data["case_number"]),
+             _enc_text(data["summary"]), _enc_text(data.get("court_location", "")), data.get("case_role", "Complainant"), bool(data.get("party_in_person", False)), data.get("cause_title_template_id"),
              data.get("cause_title_font", ""), data.get("cause_title_font_size", 0),
-             bool(data.get("cause_title_one_line_parties", False)), data.get("cause_title_doc"),
+             bool(data.get("cause_title_one_line_parties", False)), _enc_text(data.get("cause_title_doc")),
              data["created_at"], data["updated_at"]),
         )
         # Like hearings below, but only when the caller sent a parties list
@@ -860,7 +880,7 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
             for party in data["parties"]:
                 cur.execute(
                     "INSERT INTO case_parties (id, case_id, side, position, name) VALUES (%s, %s, %s, %s, %s)",
-                    (party["id"], case_id, party["side"], counters[party["side"]], party["name"]),
+                    (party["id"], case_id, party["side"], counters[party["side"]], _enc_text(party["name"])),
                 )
                 counters[party["side"]] += 1
         # A fresh DELETE + reinsert of every child row: exactly the "whole
@@ -870,7 +890,8 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
         for position, hearing in enumerate(data.get("hearings") or []):
             cur.execute(
                 "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary) VALUES (%s, %s, %s, %s, %s, %s)",
-                (hearing["id"], case_id, position, hearing.get("date", ""), hearing.get("title", ""), hearing.get("summary", "")),
+                (hearing["id"], case_id, position, _enc_text(hearing.get("date", "")), _enc_text(hearing.get("title", "")),
+                 _enc_text(hearing.get("summary", ""))),
             )
             for direction, key in (("submitted", "submitted_docs"), ("received", "received_docs")):
                 for doc_position, doc_item in enumerate(hearing.get(key) or []):
@@ -949,7 +970,8 @@ _GOAL_QUERY = """
 
 
 def _goal_dict(row: dict) -> dict:
-    return {"id": row["id"], "title": row["title"], "description": row["description"], "case_ids": list(row["case_ids"])}
+    return {"id": row["id"], "title": _dec_text(row["title"]), "description": _dec_text(row["description"]),
+            "case_ids": list(row["case_ids"])}
 
 
 def list_causes(user_id: int) -> list[dict]:
@@ -970,7 +992,7 @@ def list_causes(user_id: int) -> list[dict]:
         goals_by_cause.setdefault(g["cause_id"], []).append(_goal_dict(g))
     return [
         {
-            "id": c["id"], "title": c["title"], "description": c["description"],
+            "id": c["id"], "title": _dec_text(c["title"]), "description": _dec_text(c["description"]),
             "goals": goals_by_cause.get(c["id"], []),
             "role": c["role"],
             "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"]),
@@ -992,7 +1014,7 @@ def get_cause(cause_id: str) -> dict | None:
         cur.execute(_GOAL_QUERY.format(where="WHERE g.cause_id = %s"), (cause_id,))
         goal_rows = cur.fetchall()
     return {
-        "title": row["title"], "description": row["description"],
+        "title": _dec_text(row["title"]), "description": _dec_text(row["description"]),
         "goals": [_goal_dict(g) for g in goal_rows],
         "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
     }
@@ -1009,13 +1031,13 @@ def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
             ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description,
                                             updated_at = EXCLUDED.updated_at
             """,
-            (cause_id, data["title"], data["description"], data["created_at"], data["updated_at"]),
+            (cause_id, _enc_text(data["title"]), _enc_text(data["description"]), data["created_at"], data["updated_at"]),
         )
         cur.execute("DELETE FROM goals WHERE cause_id = %s", (cause_id,))  # cascades to goal_cases
         for position, goal in enumerate(data.get("goals") or []):
             cur.execute(
                 "INSERT INTO goals (id, cause_id, title, description, position) VALUES (%s, %s, %s, %s, %s)",
-                (goal["id"], cause_id, goal.get("title", ""), goal.get("description", ""), position),
+                (goal["id"], cause_id, _enc_text(goal.get("title", "")), _enc_text(goal.get("description", "")), position),
             )
             for case_position, case_id in enumerate(goal.get("case_ids") or []):
                 cur.execute(
@@ -1252,11 +1274,12 @@ _TO_PROVE_QUERY = """
 
 
 def _evidence_dict(row: dict) -> dict:
-    return {"id": row["id"], "text": row["text"], "report_id": row["report_id"] or ""}
+    return {"id": row["id"], "text": _dec_text(row["text"]), "report_id": row["report_id"] or ""}
 
 
 def _to_prove_dict(row: dict) -> dict:
-    return {"id": row["id"], "title": row["title"], "summary": row["summary"], "evidence_ids": list(row["evidence_ids"])}
+    return {"id": row["id"], "title": _dec_text(row["title"]), "summary": _dec_text(row["summary"]),
+            "evidence_ids": list(row["evidence_ids"])}
 
 
 def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_rows) -> list[dict]:
@@ -1275,8 +1298,8 @@ def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_ro
         evidence = evidence_by_allegation.get(a["id"], [])
         items.append({
             "id": a["id"],
-            "title": a["title"],
-            "description": a["description"],
+            "title": _dec_text(a["title"]),
+            "description": _dec_text(a["description"]),
             "cause_id": a["cause_id"],
             "to_prove": [_to_prove_dict(t) for t in to_prove_by_allegation.get(a["id"], [])],
             "inculpatory": [_evidence_dict(r) for r in evidence if r["kind"] == "inculpatory"],
@@ -1334,20 +1357,21 @@ def save_allegation(allegation_id: str, data: dict) -> None:
                 cause_id = EXCLUDED.cause_id, title = EXCLUDED.title, description = EXCLUDED.description,
                 updated_at = EXCLUDED.updated_at
             """,
-            (allegation_id, data["cause_id"], data["title"], data["description"], data["created_at"], data["updated_at"]),
+            (allegation_id, data["cause_id"], _enc_text(data["title"]), _enc_text(data["description"]),
+             data["created_at"], data["updated_at"]),
         )
         cur.execute("DELETE FROM allegation_evidence WHERE allegation_id = %s", (allegation_id,))  # cascades to allegation_to_prove_evidence
         for kind in ("inculpatory", "exculpatory"):
             for position, item in enumerate(data.get(kind) or []):
                 cur.execute(
                     "INSERT INTO allegation_evidence (id, allegation_id, kind, text, report_id, position) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (item["id"], allegation_id, kind, item.get("text", ""), item.get("report_id") or None, position),
+                    (item["id"], allegation_id, kind, _enc_text(item.get("text", "")), item.get("report_id") or None, position),
                 )
         cur.execute("DELETE FROM allegation_to_prove WHERE allegation_id = %s", (allegation_id,))  # cascades to allegation_to_prove_evidence
         for position, item in enumerate(data.get("to_prove") or []):
             cur.execute(
                 "INSERT INTO allegation_to_prove (id, allegation_id, title, summary, position) VALUES (%s, %s, %s, %s, %s)",
-                (item["id"], allegation_id, item.get("title", ""), item.get("summary", ""), position),
+                (item["id"], allegation_id, _enc_text(item.get("title", "")), _enc_text(item.get("summary", "")), position),
             )
             for link_position, evidence_id in enumerate(item.get("evidence_ids") or []):
                 cur.execute(
@@ -1584,6 +1608,15 @@ _OBJECT_TITLES = {
     "report": ("reports", "name"),
     "source": ("documents", "title"),
 }
+# Kinds whose title column is stored encrypted, so it can be neither read nor
+# ordered by in SQL -- the listings below decrypt and sort in Python.
+_ENCRYPTED_TITLE_KINDS = ("cause", "case", "allegation")
+
+
+def _object_title(kind: str, raw: str) -> str:
+    return _dec_text(raw) if kind in _ENCRYPTED_TITLE_KINDS else raw
+
+
 SHARE_ROLES = ("viewer", "editor")
 SHARE_KINDS = tuple(_OBJECT_TITLES)
 
@@ -1717,11 +1750,12 @@ def list_owned_objects(user_id: int) -> dict[str, list[dict]]:
             obj_table, title_col = _OBJECT_TITLES[kind]
             cur.execute(
                 f"SELECT o.id, o.{title_col} AS title FROM {obj_table} o "  # noqa: S608 (fixed names)
-                f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner' "
-                f"ORDER BY lower(o.{title_col}), o.id",
+                f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner'",
                 (user_id,),
             )
-            result[kind] = [{"id": r["id"], "title": r["title"] or r["id"]} for r in cur.fetchall()]
+            rows = [(_object_title(kind, r["title"]), r["id"]) for r in cur.fetchall()]
+            rows.sort(key=lambda t: (t[0].lower(), t[1]))
+            result[kind] = [{"id": i, "title": title or i} for title, i in rows]
     return result
 
 
@@ -1738,13 +1772,14 @@ def list_shared_objects(owner_id: int, collaborator_id: int) -> dict[str, list[d
                 f"SELECT o.id, o.{title_col} AS title, e.role, d.role AS direct FROM {obj_table} o "  # noqa: S608 (fixed names)
                 f"JOIN {table} a ON a.{column} = o.id AND a.user_id = %s AND a.role = 'owner' "
                 f"JOIN eff_{table} e ON e.{column} = o.id AND e.user_id = %s AND e.role <> 'owner' "
-                f"LEFT JOIN {table} d ON d.{column} = o.id AND d.user_id = %s "
-                f"ORDER BY lower(o.{title_col}), o.id",
+                f"LEFT JOIN {table} d ON d.{column} = o.id AND d.user_id = %s",
                 (owner_id, collaborator_id, collaborator_id),
             )
+            rows = [({**r, "title": _object_title(kind, r["title"])}) for r in cur.fetchall()]
+            rows.sort(key=lambda r: (r["title"].lower(), r["id"]))
             result[kind] = [
                 {"id": r["id"], "title": r["title"] or r["id"], "role": r["role"], "direct": r["direct"]}
-                for r in cur.fetchall()
+                for r in rows
             ]
     return result
 
@@ -1814,11 +1849,12 @@ def list_keys(owner_id: int) -> dict[str, list[dict]]:
             obj_table, title_col = _OBJECT_TITLES[kind]
             cur.execute(
                 f"SELECT k.id, k.{column} AS object_id, o.{title_col} AS title, k.key, k.permission, k.active "  # noqa: S608
-                f"FROM {table} k JOIN {obj_table} o ON o.id = k.{column} WHERE k.owner_id = %s "
-                f"ORDER BY lower(o.{title_col}), k.{column}, k.id",
+                f"FROM {table} k JOIN {obj_table} o ON o.id = k.{column} WHERE k.owner_id = %s",
                 (owner_id,),
             )
-            result[kind] = [{**r, "title": r["title"] or r["object_id"]} for r in cur.fetchall()]
+            rows = [{**r, "title": _object_title(kind, r["title"])} for r in cur.fetchall()]
+            rows.sort(key=lambda r: (r["title"].lower(), r["object_id"], r["id"]))
+            result[kind] = [{**r, "title": r["title"] or r["object_id"]} for r in rows]
     return result
 
 
