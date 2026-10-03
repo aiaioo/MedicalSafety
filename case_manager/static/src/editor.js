@@ -302,17 +302,155 @@ import { Pagination, repaginate } from "./pagination.js";
     if (e.target === openDocModal) closeModal(openDocModal);
   });
 
+  // ---- Landing page sections ----
+  // Users organise report cards into named sections. "General" is implicit
+  // and holds every report not assigned elsewhere. The layout is kept in
+  // localStorage (per user): [{id, name, reports: [reportId, ...]}].
+  const sectionsKey = "reportSections:" + (appEl.dataset.userId || "");
+  function loadSections() {
+    try {
+      const v = JSON.parse(localStorage.getItem(sectionsKey));
+      if (Array.isArray(v)) return v;
+    } catch (e) {}
+    return [];
+  }
+  function saveSections() {
+    try { localStorage.setItem(sectionsKey, JSON.stringify(sections)); } catch (e) {}
+  }
+  let sections = loadSections();
+  let landingReports = [];
+  const addSectionBtn = document.getElementById("addSectionBtn");
+
+  function moveReportToSection(reportId, sectionId) {
+    for (const sec of sections) sec.reports = sec.reports.filter((id) => id !== reportId);
+    if (sectionId) sections.find((s) => s.id === sectionId).reports.push(reportId);
+    saveSections();
+    renderLanding();
+  }
+
+  function buildSection(title, sectionId) {
+    const wrap = document.createElement("section");
+    wrap.className = "report-section";
+    if (sectionId) wrap.dataset.sectionId = sectionId;
+    const head = document.createElement("div");
+    head.className = "report-section-head";
+    head.innerHTML = sectionId
+      ? '<span class="section-handle" title="Drag to reorder">&#8942;&#8942;</span><h3 class="section-title"></h3><button type="button" class="section-rename" title="Rename section">Rename</button><button type="button" class="section-delete card-delete-btn" title="Delete section (reports move to General)">✕</button>'
+      : '<h3 class="section-title"></h3>';
+    head.querySelector(".section-title").textContent = title;
+    const grid = document.createElement("div");
+    grid.className = "report-grid report-section-grid";
+    wrap.append(head, grid);
+
+    // Drop zone for report cards.
+    wrap.addEventListener("dragover", (e) => {
+      if (!dragReportId) return;
+      e.preventDefault();
+      wrap.classList.add("drop-target");
+    });
+    wrap.addEventListener("dragleave", (e) => {
+      if (!wrap.contains(e.relatedTarget)) wrap.classList.remove("drop-target");
+    });
+    wrap.addEventListener("drop", (e) => {
+      if (!dragReportId) return;
+      e.preventDefault();
+      wrap.classList.remove("drop-target");
+      moveReportToSection(dragReportId, sectionId || null);
+    });
+
+    if (sectionId) {
+      const sec = sections.find((s) => s.id === sectionId);
+      const handle = head.querySelector(".section-handle");
+      handle.addEventListener("mousedown", () => { wrap.draggable = true; });
+      wrap.addEventListener("dragend", () => { wrap.draggable = false; wrap.classList.remove("dragging"); dragSectionId = null; });
+      wrap.addEventListener("dragstart", (e) => {
+        if (!wrap.draggable || dragReportId) return;
+        dragSectionId = sectionId;
+        wrap.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", sectionId);
+      });
+      wrap.addEventListener("dragover", (e) => {
+        if (!dragSectionId || dragSectionId === sectionId) return;
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        const from = sections.findIndex((s) => s.id === dragSectionId);
+        let to = sections.findIndex((s) => s.id === sectionId) + (before ? 0 : 1);
+        if (from < to) to--;
+        if (from === to) return;
+        const [moved] = sections.splice(from, 1);
+        sections.splice(to, 0, moved);
+        const dragged = reportListLanding.querySelector(".report-section.dragging");
+        reportListLanding.insertBefore(dragged, before ? wrap : wrap.nextSibling);
+      });
+      wrap.addEventListener("drop", (e) => { if (dragSectionId) { e.preventDefault(); saveSections(); } });
+      head.querySelector(".section-rename").addEventListener("click", () => {
+        const name = window.prompt("Section name", sec.name);
+        if (name && name.trim()) { sec.name = name.trim().slice(0, 80); saveSections(); renderLanding(); }
+      });
+      wireConfirmDelete(head.querySelector(".section-delete"), () => {
+        sections = sections.filter((s) => s.id !== sectionId);
+        saveSections();
+        renderLanding();
+      });
+    }
+    reportListLanding.appendChild(wrap);
+    return grid;
+  }
+
+  let dragReportId = null;
+  let dragSectionId = null;
+
+  function renderLanding() {
+    reportListLanding.innerHTML = "";
+    landingEmptyHint.style.display = landingReports.length ? "none" : "block";
+    const byId = new Map(landingReports.map((r) => [r.id, r]));
+    const placed = new Set();
+    const cardsFor = (ids) => ids.map((id) => byId.get(id)).filter((r) => r && !placed.has(r.id) && placed.add(r.id));
+    const sectionCards = sections.map((sec) => cardsFor(sec.reports));
+    const general = landingReports.filter((r) => !placed.has(r.id));
+    const showSections = sections.length > 0;
+    const fill = (grid, list) => {
+      for (const r of list) {
+        renderReportCard(r, grid, () => {
+          landingReports = landingReports.filter((x) => x.id !== r.id);
+          renderLanding();
+        });
+        const card = grid.lastElementChild;
+        card.draggable = true;
+        card.addEventListener("dragstart", (e) => {
+          dragReportId = r.id;
+          card.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", r.id);
+          e.stopPropagation();
+        });
+        card.addEventListener("dragend", () => { dragReportId = null; card.classList.remove("dragging"); });
+      }
+    };
+    // General is shown only when sections exist (a lone General needs no
+    // heading) but is always a valid drop target for moving cards back.
+    fill(buildSection("General", null), general);
+    if (!showSections) reportListLanding.firstChild.querySelector(".report-section-head").style.display = "none";
+    sections.forEach((sec, i) => fill(buildSection(sec.name, sec.id), sectionCards[i]));
+  }
+
+  if (addSectionBtn) {
+    addSectionBtn.addEventListener("click", () => {
+      const name = window.prompt("New section name");
+      if (!name || !name.trim()) return;
+      sections.push({ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: name.trim().slice(0, 80), reports: [] });
+      saveSections();
+      renderLanding();
+    });
+  }
+
   async function loadLanding() {
     if (!reportListLanding) return;
     try {
-      const list = await fetchReports();
-      reportListLanding.innerHTML = "";
-      landingEmptyHint.style.display = list.length ? "none" : "block";
-      for (const r of list) {
-        renderReportCard(r, reportListLanding, () => {
-          landingEmptyHint.style.display = reportListLanding.querySelector(".report-card") ? "none" : "block";
-        });
-      }
+      landingReports = await fetchReports();
+      renderLanding();
     } catch (e) {
       console.error(e);
     }
