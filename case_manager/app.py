@@ -3971,9 +3971,9 @@ def require_admin_or_content_creator():
 
 
 # ---------------------------------------------------------------------------
-# Admin: the Users tab (roles + per-user stats, admin-only) and the
-# Websites tab (websites/sections, open to any content creator too, not
-# just admins -- see db/migrations/022_content_platform.sql).
+# Admin: the Users tab (roles + per-user stats). Websites and their
+# sections (db/migrations/022_content_platform.sql) are administrator-only
+# too, but are edited directly on the public page (public_view).
 # ---------------------------------------------------------------------------
 
 WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
@@ -3981,10 +3981,9 @@ WEBSITE_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0
 
 @app.route("/admin")
 def admin_view():
-    require_admin_or_content_creator()
-    users = storage.admin_list_users() if g.user.is_admin else None
-    return render_template("admin.html", users=users, websites=storage.list_websites(), is_admin=g.user.is_admin,
-                           title_templates=storage.list_cause_title_templates() if g.user.is_admin else None)
+    require_admin()
+    return render_template("admin.html", users=storage.admin_list_users(),
+                           title_templates=storage.list_cause_title_templates())
 
 
 @app.route("/api/admin/user/<int:user_id>/roles", methods=["PUT"])
@@ -4001,7 +4000,7 @@ def api_admin_user_roles(user_id):
 
 @app.route("/api/admin/websites", methods=["POST"])
 def api_admin_websites():
-    require_admin_or_content_creator()
+    require_admin()
     body = request.get_json(silent=True) or {}
     domain = str(body.get("domain") or "").strip().lower()
     name = str(body.get("name") or "").strip()[:100]
@@ -4018,7 +4017,7 @@ def api_admin_websites():
 
 @app.route("/api/admin/website/<website_id>", methods=["POST", "DELETE"])
 def api_admin_website(website_id):
-    require_admin_or_content_creator()
+    require_admin()
     if not storage.website_exists(website_id):
         raise DocumentError(f"No website with id {website_id!r}", 404)
     if request.method == "DELETE":
@@ -4035,7 +4034,7 @@ def api_admin_website(website_id):
 
 @app.route("/api/admin/website/<website_id>/sections", methods=["POST"])
 def api_admin_sections(website_id):
-    require_admin_or_content_creator()
+    require_admin()
     if not storage.website_exists(website_id):
         raise DocumentError(f"No website with id {website_id!r}", 404)
     body = request.get_json(silent=True) or {}
@@ -4050,9 +4049,38 @@ def api_admin_sections(website_id):
     return jsonify({"id": section_id, "title": title, "description": description, "position": position})
 
 
+@app.route("/api/admin/website/<website_id>/sections/order", methods=["PUT"])
+def api_admin_sections_order(website_id):
+    require_admin()
+    if not storage.website_exists(website_id):
+        raise DocumentError(f"No website with id {website_id!r}", 404)
+    ids = (request.get_json(silent=True) or {}).get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise DocumentError("ids must be a list of section ids", 400)
+    storage.reorder_sections(website_id, ids)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/article/<article_id>/move", methods=["POST"])
+def api_admin_article_move(article_id):
+    """Drag-and-drop of an article card between sections on the public page."""
+    require_admin()
+    check_report_id(article_id)
+    if not storage.article_exists(article_id):
+        raise DocumentError(f"No webpage with id {article_id!r}", 404)
+    body = request.get_json(silent=True) or {}
+    to_id = body.get("to") or None
+    from_id = body.get("from") or None
+    for sid in (to_id, from_id):
+        if sid is not None and not (isinstance(sid, str) and storage.section_exists(sid)):
+            raise DocumentError(f"No section with id {sid!r}", 400)
+    storage.move_article(article_id, to_id, from_id)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/section/<section_id>", methods=["POST", "DELETE"])
 def api_admin_section(section_id):
-    require_admin_or_content_creator()
+    require_admin()
     if not storage.section_exists(section_id):
         raise DocumentError(f"No section with id {section_id!r}", 404)
     if request.method == "DELETE":
@@ -4306,7 +4334,7 @@ def api_article_image(article_id, image_id):
     if article is None:
         abort(404)
     viewer = g.user
-    allowed = article["published"] or (viewer is not None and not viewer.is_guest and viewer.id == article["author_id"])
+    allowed = article["published"] or (viewer is not None and not viewer.is_guest and (viewer.is_admin or viewer.id == article["author_id"]))
     if not allowed:
         abort(404)
     image = storage.get_article_image(image_id)
@@ -4341,6 +4369,17 @@ def public_view():
     site = current_website()
     if site is None:
         raise DocumentError("No website is configured yet", 404)
+    if g.user is not None and g.user.is_admin:
+        # The administrator edits the page in place: pick any website with
+        # ?site=<id>, add sections, drag articles into them.
+        websites = storage.list_websites()
+        chosen = next((w for w in websites if w["id"] == request.args.get("site")), site)
+        return render_template(
+            "public.html", website=chosen, admin_edit=True,
+            websites=[{"id": w["id"], "name": w["name"], "domain": w["domain"]} for w in websites],
+            layout=storage.admin_website_layout(chosen["id"]),
+            sections=[], legal_tools=None,
+        )
     return render_template(
         "public.html", website=site,
         sections=storage.public_sections(site["id"]),

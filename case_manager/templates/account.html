@@ -31,8 +31,6 @@
     {% if g.user.is_content_creator %}<a class="btn" href="{{ url_for('articles_view') }}">Content</a>{% endif %}
     {% if g.user.is_admin %}
     <a class="btn" href="{{ url_for('admin_view') }}">Administrator</a>
-    {% elif g.user.is_content_creator %}
-    <a class="btn" href="{{ url_for('admin_view') }}">Websites</a>
     {% endif %}
   </div>
 </header>

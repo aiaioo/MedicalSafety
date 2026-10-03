@@ -2204,6 +2204,82 @@ def delete_section(section_id: str) -> None:
         cur.execute("DELETE FROM website_sections WHERE id = %s", (section_id,))
 
 
+def reorder_sections(website_id: str, section_ids: list[str]) -> None:
+    """Sets the display order of this website's ordinary sections to
+    `section_ids` (ids not belonging to the website are ignored)."""
+    with _cursor() as cur:
+        for position, section_id in enumerate(section_ids):
+            cur.execute(
+                "UPDATE website_sections SET position = %s WHERE id = %s AND website_id = %s AND kind = 'section'",
+                (position, section_id, website_id),
+            )
+
+
+def admin_website_layout(website_id: str) -> dict:
+    """What the administrator's editing view of the public page needs for
+    one website: every section (ordinary ones in display order, plus the
+    "legal tools" one) with all the articles placed in it -- drafts too,
+    flagged via "published" -- and "unplaced", every article by anyone that
+    is in none of this website's sections (the tray to drag from)."""
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, title, description, kind FROM website_sections WHERE website_id = %s ORDER BY position, id",
+            (website_id,),
+        )
+        sections = cur.fetchall()
+        cur.execute(
+            "SELECT id, title, summary, published, thumbnail_image_id, updated_at FROM articles "
+            "ORDER BY position, updated_at DESC"
+        )
+        articles = cur.fetchall()
+        cur.execute(
+            "SELECT asec.article_id, asec.section_id FROM article_sections asec "
+            "JOIN website_sections ws ON ws.id = asec.section_id WHERE ws.website_id = %s",
+            (website_id,),
+        )
+        placements = cur.fetchall()
+    card = lambda a: {
+        "id": a["id"], "title": a["title"] or a["id"], "summary": a["summary"], "published": a["published"],
+        "thumbnail_image_id": a["thumbnail_image_id"], "updated_at": _iso(a["updated_at"]),
+    }
+    by_section: dict[str, list] = {}
+    placed = set()
+    cards = {a["id"]: card(a) for a in articles}
+    for p in placements:
+        by_section.setdefault(p["section_id"], []).append(p["article_id"])
+        placed.add(p["article_id"])
+    order = {a["id"]: i for i, a in enumerate(articles)}
+    return {
+        "sections": [
+            {"id": s["id"], "title": s["title"], "description": s["description"], "kind": s["kind"],
+             "articles": [cards[i] for i in sorted(by_section.get(s["id"], []), key=order.get)]}
+            for s in sections
+        ],
+        "unplaced": [c for i, c in cards.items() if i not in placed],
+    }
+
+
+def move_article(article_id: str, to_section_id: str | None, from_section_id: str | None) -> None:
+    """Drag-and-drop on the public page: places the article in
+    `to_section_id` and/or takes it out of `from_section_id`. An article
+    left in no section at all can't stay published (same rule as
+    delete_section)."""
+    with _cursor() as cur:
+        if from_section_id:
+            cur.execute("DELETE FROM article_sections WHERE article_id = %s AND section_id = %s",
+                        (article_id, from_section_id))
+        if to_section_id:
+            cur.execute(
+                "INSERT INTO article_sections (article_id, section_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (article_id, to_section_id),
+            )
+        cur.execute(
+            "UPDATE articles SET published = FALSE WHERE id = %s "
+            "AND NOT EXISTS (SELECT 1 FROM article_sections WHERE article_id = %s)",
+            (article_id, article_id),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Articles: a content creator's own webpages (db/migrations/022_content_
 # platform.sql). Ownership is the single author_id column, not the shared

@@ -70,9 +70,81 @@
     .public-flow .public-section.beside-panel > .public-section-description { grid-column: 1 / -1; }
     .public-flow > .legal-tools { grid-row: auto; margin-top: 0; }
   }
+
+  /* Administrator's editing view (static/public-admin.js): the real public
+     layout above, with edit affordances laid over it. */
+  .pa-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 0 0; }
+  .pa-controls select { padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; font: inherit; min-width: 220px; }
+  .pa-top { display: grid; grid-template-columns: 1fr 330px; gap: 24px; align-items: start; }
+  .pa-top .legal-tools { margin-top: 48px; }
+  .pa-edit-link { font-size: 12px; background: none; border: none; color: #2266dd; cursor: pointer; padding: 0 0 0 8px; }
+  .pa-section { margin: 36px 0; padding: 0 10px 12px; border: 1px dashed transparent; border-radius: 10px; }
+  .pa-section:hover { border-color: #d5dae3; }
+  .pa-section.drop-target, .pa-tray.drop-target, .legal-tools.drop-target { border-color: #2266dd; background: #f3f7ff; }
+  .pa-section.dragging, .pa-card.dragging { opacity: 0.45; }
+  .pa-section-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e0e2e8; margin-bottom: 4px; }
+  .pa-section-head h2 { flex: 1; font-size: 20px; font-weight: 600; margin: 12px 0 0; padding-bottom: 8px; }
+  .pa-handle { cursor: grab; color: #8a92a5; letter-spacing: -2px; user-select: none; }
+  .pa-empty { color: #8a92a5; font-size: 14px; padding: 16px 0; }
+  .pa-card { cursor: grab; }
+  .pa-card .draft { display: inline-block; font-size: 11px; background: #fff3cd; color: #7a5b00; border-radius: 4px; padding: 1px 6px; margin-bottom: 6px; }
+  .pa-tray { margin-top: 48px; padding: 8px 10px 14px; border: 1px dashed #b8bfce; border-radius: 10px; }
+  .pa-tray h2 { font-size: 16px; margin: 8px 0 2px; }
+  .public-page .article-card-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .pa-mini-link { font-size: 12px; color: #2266dd; }
+  @media (max-width: 760px) { .pa-top { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
+{% if admin_edit %}
+<main class="public-page">
+  <div class="pa-controls">
+    <button type="button" class="btn" id="paAddWebsite">+ Add website</button>
+    <select id="paSite" aria-label="Website">
+      {% for w in websites %}<option value="{{ w.id }}"{{ ' selected' if w.id == website.id }}>{{ w.name }} ({{ w.domain }})</option>{% endfor %}
+    </select>
+    <button type="button" class="btn" id="paAddSection">+ Add section</button>
+  </div>
+  <div class="pa-top">
+    <div class="public-hero">
+      <h1><span id="paName">{{ website.name }}</span><button type="button" class="pa-edit-link" id="paEditSite">Edit</button></h1>
+      <p id="paTagline">{{ website.tagline }}</p>
+    </div>
+    <aside class="legal-tools" id="paLegal"></aside>
+  </div>
+  <div id="paSections" class="public-section-list"></div>
+  <div class="pa-tray" id="paTray">
+    <h2>Not on this website</h2>
+    <p class="public-section-description">Drag an article from here into a section to add it; drag one back here to take it off this website.</p>
+    <div class="article-card-grid" id="paTrayGrid"></div>
+  </div>
+
+  <div class="modal-overlay" id="paModal">
+    <div class="modal">
+      <h3 id="paModalTitle"></h3>
+      <div id="paModalFields"></div>
+      <p id="paModalError" class="error-message" style="display:none"></p>
+      <div class="modal-actions">
+        <button type="button" id="paModalCancel">Cancel</button>
+        <button type="button" id="paModalOk">Save</button>
+      </div>
+    </div>
+  </div>
+  <script type="application/json" id="paData">{{ {"websiteId": website.id, "layout": layout, "imageBase": url_for('api_article_image', article_id='__A__', image_id='__I__', thumb=1), "articleBase": url_for('public_article', article_id='__A__')} | tojson }}</script>
+</main>
+<script>
+  window.PA_URLS = {
+    website: {{ url_for('api_admin_website', website_id='__W__') | tojson }},
+    websites: {{ url_for('api_admin_websites') | tojson }},
+    sections: {{ url_for('api_admin_sections', website_id='__W__') | tojson }},
+    order: {{ url_for('api_admin_sections_order', website_id='__W__') | tojson }},
+    section: {{ url_for('api_admin_section', section_id='__S__') | tojson }},
+    move: {{ url_for('api_admin_article_move', article_id='__A__') | tojson }},
+    self: {{ url_for('public_view') | tojson }}
+  };
+</script>
+<script src="{{ url_for('static', filename='public-admin.js') }}"></script>
+{% else %}
 <main class="public-page">
   <div class="public-flow">
     <div class="public-hero-col">
@@ -144,5 +216,6 @@
   {% endfor %}
   </div>
 </main>
+{% endif %}
 </body>
 </html>
