@@ -3819,7 +3819,10 @@ def api_report_image(report_id, image_id):
     image = storage.get_report_image(image_id) if DOC_ID_RE.match(image_id) else None
     if image is None or image["report_id"] != report_id:
         abort(404)
-    resp = Response(image["data"], mimetype=image["content_type"])
+    data, mimetype = image["data"], image["content_type"]
+    if request.args.get("thumb"):
+        data, mimetype = _thumbnail_response_parts(data, mimetype)
+    resp = Response(data, mimetype=mimetype)
     resp.headers["Cache-Control"] = "private, max-age=31536000"  # an image's bytes never change
     return resp
 
@@ -3841,6 +3844,13 @@ def _shrink_to_thumbnail(data):
     out = io.BytesIO()
     img.save(out, "JPEG", quality=85)
     return out.getvalue()
+
+
+def _thumbnail_response_parts(data, mimetype):
+    """(bytes, mimetype) for a ?thumb=1 request: _shrink_to_thumbnail's
+    output is JPEG whenever it actually resized, else the original."""
+    small = _shrink_to_thumbnail(data)
+    return (small, mimetype) if small is data else (small, "image/jpeg")
 
 
 @app.route("/media/article-images/<article_id>/<image_id>")
@@ -3919,7 +3929,10 @@ def api_snippet_file(doc_id, filename):
     data = storage.read_snippet_bytes(doc_id, filename)
     if data is None:
         abort(404)
-    resp = Response(data, mimetype="image/png")
+    mimetype = "image/png"
+    if request.args.get("thumb"):
+        data, mimetype = _thumbnail_response_parts(data, mimetype)
+    resp = Response(data, mimetype=mimetype)
     # Snippet PNGs are rewritten in place when the page's annotations change.
     resp.headers["Cache-Control"] = "no-cache"
     return resp

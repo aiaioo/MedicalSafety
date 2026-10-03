@@ -256,7 +256,7 @@ import { Pagination, repaginate } from "./pagination.js";
     const delBtn = (cls) => r.role === "owner" ? `<button type="button" class="${cls} card-delete-btn" title="Delete report">✕</button>` : "";
     if (withThumbnail) {
       card.className = "article-card";
-      const thumbnail = r.thumbnail_url ? `<img class="thumbnail" draggable="false" loading="lazy" src="${escapeHtml(r.thumbnail_url)}" alt="">` : "";
+      const thumbnail = r.thumbnail_url ? `<img class="thumbnail" draggable="false" loading="lazy" src="${escapeHtml(r.thumbnail_url + (r.thumbnail_url.includes("?") ? "&" : "?") + "thumb=1")}" alt="">` : "";
       card.innerHTML = `
         ${delBtn("article-card-delete")}
         ${thumbnail}
