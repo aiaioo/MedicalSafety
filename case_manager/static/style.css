@@ -1008,11 +1008,11 @@ a.tag:hover { background: #d7deec; }
 .cause-title-template-editor textarea { width: 100%; box-sizing: border-box; min-height: 140px; font-family: monospace; padding: 6px 8px; border: 1px solid #cfd4e0; border-radius: 6px; }
 
 /* Cause title template editor (admin page) */
-/* Same width as a report/article page (794px, 48px side margins), so text that
-   fits here fits there. */
+/* A4 wide (794px plus the 1px borders), with the List of Documents' 64pt (85px) side margins, so a title
+   wraps here as it does in the annexure preview and PDF. */
 .title-template-rte { width: 796px; max-width: 100%; box-sizing: border-box; border: 1px solid #cfd4e0; border-radius: 6px; background: white; }
 .title-template-toolbar { border-radius: 6px 6px 0 0; padding: 6px 10px; gap: 6px; }
-.title-template-surface { padding: 10px 48px; min-height: 120px; line-height: 1.5; }
+.title-template-surface { padding: 10px 85px; min-height: 120px; line-height: 1.5; }
 .title-template-surface .tiptap-content { outline: none; min-height: 100px; tab-size: 40px; white-space: pre-wrap; }
 .title-template-surface .tiptap-content p { margin: 0; min-height: 1.2em; }
 .modal-field .title-template-toolbar select.fmt-select { width: auto; max-width: 160px; margin: 0; padding: 6px 8px; }
