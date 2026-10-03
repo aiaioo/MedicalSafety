@@ -31,6 +31,8 @@ ExecStart=/opt/case_manager/.venv/bin/gunicorn \
     --timeout 120 \
     --worker-tmp-dir /dev/shm \
     app:app
+# Key for encryptor.py; installed (chmod 600, owned by this user) by deploy.sh.
+Environment=ENCRYPTION_KEY_FILE=/etc/case-manager/encryption.key
 Restart=on-failure
 RestartSec=3
 

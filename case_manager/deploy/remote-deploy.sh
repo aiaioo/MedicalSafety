@@ -7,6 +7,7 @@ export LC_ALL=C.UTF-8
 APP_DIR=${APP_DIR:-/opt/case_manager}
 ENV_FILE=/etc/case-manager/case-manager.env
 BACKUP_DIR=/var/backups/case-manager
+export ENCRYPTION_KEY_FILE=/etc/case-manager/encryption.key   # installed by deploy.sh
 SERVICE=case-manager
 # Migrations up to and including this one were applied by hand before
 # schema_migrations existed; the first run records them as done.
@@ -17,6 +18,20 @@ chown -R -h case-manager:case-manager .
 
 echo "--- Python dependencies"
 sudo -u case-manager .venv/bin/pip install --quiet -r requirements.txt
+
+[ -f "$ENCRYPTION_KEY_FILE" ] || { echo "Missing $ENCRYPTION_KEY_FILE" >&2; exit 1; }
+
+# Keep the systemd unit in step with the repo (it isn't covered by rsync).
+if ! cmp -s deploy/case-manager.service /etc/systemd/system/$SERVICE.service; then
+  cp deploy/case-manager.service /etc/systemd/system/$SERVICE.service
+  systemctl daemon-reload
+  echo "updated the systemd unit"
+fi
+
+echo "--- Encrypting any plaintext files in storage/"
+# Idempotent: already-encrypted files are skipped. Must finish before the
+# restart, since the new code only reads .enc files.
+sudo -u case-manager env ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" .venv/bin/python3 db/encrypt_existing_files.py
 
 # Runs psql as the app's own database role (from DATABASE_URL), so anything a
 # migration creates is owned by it, exactly as when applied by hand.
