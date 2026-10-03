@@ -1632,6 +1632,13 @@ import { Pagination, repaginate } from "./pagination.js";
             // Inline, so the reference can sit within a line of text.
             editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: s.url, alt: attrs.alt, width: attrs.width, height: attrs.height } }).run();
           } else {
+            // Inserting a block image mid-paragraph splits the paragraph; note
+            // which sides had text so "Only reference" can rejoin them.
+            const { $from, $to } = editor.state.selection;
+            if ($from.parent.type.name === "paragraph" && $from.sameParent($to)) {
+              attrs.joinBefore = $from.parentOffset > 0;
+              attrs.joinAfter = $to.parentOffset < $to.parent.content.size;
+            }
             editor.chain().focus().setImage(attrs).run();
           }
           markDirty();
