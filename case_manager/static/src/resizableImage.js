@@ -16,6 +16,27 @@
 // own wrapper this time.
 import { Image as BaseImage } from "@tiptap/extension-image";
 
+// Snippet images show, per their `refStyle` attr, the image alone ("image"),
+// the image with its annexure reference below it ("both"), or the reference
+// alone ("reference"). The reference text -- "Annexure P-1, page 3" -- is
+// looked up from `refs` ({docId: {page: text}}, see setSnippetRefs) so it
+// follows the annexure as it changes; the server resolves it the same way
+// on export.
+const MISSING_REF = "[not in annexure]";
+let refs = {};
+const views = new Set();
+
+// The source document id and page a snippet image's src points at, or null.
+export function snippetSource(src) {
+  const m = /\/media\/snippets\/([^/]+)\/p(\d+)_[^/]*$/.exec((src || "").split("?")[0]);
+  return m ? { docId: m[1], page: parseInt(m[2], 10) } : null;
+}
+
+export function setSnippetRefs(next) {
+  refs = next || {};
+  views.forEach((render) => render());
+}
+
 function applyWrapperAttrs(wrapper, img, attrs) {
   img.src = attrs.src || "";
   if (attrs.alt) img.alt = attrs.alt;
@@ -24,6 +45,18 @@ function applyWrapperAttrs(wrapper, img, attrs) {
   else img.style.removeProperty("width");
   if (attrs.height) img.style.height = attrs.height + "px";
   else img.style.removeProperty("height");
+
+  const source = snippetSource(attrs.src);
+  const style = source && (attrs.refStyle === "both" || attrs.refStyle === "reference") ? attrs.refStyle : "image";
+  img.style.display = style === "reference" ? "none" : "";
+  wrapper.classList.toggle("img-wrap-ref-only", style === "reference");
+  const caption = wrapper.querySelector(".snippet-ref");
+  if (caption) {
+    const text = style === "image" ? "" : (refs[source.docId] || {})[source.page] || MISSING_REF;
+    caption.style.display = text ? "" : "none";
+    caption.textContent = text;
+    caption.classList.toggle("missing", text === MISSING_REF);
+  }
 
   const align = attrs.align || "left";
   if (align === "center") {
@@ -66,6 +99,11 @@ export const ResizableImage = BaseImage.extend({
         parseHTML: () => "left",
         renderHTML: () => ({}),
       },
+      refStyle: {
+        default: "image",
+        parseHTML: (el) => el.getAttribute("data-ref-style") || "image",
+        renderHTML: (attrs) => (attrs.refStyle && attrs.refStyle !== "image" ? { "data-ref-style": attrs.refStyle } : {}),
+      },
     };
   },
 
@@ -79,7 +117,12 @@ export const ResizableImage = BaseImage.extend({
       const img = document.createElement("img");
       img.className = "doc-snippet";
       wrapper.appendChild(img);
+      const caption = document.createElement("span");
+      caption.className = "snippet-ref";
+      wrapper.appendChild(caption);
       applyWrapperAttrs(wrapper, img, currentNode.attrs);
+      const render = () => applyWrapperAttrs(wrapper, img, currentNode.attrs);
+      views.add(render);
 
       const handles = {};
       RESIZE_CORNERS.forEach((corner) => {
@@ -145,6 +188,9 @@ export const ResizableImage = BaseImage.extend({
         deselectNode() {
           wrapper.classList.remove("img-wrap-selected");
           setHandlesVisible(false);
+        },
+        destroy() {
+          views.delete(render);
         },
         stopEvent(event) {
           return !!(event.target && event.target.classList && event.target.classList.contains("resize-handle"));

@@ -977,7 +977,7 @@ def _sanitize_marks(raw):
 
 REPORT_BLOCK_TYPES = {
     "paragraph", "heading", "bulletList", "orderedList", "listItem",
-    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak", "annexRef",
+    "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak",
 }
 
 
@@ -1029,13 +1029,6 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
             if levels:
                 clean_attrs["numLevels"] = levels
                 clean_attrs["numCascade"] = bool(attrs.get("numCascade"))
-        if t == "annexRef":
-            doc_id, page, file = attrs.get("docId"), attrs.get("page"), attrs.get("file")
-            if not (isinstance(doc_id, str) and DOC_ID_RE.match(doc_id) and isinstance(page, int) and page >= 1):
-                return None
-            clean_attrs.update(docId=doc_id, page=page)
-            if isinstance(file, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", file):
-                clean_attrs["file"] = file
         if t == "image":
             src = _safe_url(attrs.get("src"))
             if not src:
@@ -1049,10 +1042,12 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
                 clean_attrs["height"] = attrs["height"]
             if attrs.get("align") in ("left", "center", "right"):
                 clean_attrs["align"] = attrs["align"]
+            if attrs.get("refStyle") in ("both", "reference"):
+                clean_attrs["refStyle"] = attrs["refStyle"]
         if clean_attrs:
             out["attrs"] = clean_attrs
 
-        if t not in ("image", "hardBreak", "annexRef"):
+        if t not in ("image", "hardBreak"):
             content = []
             for child in node.get("content") or []:
                 cleaned = sanitize_node(child)
@@ -1092,18 +1087,34 @@ def annexure_ref_texts(report_id):
 
 
 ANNEX_REF_MISSING = "[not in annexure]"
+SNIPPET_SRC_RE = re.compile(r"/media/snippets/([^/]+)/p(\d+)_[^/]*$")
 
 
-def resolve_annex_refs(node, refs):
-    """`node` with every annexRef replaced by its current text from `refs` (see annexure_ref_texts)."""
-    if not isinstance(node, dict):
+def snippet_source(src):
+    """(document id, source page) of a snippet image's `src`, or None if it isn't one."""
+    m = SNIPPET_SRC_RE.search(urlsplit(src or "").path)
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def resolve_snippet_refs(node, refs):
+    """`node` with each snippet image that has a refStyle replaced by what that style shows: the image and a
+    paragraph of its annexure reference ("both"), or just the paragraph ("reference"), aligned like the image.
+    `refs` is as from annexure_ref_texts."""
+    if not isinstance(node, dict) or "content" not in node:
         return node
-    if node.get("type") == "annexRef":
-        attrs = node.get("attrs") or {}
-        return {"type": "text", "text": refs.get(attrs.get("docId"), {}).get(attrs.get("page"), ANNEX_REF_MISSING)}
-    if "content" in node:
-        return {**node, "content": [resolve_annex_refs(c, refs) for c in node["content"]]}
-    return node
+    content = []
+    for child in node["content"]:
+        attrs = child.get("attrs") or {} if isinstance(child, dict) else {}
+        source = snippet_source(attrs.get("src")) if child.get("type") == "image" else None
+        if source is None or attrs.get("refStyle") not in ("both", "reference"):
+            content.append(resolve_snippet_refs(child, refs))
+            continue
+        text = refs.get(source[0], {}).get(source[1], ANNEX_REF_MISSING)
+        if attrs["refStyle"] == "both":
+            content.append(child)
+        content.append({"type": "paragraph", "attrs": {"textAlign": attrs.get("align", "left")},
+                        "content": [{"type": "text", "text": text}]})
+    return {**node, "content": content}
 
 
 def inline_doc_images(node):
@@ -3169,7 +3180,7 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_annex_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
+    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
 
     if request.args.get("annexures") == "1":
         payload = _annexure_payload(report_id, storage.get_annexure(report_id))
@@ -3201,7 +3212,7 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, inline_doc_images(resolve_annex_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
+    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, annexure_ref_texts(report_id))), data.get("margins"), data.get("pageNumbers"))
 
     resp = Response(
         docx_bytes,
