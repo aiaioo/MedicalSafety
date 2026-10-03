@@ -1582,6 +1582,130 @@ import { Pagination, repaginate } from "./pagination.js";
     if (canEdit) applyStyleToSnippets(style);
   }));
 
+  // Puts a snippet image (or its reference) into the report in the chosen
+  // style. `rect` is the snippet's fractional rect on its page (default the
+  // whole page); `scale` shrinks it from its physical size.
+  function insertSnippet(url, alt, pageInfo, rect, scale = 1) {
+    const attrs = { src: url, alt };
+    // Snippet PNGs are rasterized at a fixed export DPI (300, see
+    // api_create_snippet in app.py) that's higher than the ~150dpi a
+    // page is rendered at for on-screen viewing, so the PNG's raw
+    // pixel size renders roughly 2x too large if dropped in as-is.
+    // The physically-correct size is independent of either DPI: the
+    // snippet's fractional rect (x/y/w/h, 0-1) times its source
+    // page's real size (in points, from /info) gives its true size,
+    // which converts to CSS px the same way margins do (PT_TO_PX).
+    if (pageInfo && rect) {
+      attrs.width = Math.round(rect.w * pageInfo.width * PT_TO_PX * scale);
+      attrs.height = Math.round(rect.h * pageInfo.height * PT_TO_PX * scale);
+    }
+    attrs.refStyle = insertStyle();
+    if (attrs.refStyle === "reference") {
+      // Inline, so the reference can sit within a line of text.
+      editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: url, alt, width: attrs.width, height: attrs.height } }).run();
+    } else {
+      // Inserting a block image mid-paragraph splits the paragraph; note
+      // which sides had text so "Only reference" can rejoin them.
+      const { $from, $to } = editor.state.selection;
+      if ($from.parent.type.name === "paragraph" && $from.sameParent($to)) {
+        attrs.joinBefore = $from.parentOffset > 0;
+        attrs.joinAfter = $to.parentOffset < $to.parent.content.size;
+      }
+      editor.chain().focus().setImage(attrs).run();
+    }
+  }
+
+  // Annexed documents: pick pages of each (blank = all) to insert as images
+  // at a third of the page's size, or as references, per the snippet style.
+  const annexedDocsEl = document.getElementById("reportAnnexedDocs");
+  const annexedPageInputs = new Map();
+  const docInfoCache = new Map();
+
+  function docInfo(d) {
+    const key = `${d.id}|${d.type}`;
+    if (!docInfoCache.has(key)) {
+      docInfoCache.set(key, fetch(`/api/doc/${encodeURIComponent(d.id)}/info?type=${encodeURIComponent(d.type)}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not read the document"))))
+        .catch((e) => { docInfoCache.delete(key); throw e; }));
+    }
+    return docInfoCache.get(key);
+  }
+
+  // "3, 5-7" -> [3, 5, 6, 7]; blank or "all" -> every page; null if invalid.
+  function parsePages(text, pageCount) {
+    const t = text.trim().toLowerCase();
+    if (!t || t === "all") return Array.from({ length: pageCount }, (_, i) => i + 1);
+    if (!/^\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*$/.test(t)) return null;
+    const pages = new Set();
+    for (const part of t.split(",")) {
+      const [lo, hi = lo] = part.split("-").map((n) => parseInt(n, 10));
+      if (lo < 1 || hi < lo || lo > pageCount) return null;
+      for (let p = lo; p <= Math.min(hi, pageCount); p++) pages.add(p);
+    }
+    return [...pages].sort((a, b) => a - b);
+  }
+
+  async function insertAnnexedPages(d, row, input, button) {
+    const errorEl = row.querySelector(".annexed-error");
+    errorEl.textContent = "";
+    button.disabled = true;
+    try {
+      const info = await docInfo(d);
+      const pages = parsePages(input.value, info.page_count);
+      if (!pages) throw new Error(`Enter pages like 3, 5-7 (1-${info.page_count}), or leave blank for all.`);
+      const res = await fetch(`/api/doc/${encodeURIComponent(d.id)}/page-snippets?type=${encodeURIComponent(d.type)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pages }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not prepare the pages");
+      for (const { page, url } of await res.json()) {
+        insertSnippet(url, `${d.title} page ${page}`, info.pages[page - 1], { x: 0, y: 0, w: 1, h: 1 }, 1 / 3);
+      }
+      markDirty();
+    } catch (e) {
+      errorEl.textContent = e.message;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function loadAnnexedDocs() {
+    if (!annexedDocsEl || !reportUrl) return;
+    try {
+      const res = await fetch(`${reportUrl}/annexure`);
+      if (!res.ok) return;
+      const docs = (await res.json()).documents;
+      annexedDocsEl.innerHTML = "";
+      if (!docs.length) {
+        annexedDocsEl.innerHTML = '<p class="empty">No documents are annexed yet.</p>';
+        return;
+      }
+      docs.forEach((d) => {
+        const row = document.createElement("div");
+        row.className = "annexed-doc";
+        row.innerHTML = `
+          <div class="annexed-title"></div>
+          <div class="annexed-controls">
+            <input type="text" class="annexed-pages" placeholder="All pages" aria-label="Pages to insert, e.g. 3, 5-7">
+            <button type="button" class="insert-annexed">Insert</button>
+          </div>
+          <div class="annexed-error error-message"></div>`;
+        row.querySelector(".annexed-title").textContent = d.title;
+        const input = row.querySelector(".annexed-pages");
+        input.value = annexedPageInputs.get(d.id) || "";
+        input.addEventListener("input", () => annexedPageInputs.set(d.id, input.value));
+        const button = row.querySelector(".insert-annexed");
+        button.disabled = !canEdit;
+        button.addEventListener("click", () => insertAnnexedPages(d, row, input, button));
+        annexedDocsEl.appendChild(row);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  window.addEventListener("pageshow", loadAnnexedDocs);
+
   async function loadSnippets() {
     const { source_doc, source_type } = currentSource();
     if (!source_doc) {
@@ -1614,34 +1738,7 @@ import { Pagination, repaginate } from "./pagination.js";
             <button type="button" class="insert-snippet">Insert</button>
           </div>`;
         card.querySelector(".insert-snippet").addEventListener("click", () => {
-          const pageInfo = pages[s.page - 1];
-          const attrs = { src: s.url, alt: `${label} from page ${s.page}` };
-          // Snippet PNGs are rasterized at a fixed export DPI (300, see
-          // api_create_snippet in app.py) that's higher than the ~150dpi a
-          // page is rendered at for on-screen viewing, so the PNG's raw
-          // pixel size renders roughly 2x too large if dropped in as-is.
-          // The physically-correct size is independent of either DPI: the
-          // snippet's fractional rect (x/y/w/h, 0-1) times its source
-          // page's real size (in points, from /info) gives its true size,
-          // which converts to CSS px the same way margins do (PT_TO_PX).
-          if (pageInfo && s.rect) {
-            attrs.width = Math.round(s.rect.w * pageInfo.width * PT_TO_PX);
-            attrs.height = Math.round(s.rect.h * pageInfo.height * PT_TO_PX);
-          }
-          attrs.refStyle = insertStyle();
-          if (attrs.refStyle === "reference") {
-            // Inline, so the reference can sit within a line of text.
-            editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: s.url, alt: attrs.alt, width: attrs.width, height: attrs.height } }).run();
-          } else {
-            // Inserting a block image mid-paragraph splits the paragraph; note
-            // which sides had text so "Only reference" can rejoin them.
-            const { $from, $to } = editor.state.selection;
-            if ($from.parent.type.name === "paragraph" && $from.sameParent($to)) {
-              attrs.joinBefore = $from.parentOffset > 0;
-              attrs.joinAfter = $to.parentOffset < $to.parent.content.size;
-            }
-            editor.chain().focus().setImage(attrs).run();
-          }
+          insertSnippet(s.url, `${label} from page ${s.page}`, pages[s.page - 1], s.rect);
           markDirty();
         });
         snippetListEl.appendChild(card);
@@ -1686,6 +1783,7 @@ import { Pagination, repaginate } from "./pagination.js";
       updateAnnotateLink();
       refreshCaseSetup();
       loadSnippets();
+      loadAnnexedDocs();
       refreshSnippetRefs();
       let loaded = null;
       editor.state.doc.descendants((node) => {

@@ -2691,6 +2691,37 @@ def api_create_snippet(doc_id, page):
     return jsonify(result)
 
 
+@app.route("/api/doc/<doc_id>/page-snippets", methods=["POST"])
+def api_page_snippets(doc_id):
+    """Whole-page snippets for the given pages (body {"pages": [1, 3]}), created where a page has none yet, so a
+    report can insert a document's pages the way it inserts snippets (references, annexure numbering and export
+    all follow). Returns [{"page", "url"}] in the order asked."""
+    raw_type = request.args.get("type", "pdf")
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="viewer")
+    pages = (request.get_json(silent=True) or {}).get("pages")
+    if not isinstance(pages, list) or not pages or not all(isinstance(n, int) and not isinstance(n, bool) for n in pages):
+        raise DocumentError("Body must contain a non-empty 'pages' list of page numbers", 400)
+    out = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        for page in pages:
+            if not (1 <= page <= d.page_count):
+                raise DocumentError(f"Page {page} is out of range", 404)
+        for page in pages:
+            entry = next((s for s in storage.list_snippets(doc_id, page=page)
+                          if s["rect"]["x"] <= 0.001 and s["rect"]["y"] <= 0.001
+                          and s["rect"]["w"] >= 0.999 and s["rect"]["h"] >= 0.999), None)
+            if entry is None:
+                require_role("source", doc_id, "editor")
+                p = d[page - 1]
+                annotations = sanitize_annotations(storage.get_page_annotations(doc_id, page))
+                draw_annotations_on_page(p, annotations, p.rect)
+                png_bytes = p.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72)).tobytes("png")
+                entry = storage.create_snippet(doc_id, page, {"x": 0, "y": 0, "w": 1, "h": 1}, bool(annotations), png_bytes,
+                                              created_by=None if g.user.is_guest else g.user.id)
+            out.append({"page": page, "url": url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)})
+    return jsonify(out)
+
+
 def _annotated_pdf_response(doc_id, annotated_only):
     pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
 

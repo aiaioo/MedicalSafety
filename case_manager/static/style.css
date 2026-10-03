@@ -1048,3 +1048,10 @@ a.tag:hover { background: #d7deec; }
 .editor .tiptap-content .snippet-ref-inline.ProseMirror-selectednode { outline: 2px solid #2266dd; }
 .editor .tiptap-content .snippet-ref-hidden { display: none; }
 .editor .tiptap-content .snippet-ref-group a.snippet-ref-link { color: inherit; text-decoration: underline; cursor: pointer; }
+
+.annexed-docs { display: flex; flex-direction: column; gap: 10px; }
+.annexed-doc { border: 1px solid #e0e2e8; border-radius: 6px; padding: 6px 8px; }
+.annexed-title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.annexed-controls { display: flex; gap: 6px; margin-top: 4px; }
+.annexed-pages { flex: 1; min-width: 0; font-size: 13px; padding: 3px 6px; }
+.annexed-error:empty { display: none; }
