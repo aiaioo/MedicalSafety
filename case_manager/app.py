@@ -1034,7 +1034,17 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
                 clean_attrs["numCascade"] = bool(attrs.get("numCascade"))
         if t == "snippetRef":
             src = _safe_url(attrs.get("src"))
-            return {"type": t, "attrs": {"src": src}} if src else None
+            if not src:
+                return None
+            ref_attrs = {"src": src}
+            if isinstance(attrs.get("alt"), str):
+                ref_attrs["alt"] = attrs["alt"][:500]
+            for key in ("width", "height"):
+                if isinstance(attrs.get(key), (int, float)):
+                    ref_attrs[key] = attrs[key]
+            if attrs.get("align") in ("left", "center", "right"):
+                ref_attrs["align"] = attrs["align"]
+            return {"type": t, "attrs": ref_attrs}
         if t == "image":
             src = _safe_url(attrs.get("src"))
             if not src:

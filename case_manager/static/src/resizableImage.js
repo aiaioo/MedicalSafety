@@ -234,7 +234,15 @@ export const SnippetRef = Node.create({
   selectable: true,
 
   addAttributes() {
-    return { src: { default: null } };
+    // alt/width/height/align aren't shown; they ride along so the snippet gets
+    // its size and alignment back if it's switched to an image again.
+    return {
+      src: { default: null },
+      alt: { default: null },
+      width: { default: null },
+      height: { default: null },
+      align: { default: "left" },
+    };
   },
 
   parseHTML() {

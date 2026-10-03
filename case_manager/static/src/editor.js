@@ -1514,14 +1514,42 @@ import { Pagination, repaginate } from "./pagination.js";
   }
   try { showInsertStyle(localStorage.getItem(INSERT_STYLE_KEY)); } catch (e) {}
 
-  // Gives every snippet already in the report the chosen style.
+  // Gives every snippet already in the report the chosen style. "Only
+  // reference" snippets are inline (snippetRef) nodes inside a paragraph; the
+  // other two are block images on a line of their own, so switching between
+  // them converts the node.
   function applyStyleToSnippets(style) {
+    const { schema, doc } = editor.state;
     const tr = editor.state.tr;
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === "image" && snippetSource(node.attrs.src) && node.attrs.refStyle !== style) {
+    const found = [];
+    doc.descendants((node, pos) => {
+      if (node.type.name === "image" && snippetSource(node.attrs.src)) found.push({ node, pos });
+      else if (node.type.name === "snippetRef") found.push({ node, pos });
+    });
+    // Last to first, so earlier positions stay valid as nodes are replaced.
+    for (const { node, pos } of found.reverse()) {
+      const isRef = node.type.name === "snippetRef";
+      if (style === "reference" && !isRef) {
+        const { src, alt, width, height, align } = node.attrs;
+        const ref = schema.nodes.snippetRef.create({ src, alt, width, height, align });
+        const paraAttrs = schema.nodes.paragraph.spec.attrs?.textAlign && align && align !== "left" ? { textAlign: align } : null;
+        tr.replaceWith(pos, pos + node.nodeSize, schema.nodes.paragraph.create(paraAttrs, ref));
+      } else if (style !== "reference" && isRef) {
+        const $pos = doc.resolve(pos);
+        const parent = $pos.parent;
+        if (!parent.isTextblock) continue;
+        const image = schema.nodes.image.create({ ...node.attrs, refStyle: style });
+        const before = parent.content.cut(0, $pos.parentOffset);
+        const after = parent.content.cut($pos.parentOffset + node.nodeSize);
+        const pieces = [];
+        if (before.size) pieces.push(parent.type.create(parent.attrs, before));
+        pieces.push(image);
+        if (after.size) pieces.push(parent.type.create(parent.attrs, after));
+        tr.replaceWith($pos.before(), $pos.after(), pieces);
+      } else if (!isRef && node.attrs.refStyle !== style) {
         tr.setNodeMarkup(pos, undefined, { ...node.attrs, refStyle: style });
       }
-    });
+    }
     if (tr.docChanged) editor.view.dispatch(tr);
   }
   insertStyleInputs.forEach((el) => el.addEventListener("change", () => {
@@ -1579,7 +1607,7 @@ import { Pagination, repaginate } from "./pagination.js";
           attrs.refStyle = insertStyle();
           if (attrs.refStyle === "reference") {
             // Inline, so the reference can sit within a line of text.
-            editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: s.url } }).run();
+            editor.chain().focus().insertContent({ type: "snippetRef", attrs: { src: s.url, alt: attrs.alt, width: attrs.width, height: attrs.height } }).run();
           } else {
             editor.chain().focus().setImage(attrs).run();
           }
@@ -1630,7 +1658,8 @@ import { Pagination, repaginate } from "./pagination.js";
       refreshSnippetRefs();
       let loaded = null;
       editor.state.doc.descendants((node) => {
-        if (!loaded && node.type.name === "image" && snippetSource(node.attrs.src)) loaded = node.attrs.refStyle || "image";
+        if (!loaded && node.type.name === "snippetRef") loaded = "reference";
+        else if (!loaded && node.type.name === "image" && snippetSource(node.attrs.src)) loaded = node.attrs.refStyle || "image";
       });
       if (loaded) showInsertStyle(loaded);
       dirty = false;
