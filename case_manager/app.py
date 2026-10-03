@@ -2869,11 +2869,16 @@ def list_of_documents_html(ctx, rows):
     css = ("body { font-family: Times, serif; font-size: 12pt; line-height: 1.4; color: #000; }"
            " p { margin: 0; } table { border-collapse: collapse; width: 100%; }"
            " td, th { border: 1px solid #000; padding: 5pt; vertical-align: top; text-align: left; }")
+    # Story ignores float and table widths, so push the role to the right margin with a run of non-breaking spaces.
+    role = ctx.get("role", "")
+    measure = lambda text: fitz.get_text_length(text, fontname="tiro", fontsize=12)
+    line_width = fitz.paper_rect("a4").width - 2 * 64
+    gap = "&nbsp;" * max(1, int((line_width - measure("Date:") - measure(role)) / measure(" ") * 0.9)) if role else ""
     return (f"<html><head><style>{css}</style></head><body>{top}"
             '<p style="text-align:center; margin: 16pt 0 12pt;"><b><u>List of Documents</u></b></p>'
             '<table><tr><th style="width:12%; text-align:center">Sl.No.</th><th>Particulars</th><th style="width:16%; text-align:center">Pg.Nos.</th></tr>'
             f'{body}</table><p style="margin-top: 56pt;">{html_escape(ctx["location"]) or "&nbsp;"}</p>'
-            f'<p><span style="float:right">{html_escape(ctx.get("role", ""))}</span>Date:</p></body></html>')
+            f'<p>Date:{gap}{html_escape(role)}</p></body></html>')
 
 
 def list_of_documents_pdf(ctx, rows):
