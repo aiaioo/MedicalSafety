@@ -66,7 +66,7 @@ def sanitize_margins(raw, fallback=None):
 # reports.html (quoted where the CSS family name has a space, so the same
 # string can be dropped straight into a font-family declaration).
 REPORT_DEFAULT_PAGE_NUMBERS = {"position": "top-center", "skip": 0, "first": 1, "font": "Arial", "fontSize": 11, "shape": "none", "color": "#555555"}
-ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "none"}
+ANNEXURE_DEFAULT_PAGE_NUMBERS = {**REPORT_DEFAULT_PAGE_NUMBERS, "position": "top-center", "shape": "circle", "color": "#777777"}
 REPORT_PAGE_NUMBER_SHAPES = {"none", "circle", "rectangle"}
 REPORT_PAGE_NUMBER_POSITIONS = {
     "top-left", "top-center", "top-right",
