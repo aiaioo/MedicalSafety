@@ -1125,6 +1125,36 @@ ANNEX_REF_MISSING = "[not in annexure]"
 SNIPPET_SRC_RE = re.compile(r"/media/snippets/([^/]+)/p(\d+)_[^/]*$")
 
 
+PAGE_IMAGE_RE = re.compile(r"^p(\d+)_page\.png$")
+PAGE_IMAGE_DPI = 200
+
+
+def render_page_image(doc_id, filename):
+    """PNG bytes of a whole source page, drawn with its current annotations, for a `/media/snippets/<doc>/p<N>_page.png`
+    URL (how reports embed an annexed page without it being a stored snippet); None if `filename` isn't one or the
+    page doesn't exist."""
+    m = PAGE_IMAGE_RE.match(filename)
+    if not m:
+        return None
+    page = int(m.group(1))
+    with fitz.open(stream=storage.get_document_pdf_bytes(doc_id), filetype="pdf") as d:
+        if not (1 <= page <= d.page_count):
+            return None
+        p = d[page - 1]
+        draw_annotations_on_page(p, sanitize_annotations(storage.get_page_annotations(doc_id, page)), p.rect)
+        return p.get_pixmap(matrix=fitz.Matrix(PAGE_IMAGE_DPI / 72, PAGE_IMAGE_DPI / 72)).tobytes("png")
+
+
+def read_media_snippet(doc_id, filename):
+    """A stored snippet's bytes, or the rendered page for a page-image filename (only for someone who may see the
+    document's pages: its viewer, or a viewer of a report that annexes it)."""
+    if PAGE_IMAGE_RE.match(filename):
+        if not (has_role("source", doc_id, "viewer") or storage.document_annexed_in_viewable_report(g.user.id, doc_id)):
+            return None
+        return render_page_image(doc_id, filename)
+    return storage.read_snippet_bytes(doc_id, filename)
+
+
 def snippet_source(src):
     """(document id, source page) of a snippet image's `src`, or None if it isn't one."""
     m = SNIPPET_SRC_RE.search(urlsplit(src or "").path)
@@ -1294,7 +1324,7 @@ def inline_doc_images(node):
             filename, url_doc_id = parts[-1], parts[-2]
             if (DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename
                     and storage.can_view_snippet_images(g.user.id, url_doc_id)):
-                data = storage.read_snippet_bytes(url_doc_id, filename)
+                data = read_media_snippet(url_doc_id, filename)
                 if data is not None:
                     b64 = base64.b64encode(data).decode("ascii")
                     attrs["src"] = f"data:image/png;base64,{b64}"
@@ -2689,37 +2719,6 @@ def api_create_snippet(doc_id, page):
     result = dict(entry)
     result["url"] = url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)
     return jsonify(result)
-
-
-@app.route("/api/doc/<doc_id>/page-snippets", methods=["POST"])
-def api_page_snippets(doc_id):
-    """Whole-page snippets for the given pages (body {"pages": [1, 3]}), created where a page has none yet, so a
-    report can insert a document's pages the way it inserts snippets (references, annexure numbering and export
-    all follow). Returns [{"page", "url"}] in the order asked."""
-    raw_type = request.args.get("type", "pdf")
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="viewer")
-    pages = (request.get_json(silent=True) or {}).get("pages")
-    if not isinstance(pages, list) or not pages or not all(isinstance(n, int) and not isinstance(n, bool) for n in pages):
-        raise DocumentError("Body must contain a non-empty 'pages' list of page numbers", 400)
-    out = []
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        for page in pages:
-            if not (1 <= page <= d.page_count):
-                raise DocumentError(f"Page {page} is out of range", 404)
-        for page in pages:
-            entry = next((s for s in storage.list_snippets(doc_id, page=page)
-                          if s["rect"]["x"] <= 0.001 and s["rect"]["y"] <= 0.001
-                          and s["rect"]["w"] >= 0.999 and s["rect"]["h"] >= 0.999), None)
-            if entry is None:
-                require_role("source", doc_id, "editor")
-                p = d[page - 1]
-                annotations = sanitize_annotations(storage.get_page_annotations(doc_id, page))
-                draw_annotations_on_page(p, annotations, p.rect)
-                png_bytes = p.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72)).tobytes("png")
-                entry = storage.create_snippet(doc_id, page, {"x": 0, "y": 0, "w": 1, "h": 1}, bool(annotations), png_bytes,
-                                              created_by=None if g.user.is_guest else g.user.id)
-            out.append({"page": page, "url": url_for("api_snippet_file", doc_id=doc_id, filename=entry["filename"], type=raw_type)})
-    return jsonify(out)
 
 
 def _annotated_pdf_response(doc_id, annotated_only):
@@ -4274,7 +4273,7 @@ def api_snippet_file(doc_id, filename):
         abort(400)
     if not storage.can_view_snippet_images(g.user.id, doc_id):
         abort(404)
-    data = storage.read_snippet_bytes(doc_id, filename)
+    data = read_media_snippet(doc_id, filename)
     if data is None:
         abort(404)
     mimetype = "image/png"

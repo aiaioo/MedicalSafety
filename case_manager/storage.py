@@ -1539,6 +1539,20 @@ def accessible_ids(user_id: int, kind: str) -> set[str]:
         return {r["id"] for r in cur.fetchall()}
 
 
+def document_annexed_in_viewable_report(user_id: int, document_id: str) -> bool:
+    """Whether the document is annexed in a report the user can view, so they may see its whole pages there."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(SELECT 1 FROM report_annexure_documents rad
+                          JOIN eff_user_reports ur ON ur.report_id = rad.report_id
+                          WHERE ur.user_id = %s AND rad.document_id = %s) AS ok
+            """,
+            (user_id, document_id),
+        )
+        return bool(cur.fetchone()["ok"])
+
+
 def can_view_snippet_images(user_id: int, document_id: str) -> bool:
     """Snippet PNGs get embedded in reports, so they're visible to anyone
     who can view either their source document or a report drawing on that

@@ -1493,7 +1493,11 @@ import { Pagination, repaginate } from "./pagination.js";
   async function refreshSnippetRefs() {
     try {
       const res = await fetch(`${reportUrl}/annexure/refs`);
-      if (res.ok) setSnippetRefs(await res.json(), document.getElementById("annexureLink")?.href);
+      if (res.ok) {
+        const data = await res.json();
+        setSnippetRefs(data, document.getElementById("annexureLink")?.href);
+        await loadAnnexedDocs(data.meta || {});
+      }
     } catch (e) {
       console.error(e);
     }
@@ -1615,96 +1619,136 @@ import { Pagination, repaginate } from "./pagination.js";
     }
   }
 
-  // Annexed documents: pick pages of each (blank = all) to insert as images
-  // at a third of the page's size, or as references, per the snippet style.
+  // Annexed documents: pick a range of each one's annexure pages (labelled
+  // with the annexure's own page numbers) to insert as images at a third of
+  // the page's size, or as references, per the snippet style.
   const annexedDocsEl = document.getElementById("reportAnnexedDocs");
-  const annexedPageInputs = new Map();
-  const docInfoCache = new Map();
+  const annexedRanges = new Map(); // docId -> {from, to} (source pages)
+  let annexedSignature = "";
 
-  function docInfo(d) {
-    const key = `${d.id}|${d.type}`;
-    if (!docInfoCache.has(key)) {
-      docInfoCache.set(key, fetch(`/api/doc/${encodeURIComponent(d.id)}/info?type=${encodeURIComponent(d.type)}`)
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not read the document"))))
-        .catch((e) => { docInfoCache.delete(key); throw e; }));
-    }
-    return docInfoCache.get(key);
+  // Fetched fresh on every insert: the document may have been edited or
+  // replaced since the page was loaded, changing its page count and sizes.
+  async function docInfo(d) {
+    const r = await fetch(`/api/doc/${encodeURIComponent(d.id)}/info?type=${encodeURIComponent(d.type)}`);
+    if (!r.ok) throw new Error("This document is no longer available");
+    return r.json();
   }
 
-  // "3, 5-7" -> [3, 5, 6, 7]; blank or "all" -> every page; null if invalid.
-  function parsePages(text, pageCount) {
-    const t = text.trim().toLowerCase();
-    if (!t || t === "all") return Array.from({ length: pageCount }, (_, i) => i + 1);
-    if (!/^\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*$/.test(t)) return null;
-    const pages = new Set();
-    for (const part of t.split(",")) {
-      const [lo, hi = lo] = part.split("-").map((n) => parseInt(n, 10));
-      if (lo < 1 || hi < lo || lo > pageCount) return null;
-      for (let p = lo; p <= Math.min(hi, pageCount); p++) pages.add(p);
-    }
-    return [...pages].sort((a, b) => a - b);
+  // The range to show for a document whose annexed source pages are `pages`
+  // (ascending): the remembered one pulled inside them, or all of them.
+  function clampRange(saved, pages) {
+    const first = pages[0];
+    const last = pages[pages.length - 1];
+    if (!saved) return { from: first, to: last };
+    const from = pages.find((p) => p >= saved.from);
+    const to = [...pages].reverse().find((p) => p <= saved.to);
+    return from === undefined || to === undefined || from > to ? { from: first, to: last } : { from, to };
   }
 
-  async function insertAnnexedPages(d, row, input, button) {
+  async function insertAnnexedPages(d, pages, row, button) {
     const errorEl = row.querySelector(".annexed-error");
     errorEl.textContent = "";
     button.disabled = true;
     try {
       const info = await docInfo(d);
-      const pages = parsePages(input.value, info.page_count);
-      if (!pages) throw new Error(`Enter pages like 3, 5-7 (1-${info.page_count}), or leave blank for all.`);
-      const res = await fetch(`/api/doc/${encodeURIComponent(d.id)}/page-snippets?type=${encodeURIComponent(d.type)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pages }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not prepare the pages");
-      for (const { page, url } of await res.json()) {
-        insertSnippet(url, `${d.title} page ${page}`, info.pages[page - 1], { x: 0, y: 0, w: 1, h: 1 }, 1 / 3);
+      for (const page of pages) {
+        if (page > info.page_count) throw new Error(`Page ${page} no longer exists in this document`);
+      }
+      // Served as a rendered page, not a stored snippet (see render_page_image in app.py).
+      for (const page of pages) {
+        insertSnippet(`/media/snippets/${encodeURIComponent(d.id)}/p${page}_page.png`, `${d.title} page ${page}`,
+          info.pages[page - 1], { x: 0, y: 0, w: 1, h: 1 }, 1 / 3);
       }
       markDirty();
     } catch (e) {
       errorEl.textContent = e.message;
+      // The annexure or the document changed under us: resync the page choices.
+      refreshSnippetRefs();
     } finally {
-      button.disabled = false;
+      button.disabled = !canEdit;
     }
   }
 
-  async function loadAnnexedDocs() {
+  function renderAnnexedDocs(docs, meta) {
+    const rows = docs.map((d) => {
+      const pageInfo = (meta[d.id] || {}).pages || {};
+      const pages = Object.keys(pageInfo).map(Number).sort((x, y) => x - y);
+      return { d, pageInfo, pages, range: pages.length ? clampRange(annexedRanges.get(d.id), pages) : null };
+    });
+    // Ranges of documents that left the annexure are forgotten, so one that comes back starts from all its pages.
+    const kept = new Set(rows.filter((r) => r.range).map((r) => r.d.id));
+    for (const id of [...annexedRanges.keys()]) if (!kept.has(id)) annexedRanges.delete(id);
+    rows.forEach(({ d, range }) => { if (range) annexedRanges.set(d.id, range); });
+    const signature = JSON.stringify(rows.map(({ d, pageInfo, range }) => [d.id, d.title, d.type, pageInfo, range]));
+    if (signature === annexedSignature) return;
+    annexedSignature = signature;
+    annexedDocsEl.innerHTML = "";
+    if (!rows.length) {
+      annexedDocsEl.innerHTML = '<p class="empty">No documents are annexed yet.</p>';
+      return;
+    }
+    for (const { d, pageInfo, pages, range } of rows) {
+      const row = document.createElement("div");
+      row.className = "annexed-doc";
+      row.innerHTML = '<div class="annexed-title"></div><div class="annexed-error error-message"></div>';
+      row.querySelector(".annexed-title").textContent = d.title;
+      if (!range) {
+        const none = document.createElement("p");
+        none.className = "empty";
+        none.textContent = "No pages of this document are in the annexure.";
+        row.insertBefore(none, row.querySelector(".annexed-error"));
+        annexedDocsEl.appendChild(row);
+        continue;
+      }
+      const label = (p) => (pageInfo[p].number === "-" ? `p${p}` : pageInfo[p].number);
+      const controls = document.createElement("div");
+      controls.className = "annexed-controls";
+      const fromSel = document.createElement("select");
+      const toSel = document.createElement("select");
+      fromSel.setAttribute("aria-label", "First page");
+      toSel.setAttribute("aria-label", "Last page");
+      for (const sel of [fromSel, toSel]) {
+        pages.forEach((p) => sel.add(new Option(label(p), String(p))));
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "insert-annexed";
+      button.textContent = "Insert";
+      button.disabled = !canEdit;
+      // Each end only offers pages that keep the range valid.
+      const sync = () => {
+        const from = Number(fromSel.value);
+        const to = Number(toSel.value);
+        Array.from(fromSel.options).forEach((o) => { o.disabled = Number(o.value) > to; });
+        Array.from(toSel.options).forEach((o) => { o.disabled = Number(o.value) < from; });
+        annexedRanges.set(d.id, { from, to });
+      };
+      fromSel.value = String(range.from);
+      toSel.value = String(range.to);
+      sync();
+      fromSel.addEventListener("change", sync);
+      toSel.addEventListener("change", sync);
+      button.addEventListener("click", () => {
+        const { from, to } = annexedRanges.get(d.id);
+        insertAnnexedPages(d, pages.filter((p) => p >= from && p <= to), row, button);
+      });
+      const dash = document.createElement("span");
+      dash.textContent = "to";
+      controls.append(fromSel, dash, toSel, button);
+      row.insertBefore(controls, row.querySelector(".annexed-error"));
+      annexedDocsEl.appendChild(row);
+    }
+  }
+
+  async function loadAnnexedDocs(meta) {
     if (!annexedDocsEl || !reportUrl) return;
     try {
       const res = await fetch(`${reportUrl}/annexure`);
-      if (!res.ok) return;
-      const docs = (await res.json()).documents;
-      annexedDocsEl.innerHTML = "";
-      if (!docs.length) {
-        annexedDocsEl.innerHTML = '<p class="empty">No documents are annexed yet.</p>';
-        return;
-      }
-      docs.forEach((d) => {
-        const row = document.createElement("div");
-        row.className = "annexed-doc";
-        row.innerHTML = `
-          <div class="annexed-title"></div>
-          <div class="annexed-controls">
-            <input type="text" class="annexed-pages" placeholder="All pages" aria-label="Pages to insert, e.g. 3, 5-7">
-            <button type="button" class="insert-annexed">Insert</button>
-          </div>
-          <div class="annexed-error error-message"></div>`;
-        row.querySelector(".annexed-title").textContent = d.title;
-        const input = row.querySelector(".annexed-pages");
-        input.value = annexedPageInputs.get(d.id) || "";
-        input.addEventListener("input", () => annexedPageInputs.set(d.id, input.value));
-        const button = row.querySelector(".insert-annexed");
-        button.disabled = !canEdit;
-        button.addEventListener("click", () => insertAnnexedPages(d, row, input, button));
-        annexedDocsEl.appendChild(row);
-      });
+      if (res.ok) renderAnnexedDocs((await res.json()).documents, meta);
     } catch (e) {
       console.error(e);
     }
   }
-  window.addEventListener("pageshow", loadAnnexedDocs);
 
   async function loadSnippets() {
     const { source_doc, source_type } = currentSource();
@@ -1783,7 +1827,6 @@ import { Pagination, repaginate } from "./pagination.js";
       updateAnnotateLink();
       refreshCaseSetup();
       loadSnippets();
-      loadAnnexedDocs();
       refreshSnippetRefs();
       let loaded = null;
       editor.state.doc.descendants((node) => {
