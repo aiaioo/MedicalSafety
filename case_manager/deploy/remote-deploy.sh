@@ -80,6 +80,11 @@ echo "--- Encrypting any plaintext report text"
  sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
    .venv/bin/python3 db/encrypt_report_docs.py)
 
+echo "--- Encrypting any plaintext annotations"
+(set -a; . "$ENV_FILE"; set +a
+ sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \
+   .venv/bin/python3 db/encrypt_annotations.py)
+
 echo "--- Encrypting any plaintext report images"
 (set -a; . "$ENV_FILE"; set +a
  sudo -u case-manager env DATABASE_URL="$DATABASE_URL" ENCRYPTION_KEY_FILE="$ENCRYPTION_KEY_FILE" \

@@ -284,7 +284,7 @@ def delete_document(document_id: str) -> None:
     with _cursor() as cur:
         if not _lock(cur, "documents", document_id):
             return
-        _refuse_if_any(cur, "SELECT 1 FROM document_annotations WHERE document_id = %s AND jsonb_array_length(shapes) > 0 LIMIT 1",
+        _refuse_if_any(cur, "SELECT 1 FROM document_annotations WHERE document_id = %s LIMIT 1",
                        (document_id,), "Cannot delete a document that has annotations. Remove them first.")
         _refuse_if_any(cur, "SELECT 1 FROM snippets WHERE document_id = %s LIMIT 1", (document_id,),
                        "Cannot delete a document that has snippets. Remove them first.")
@@ -317,23 +317,31 @@ def get_document_pdf_bytes(document_id: str) -> bytes:
 # Per-page annotations
 # ---------------------------------------------------------------------------
 
+def _encrypt_shapes(shapes: list) -> bytes:
+    return encryptor.encrypt_bytes(json.dumps(shapes, ensure_ascii=False).encode("utf-8"))
+
+
+def _decrypt_shapes(blob) -> list:
+    return [] if blob is None else json.loads(encryptor.decrypt_bytes(bytes(blob)).decode("utf-8"))
+
+
 def get_all_annotations(document_id: str) -> dict:
     """{"1": [...shapes...], "2": [...]}, matching the old per-document JSON
     file's shape exactly (only pages that have any annotations appear)."""
     with _cursor() as cur:
-        cur.execute("SELECT page_number, shapes FROM document_annotations WHERE document_id = %s", (document_id,))
+        cur.execute("SELECT page_number, shapes_enc FROM document_annotations WHERE document_id = %s", (document_id,))
         rows = cur.fetchall()
-    return {str(r["page_number"]): r["shapes"] for r in rows}
+    return {str(r["page_number"]): _decrypt_shapes(r["shapes_enc"]) for r in rows}
 
 
 def get_page_annotations(document_id: str, page: int) -> list:
     with _cursor() as cur:
         cur.execute(
-            "SELECT shapes FROM document_annotations WHERE document_id = %s AND page_number = %s",
+            "SELECT shapes_enc FROM document_annotations WHERE document_id = %s AND page_number = %s",
             (document_id, page),
         )
         row = cur.fetchone()
-    return row["shapes"] if row else []
+    return _decrypt_shapes(row["shapes_enc"]) if row else []
 
 
 def set_page_annotations(document_id: str, page: int, annotations: list) -> None:
@@ -341,11 +349,11 @@ def set_page_annotations(document_id: str, page: int, annotations: list) -> None
         if annotations:
             cur.execute(
                 """
-                INSERT INTO document_annotations (document_id, page_number, shapes)
+                INSERT INTO document_annotations (document_id, page_number, shapes_enc)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (document_id, page_number) DO UPDATE SET shapes = EXCLUDED.shapes
+                ON CONFLICT (document_id, page_number) DO UPDATE SET shapes_enc = EXCLUDED.shapes_enc, shapes = '[]'
                 """,
-                (document_id, page, psycopg2.extras.Json(annotations)),
+                (document_id, page, _encrypt_shapes(annotations)),
             )
         else:
             cur.execute(
