@@ -149,7 +149,7 @@ def sanitize_page_numbers(raw, fallback=None):
 # "Annexure P-1") stamped in the top margin of each annexed document's first
 # page, in the page numbers' font, size and colour.
 ANNEXURE_DEFAULT_DOC_NUMBERS = {"enabled": True, "name": "Annexure", "prefix": "", "first": 1}
-ANNEXURE_DOC_NUMBER_NAMES = ("Annexure", "Document", "Attachment")
+ANNEXURE_DOC_NUMBER_NAMES = ("Annexure", "Document", "Attachment", "")
 ANNEXURE_DOC_NUMBER_PREFIX_MAX = 6
 
 
@@ -167,18 +167,21 @@ def sanitize_doc_numbers(raw, fallback=None):
                 return v
         return ANNEXURE_DEFAULT_DOC_NUMBERS[key]
 
-    return {
+    out = {
         "enabled": bool(raw["enabled"]) if "enabled" in raw else bool(fallback.get("enabled", ANNEXURE_DEFAULT_DOC_NUMBERS["enabled"])),
         "name": pick("name", lambda v: v in ANNEXURE_DOC_NUMBER_NAMES),
         "prefix": pick("prefix", lambda v: isinstance(v, str) and len(v) <= ANNEXURE_DOC_NUMBER_PREFIX_MAX and v.isprintable(),
                        lambda v: v.strip() if isinstance(v, str) else v),
         "first": pick("first", lambda v: 1 <= v <= REPORT_PAGE_NUMBER_FIRST_MAX, int),
     }
+    if not out["name"] and not out["prefix"]:
+        out["prefix"] = "D"  # a bare number is not a label
+    return out
 
 
 def doc_number_label(dn, index):
     """The label of the `index`th (0-based) numbered document."""
-    return f"{dn['name']} {dn['prefix']}{dn['first'] + index}"
+    return f"{dn['name']} {dn['prefix']}{dn['first'] + index}".lstrip()
 
 
 def stamp_doc_numbers(doc, dn, pn, m, first_pages):
