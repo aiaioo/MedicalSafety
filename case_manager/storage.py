@@ -2561,3 +2561,99 @@ def get_published_article(article_id: str) -> dict | None:
             for p in placements
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Cause activity log (db/migrations/045_cause_activity.sql): downloads, the
+# first view per day, and saves, recorded against every cause a resource sits
+# under.
+# ---------------------------------------------------------------------------
+
+ACTIVITY_ACTIONS = ("download", "view", "save")
+ACTIVITY_DAYS_PER_PAGE = 50
+
+
+def _causes_of(cur, kind: str, object_id: str) -> list[str]:
+    """Every cause `object_id` sits under: itself for a cause, its cause for a
+    case or allegation, and for a report or source its direct causes plus
+    those of the cases it is linked to."""
+    if kind == "cause":
+        cur.execute("SELECT id AS cause_id FROM causes WHERE id = %s", (object_id,))
+    elif kind in ("case", "allegation"):
+        table = "cases" if kind == "case" else "allegations"
+        cur.execute(f"SELECT cause_id FROM {table} WHERE id = %s", (object_id,))  # noqa: S608 (fixed names)
+    else:
+        prefix, key = ("report", "report_id") if kind == "report" else ("source", "document_id")
+        cur.execute(
+            f"SELECT cause_id FROM {prefix}_causes WHERE {key} = %s "  # noqa: S608 (fixed names)
+            f"UNION SELECT c.cause_id FROM {prefix}_cases l JOIN cases c ON c.id = l.case_id WHERE l.{key} = %s",
+            (object_id, object_id),
+        )
+    return sorted({r["cause_id"] for r in cur.fetchall()})
+
+
+def log_activity(action: str, kind: str, object_id: str, actor_id: int, detail: str = "") -> None:
+    """Records `action` on a resource against each cause it is under. A "view"
+    is recorded once per actor, resource and cause per (UTC) day."""
+    if action not in ACTIVITY_ACTIONS:
+        raise ValueError(f"Unknown activity action: {action!r}")
+    with _cursor() as cur:
+        for cause_id in _causes_of(cur, kind, object_id):
+            cur.execute(
+                """
+                INSERT INTO cause_activity (cause_id, action, resource_kind, resource_id, actor_id, detail)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (cause_id, action, kind, object_id, actor_id, detail),
+            )
+
+
+def list_cause_activity(cause_id: str, page: int = 1) -> dict:
+    """One page of a cause's activity, newest day first: {"days": [{"date",
+    "entries": [{"time", "action", "kind", "resource_id", "resource", "actor",
+    "detail"}]}], "page", "pages"}. A page holds ACTIVITY_DAYS_PER_PAGE days that
+    have activity; names are resolved here, since stored titles are encrypted."""
+    with _cursor() as cur:
+        cur.execute("SELECT count(DISTINCT day) AS n FROM cause_activity WHERE cause_id = %s", (cause_id,))
+        pages = max(1, -(-cur.fetchone()["n"] // ACTIVITY_DAYS_PER_PAGE))
+        page = min(max(page, 1), pages)
+        cur.execute(
+            "SELECT DISTINCT day FROM cause_activity WHERE cause_id = %s ORDER BY day DESC LIMIT %s OFFSET %s",
+            (cause_id, ACTIVITY_DAYS_PER_PAGE, (page - 1) * ACTIVITY_DAYS_PER_PAGE),
+        )
+        days = [r["day"] for r in cur.fetchall()]
+        rows = []
+        if days:
+            cur.execute(
+                """
+                SELECT day, occurred_at, action, resource_kind, resource_id, actor_id, detail
+                FROM cause_activity WHERE cause_id = %s AND day BETWEEN %s AND %s
+                ORDER BY day DESC, occurred_at DESC, id DESC
+                """,
+                (cause_id, days[-1], days[0]),
+            )
+            rows = cur.fetchall()
+        titles: dict[tuple[str, str], str] = {}
+        for kind in {r["resource_kind"] for r in rows}:
+            table, title_col = _OBJECT_TITLES[kind]
+            cur.execute(
+                f"SELECT id, {title_col} AS title FROM {table} WHERE id = ANY(%s)",  # noqa: S608 (fixed names)
+                ([r["resource_id"] for r in rows if r["resource_kind"] == kind],),
+            )
+            titles.update({(kind, t["id"]): _dec_text(t["title"]) or t["id"] for t in cur.fetchall()})
+        cur.execute(
+            "SELECT id, email, full_name FROM users WHERE id = ANY(%s)",
+            ([r["actor_id"] for r in rows if r["actor_id"] > 0],),
+        )
+        people = {u["id"]: _dec_text(u["full_name"]) or _dec_text(u["email"]) for u in cur.fetchall()}
+    by_day: dict = {d: [] for d in days}
+    for r in rows:
+        actor = people.get(r["actor_id"], "A deleted user") if r["actor_id"] > 0 else f"Share-link visitor #{-r['actor_id']}"
+        by_day[r["day"]].append({
+            "time": r["occurred_at"].astimezone(timezone.utc).strftime("%H:%M:%S"),
+            "action": r["action"], "kind": r["resource_kind"], "resource_id": r["resource_id"],
+            "resource": titles.get((r["resource_kind"], r["resource_id"]), "(deleted)"),
+            "actor": actor, "detail": r["detail"],
+        })
+    return {"days": [{"date": d.isoformat(), "entries": by_day[d]} for d in days], "page": page, "pages": pages}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activities</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="docbar" style="position: relative;">
+  <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
+  <div class="docbar-center"><span class="doc-name doc-name-static">Activities</span>{% include "_cause_picker.html" %}</div>
+  <a class="btn" style="margin-left: auto;" href="{{ url_for('causes_view') }}">Causes</a>
+</header>
+
+<main class="activities-page">
+  <h2>Activity on “{{ cause_title }}”</h2>
+  <p class="activities-note">Downloads, the first view of each day, and saves, for this cause and everything under it. Dates and times are UTC.</p>
+  {% for day in log.days %}
+  <section class="activity-day">
+    <h3>{{ day.date }}</h3>
+    <table class="activity-table">
+      {% for e in day.entries %}
+      <tr>
+        <td class="activity-time">{{ e.time }}</td>
+        <td class="activity-action">{{ {'download': 'Downloaded', 'view': 'Viewed', 'save': 'Saved'}[e.action] }}</td>
+        <td>{{ kind_labels[e.kind] }} “{{ e.resource }}”{% if e.detail %} <span class="activity-detail">({{ e.detail }})</span>{% endif %}</td>
+        <td class="activity-actor">{{ e.actor }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+  {% else %}
+  <p class="empty">No activity has been logged for this cause yet.</p>
+  {% endfor %}
+
+  {% if log.pages > 1 %}
+  <nav class="activity-pager">
+    {% if log.page > 1 %}<a class="btn" href="{{ url_for('activities_view', cause_id=cause_id, page=log.page - 1) }}">&larr; Newer</a>{% endif %}
+    <span>Page {{ log.page }} of {{ log.pages }}</span>
+    {% if log.page < log.pages %}<a class="btn" href="{{ url_for('activities_view', cause_id=cause_id, page=log.page + 1) }}">Older &rarr;</a>{% endif %}
+  </nav>
+  {% endif %}
+</main>
+</body>
+</html>

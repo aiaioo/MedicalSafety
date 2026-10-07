@@ -1098,3 +1098,14 @@ a.tag:hover { background: #d7deec; }
 .table-scale-ghost { position: absolute; border: 2px dashed #2266dd; background: rgba(34, 102, 221, 0.06); pointer-events: none; }
 .table-move-line { position: absolute; height: 3px; background: #2266dd; border-radius: 2px; pointer-events: none; }
 .table-grip-corner { cursor: grab; }
+
+/* Activities page */
+.activities-page { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 900px; margin: 0 auto; padding: 24px 20px; box-sizing: border-box; }
+.activities-note { color: #8a92a5; margin: 0 0 20px; }
+.activity-day h3 { margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #e3e6ee; }
+.activity-table { width: 100%; border-collapse: collapse; }
+.activity-table td { padding: 4px 10px 4px 0; vertical-align: top; }
+.activity-time { color: #8a92a5; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.activity-action { font-weight: 600; white-space: nowrap; }
+.activity-detail, .activity-actor { color: #8a92a5; }
+.activity-pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 28px 0 8px; }

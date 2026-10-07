@@ -321,6 +321,16 @@ def require_role(kind, object_id, min_role="viewer"):
     return role
 
 
+def log_activity(action, kind, object_id, detail=""):
+    """Records a download, first view of the day, or save of a resource in the
+    activity log of every cause it sits under (see storage.log_activity). The
+    request is already authorised by now; a failure to log never fails it."""
+    try:
+        storage.log_activity(action, kind, object_id, g.user.id, detail)
+    except Exception:
+        app.logger.exception("Could not log %s of %s %s", action, kind, object_id)
+
+
 def require_allegation_role(allegation, min_role="viewer"):
     """An allegation is governed by the better of the user's role on its
     cause and their role on the allegation itself (a collaborator may be
@@ -2609,6 +2619,25 @@ def causes_view():
     return render_template("causes.html", default_cause_id=storage.get_default_cause(g.user.id) or "", can_create=not g.user.is_guest)
 
 
+ACTIVITY_KIND_LABELS = {"cause": "Cause", "case": "Case", "allegation": "Allegation", "report": "Report", "source": "Document"}
+
+
+@app.route("/activities")
+def activities_view():
+    """The activity log of the user's current cause (the one picked in the
+    title bar), or of ?cause_id=. Only someone who can edit a cause sees who
+    has been at it."""
+    if g.user.is_guest:
+        raise DocumentError("Activity logs aren't available through a Share link", 403)
+    cause_id = request.args.get("cause_id") or resolve_default_cause_id()
+    check_report_id(cause_id)
+    require_role("cause", cause_id, "editor")
+    cause = storage.get_cause(cause_id)
+    page = request.args.get("page", 1, type=int)
+    return render_template("activities.html", cause_id=cause_id, cause_title=cause["title"] or cause_id,
+                           log=storage.list_cause_activity(cause_id, page), kind_labels=ACTIVITY_KIND_LABELS)
+
+
 @app.route("/cases")
 def cases_view():
     return render_template("cases.html", can_create=can_create_items())
@@ -2861,6 +2890,7 @@ def api_upload_document():
 @app.route("/api/doc/<doc_id>/info")
 def api_doc_info(doc_id):
     pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    log_activity("view", "source", doc_id)
     with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
         pages = [{"width": p.rect.width, "height": p.rect.height} for p in d]
     return jsonify({"page_count": len(pages), "pages": pages})
@@ -2876,6 +2906,7 @@ def api_doc_title(doc_id):
     body = request.get_json(silent=True) or {}
     title = str(body.get("title") or "").strip()[:200] or doc_id
     storage.set_document_title(doc_id, title)
+    log_activity("save", "source", doc_id, "Title")
     return jsonify({"title": title})
 
 
@@ -2889,6 +2920,7 @@ def api_doc_description(doc_id):
     body = request.get_json(silent=True) or {}
     description = " ".join(str(body.get("description") or "").split())[:500]
     storage.set_document_description(doc_id, description)
+    log_activity("save", "source", doc_id, "Description")
     return jsonify({"description": description})
 
 
@@ -2962,6 +2994,7 @@ def api_annotations(doc_id, page):
 
     storage.set_page_annotations(doc_id, page, anns)
     refreshed = refresh_page_snippets(doc_id, page, raw_type, anns)
+    log_activity("save", "source", doc_id, f"Annotations, page {page}")
     return jsonify({"status": "ok", "count": len(anns), "snippets_refreshed": refreshed})
 
 
@@ -3081,6 +3114,7 @@ def _annotated_pdf_response(doc_id, annotated_only):
         annotated_pdf_bytes = d.tobytes(deflate=True)
 
     suffix = "annotated-pages" if annotated_only else "annotated"
+    log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
     resp = Response(annotated_pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}-{suffix}.pdf"'
@@ -3104,6 +3138,7 @@ def api_download_original(doc_id):
     if g.user.is_guest:
         raise DocumentError("The original PDF can't be downloaded through a Share link", 403)
     pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    log_activity("download", "source", doc_id, "Original PDF")
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}.pdf"'
@@ -3180,6 +3215,7 @@ def api_report(report_id):
         raise DocumentError(f"No report with id {report_id!r}", 404)
 
     if request.method == "GET":
+        log_activity("view", "report", report_id)
         resp = dict(existing)
         resp["margins"] = sanitize_margins(existing.get("margins"))
         resp["pageNumbers"] = sanitize_page_numbers(existing.get("pageNumbers"))
@@ -3217,6 +3253,7 @@ def api_report(report_id):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     storage.save_report(report_id, data)
+    log_activity("save", "report", report_id)
     return jsonify(data)
 
 
@@ -3629,6 +3666,7 @@ def api_report_annexure(report_id):
             storage.save_annexure_annotations(report_id, annotations)
         payload = _annexure_payload(report_id, saved, page_numbers, annotations, doc_numbers, list_of_documents)
         storage.save_annexure(report_id, [{k: d[k] for k in ("id", "page_mode", "page_range")} for d in payload["documents"]])
+        log_activity("save", "report", report_id, "Annexure")
         return jsonify(payload)
     return jsonify(_annexure_payload(report_id, saved))
 
@@ -3695,6 +3733,7 @@ def api_report_annexure_export(report_id):
         raise DocumentError("The annexure is empty — add a document before downloading", 400)
     data = _annexure_pdf_bytes(payload)
 
+    log_activity("download", "report", report_id, "Annexure PDF")
     resp = Response(data, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
@@ -3728,6 +3767,7 @@ def api_report_annexure_list_docx(report_id):
             shown += count
 
     data = list_of_documents_docx(annexure_list_context(report, include_doc=True), rows)
+    log_activity("download", "report", report_id, "List of documents (Word)")
     resp = Response(data, mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
@@ -3773,6 +3813,7 @@ def api_report_export(report_id):
                                              "to": fitz.Point(0, 0)})
             pdf_bytes = merged.tobytes()
 
+    log_activity("download", "report", report_id, "PDF" + (" with annexures" if payload else ""))
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
@@ -3801,6 +3842,7 @@ def api_report_export_docx(report_id):
     docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))),
                                     data.get("margins"), data.get("pageNumbers"), annexure_pdf)
 
+    log_activity("download", "report", report_id, "Word")
     resp = Response(
         docx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -3883,6 +3925,7 @@ def api_allegation_case(case_id):
         raise DocumentError(f"No case with id {case_id!r}", 404)
 
     if request.method == "GET":
+        log_activity("view", "case", case_id)
         return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
@@ -3924,6 +3967,7 @@ def api_allegation_case(case_id):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     storage.save_case(case_id, data)
+    log_activity("save", "case", case_id)
     return jsonify(data)
 
 
@@ -4029,6 +4073,7 @@ def api_cause(cause_id):
         raise DocumentError(f"No cause with id {cause_id!r}", 404)
 
     if request.method == "GET":
+        log_activity("view", "cause", cause_id)
         return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
@@ -4059,6 +4104,7 @@ def api_cause(cause_id):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     storage.save_cause(cause_id, data)
+    log_activity("save", "cause", cause_id)
     return jsonify(data)
 
 
@@ -4112,6 +4158,7 @@ def api_allegation_item(allegation_id):
     require_allegation_role(existing, {"GET": "viewer", "DELETE": "owner"}.get(request.method, "editor"))
 
     if request.method == "GET":
+        log_activity("view", "allegation", allegation_id)
         return jsonify(with_allegation_roles([existing])[0])
 
     if request.method == "DELETE":
@@ -4143,6 +4190,7 @@ def api_allegation_item(allegation_id):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     storage.save_allegation(allegation_id, data)
+    log_activity("save", "allegation", allegation_id)
     return jsonify({"id": allegation_id, **data})
 
 
