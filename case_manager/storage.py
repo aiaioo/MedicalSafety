@@ -1864,22 +1864,6 @@ def create_key(owner_id: int, kind: str, object_id: str, permission: str) -> dic
         return {"id": cur.fetchone()["id"], "key": key}
 
 
-def list_keys(owner_id: int) -> dict[str, list[dict]]:
-    """kind -> [{"id", "object_id", "title", "key", "permission", "active"}],
-    the keys this user created, oldest first."""
-    result = {}
-    with _cursor() as cur:
-        for kind, (table, column) in _KEY_TABLES.items():
-            obj_table, title_col = _OBJECT_TITLES[kind]
-            cur.execute(
-                f"SELECT k.id, k.{column} AS object_id, o.{title_col} AS title, k.key, k.permission, k.active "  # noqa: S608
-                f"FROM {table} k JOIN {obj_table} o ON o.id = k.{column} WHERE k.owner_id = %s",
-                (owner_id,),
-            )
-            rows = [{**r, "title": _dec_text(r["title"])} for r in cur.fetchall()]
-            rows.sort(key=lambda r: (r["title"].lower(), r["object_id"], r["id"]))
-            result[kind] = [{**r, "title": r["title"] or r["object_id"]} for r in rows]
-    return result
 
 
 def list_object_keys(kind: str, object_id: str) -> list[dict]:
@@ -1903,35 +1887,19 @@ def get_key_object(kind: str, key_id: int) -> str | None:
 
 
 def delete_key_by_id(kind: str, key_id: int) -> bool:
-    """Like delete_key, for a caller who has already checked they may manage the object's keys."""
+    """Deletes the key, so the object is no longer shared by it; the caller has already checked they may manage
+    the object's keys. Redemptions of it are kept (they no longer grant anything) so its holders can be told the
+    key was deleted -- see has_deleted_key."""
     table, _ = _KEY_TABLES[kind]
     with _cursor() as cur:
         cur.execute(f"DELETE FROM {table} WHERE id = %s", (key_id,))  # noqa: S608
         return cur.rowcount == 1
 
 
-def set_key_active(owner_id: int, kind: str, key_id: int, active: bool) -> bool:
-    table, _ = _KEY_TABLES[kind]
-    with _cursor() as cur:
-        cur.execute(f"UPDATE {table} SET active = %s WHERE id = %s AND owner_id = %s", (active, key_id, owner_id))  # noqa: S608
-        return cur.rowcount == 1
 
 
-def set_key_permission(owner_id: int, kind: str, key_id: int, permission: str) -> bool:
-    table, _ = _KEY_TABLES[kind]
-    with _cursor() as cur:
-        cur.execute(f"UPDATE {table} SET permission = %s WHERE id = %s AND owner_id = %s", (permission, key_id, owner_id))  # noqa: S608
-        return cur.rowcount == 1
 
 
-def delete_key(owner_id: int, kind: str, key_id: int) -> bool:
-    """Deletes the key, so the object is no longer shared by it. Redemptions
-    of it are kept (they no longer grant anything) so its holders can be told
-    the key was deleted -- see has_deleted_key."""
-    table, _ = _KEY_TABLES[kind]
-    with _cursor() as cur:
-        cur.execute(f"DELETE FROM {table} WHERE id = %s AND owner_id = %s", (key_id, owner_id))  # noqa: S608
-        return cur.rowcount == 1
 
 
 def object_has_keys(kind: str, object_id: str) -> bool:
