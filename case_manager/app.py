@@ -1787,7 +1787,8 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), (where.width - 2 * PDF_BODY_INSET_PT - 2) * 96 / 72)
-    numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
+    # Tabs are padded out to the editor's 30pt stops (fitz.Story has no tab-size); the body is 11pt Helvetica.
+    numbered_body_html = _tabs_to_stops(_json_blocks_to_html(doc_json.get("content") or [], raw_tabs=True), "Helvetica", 11)
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
 
@@ -2279,12 +2280,18 @@ def _docx_new_unnumbered_section(doc):
     return section
 
 
+def _docx_set_tab_stops(doc):
+    """Word's default tab stop is 0.5in; the editors use 40px (30pt), so set that for tabs to line up as when editing."""
+    doc.settings.element.find(qn("w:defaultTabStop")).set(qn("w:val"), "600")
+
+
 def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pdf=None, list_of_documents=None):
     """`list_of_documents`: (ctx, rows) as for list_of_documents_docx; added as editable text after the report, before
     the annexure pages (which are images). Neither is page-numbered, as they carry their own numbers."""
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
+    _docx_set_tab_stops(doc)
 
     section = doc.sections[0]
     m = sanitize_margins(margins)
@@ -3466,20 +3473,12 @@ def annexure_selected_pages(d, page_count):
     return parse_page_range(d["page_range"], page_count) or []
 
 
-def _tabs_as_spaces(nodes):
-    """`nodes` with every tab in its text replaced by six non-breaking spaces, as the PDF does, so text laid out with tabs
-    takes the same width in Word (whose own tab stops are much wider and make such lines wrap)."""
-    return [{**n, "text": n["text"].replace("\t", "\u00a0" * 6)} if n.get("type") == "text" and "text" in n
-            else {**n, "content": _tabs_as_spaces(n["content"])} if n.get("content") else n
-            for n in nodes]
-
-
 def _docx_add_list_of_documents(doc, ctx, rows, max_width_emu):
     """Appends the List of Documents to `doc` (see list_of_documents_docx for the arguments)."""
     first_new = len(doc.paragraphs)
     cause = (ctx.get("causeTitleDoc") or {}).get("content")
     if cause:
-        _docx_render_blocks(_tabs_as_spaces(cause), doc, max_width_emu)
+        _docx_render_blocks(cause, doc, max_width_emu)
         font, size = _docx_clean_font_name(ctx.get("causeFont") or ""), ctx.get("causeFontSize")
         for p in doc.paragraphs[first_new:]:
             # As in the PDF, where the List of Documents CSS gives every paragraph no margin and a 1.4 line height.
@@ -3539,6 +3538,7 @@ def list_of_documents_docx(ctx, rows):
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Times New Roman"
     doc.styles["Normal"].font.size = Pt(12)
+    _docx_set_tab_stops(doc)
     _docx_add_list_of_documents(doc, ctx, rows, _docx_set_list_of_documents_layout(doc.sections[0]))
     buf = io.BytesIO()
     doc.save(buf)
