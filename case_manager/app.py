@@ -2676,7 +2676,7 @@ def activities_view():
     tz = request.cookies.get("tz", "")
     try:
         ZoneInfo(tz)
-    except (ValueError, OSError):
+    except (KeyError, ValueError, OSError):  # ZoneInfoNotFoundError is a KeyError
         tz = "Asia/Kolkata"
     return render_template("activities.html", cause_id=cause_id, cause_title=cause["title"] or cause_id, tz=tz,
                            log=storage.list_cause_activity(cause_id, page, tz), kind_labels=ACTIVITY_KIND_LABELS)

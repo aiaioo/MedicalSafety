@@ -48,7 +48,7 @@
 (function () {
   var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (!tz || tz === {{ tz|tojson }}) return;
-  document.cookie = "tz=" + encodeURIComponent(tz) + "; path=/; max-age=31536000; samesite=lax";
+  document.cookie = "tz=" + tz + "; path=/; max-age=31536000; samesite=lax";
   if (document.cookie.indexOf("tz=") !== -1 && !sessionStorage.getItem("tzReloaded")) {
     sessionStorage.setItem("tzReloaded", "1");
     location.reload();
