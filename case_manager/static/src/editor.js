@@ -70,7 +70,6 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   const openDocBtn = document.getElementById("openDocBtn");
   const pageSetupBtn = document.getElementById("pageSetupBtn");
   const downloadPdfBtn = document.getElementById("downloadPdfBtn");
-  const downloadPdfAnnexBtn = document.getElementById("downloadPdfAnnexBtn");
   const downloadDocxBtn = document.getElementById("downloadDocxBtn");
 
   const pageSetupModal = document.getElementById("pageSetupModal");
@@ -810,7 +809,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     });
     // Grey out everything in the File menu except the downloads.
     fileMenuDropdown.querySelectorAll("button").forEach((b) => {
-      b.disabled = b !== downloadPdfBtn && b !== downloadPdfAnnexBtn && b !== downloadDocxBtn;
+      b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn;
     });
   }
 
@@ -1319,15 +1318,8 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     }
   });
 
+  // The PDF always includes the annexures.
   downloadPdfBtn.addEventListener("click", async () => {
-    try {
-      await saveReport();
-      window.location.href = exportUrl;
-    } catch (e) {
-      setStatus("Save failed: " + e.message, true);
-    }
-  });
-  downloadPdfAnnexBtn.addEventListener("click", async () => {
     try {
       await saveReport();
       window.location.href = exportUrl + "?annexures=1";
