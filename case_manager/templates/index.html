@@ -34,6 +34,13 @@
   <div class="collapsible-inner">
   <div class="advanced-box">
 
+  <h1>Collaborations</h1>
+
+  <section class="index-section">
+    <p class="empty">Invite other users to collaborate and choose what you share with them.</p>
+    <p><a class="btn" href="{{ url_for('collaborations_view') }}">Open collaborations workspace</a></p>
+  </section>
+
   <h1>Causes</h1>
 
   <section class="index-section">
@@ -72,17 +79,6 @@
     <p class="empty">Upload document PDFs or Word files and mark them up with boxes, freehand and snippets.</p>
     <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
   </section>
-
-  <div class="advanced-box" style="margin-left: -20px; margin-right: -20px;">
-
-  <h1>Collaborations</h1>
-
-  <section class="index-section">
-    <p class="empty">Invite other users to collaborate and choose what you share with them.</p>
-    <p><a class="btn" href="{{ url_for('collaborations_view') }}">Open collaborations workspace</a></p>
-  </section>
-
-  </div>
 
   <label style="display: block; margin: 0.5rem 0;"><input type="checkbox" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
 
