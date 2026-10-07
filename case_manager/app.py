@@ -2894,7 +2894,7 @@ def api_render(doc_id, page):
             raise DocumentError("Page out of range", 404)
         zoom = dpi / 72
         p = d[page - 1]
-        mode = {"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations"))
+        mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
         if mode in ("blackouts", "all"):
             draw_annotations_on_page(p, annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode), p.rect)
         pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
@@ -3076,6 +3076,10 @@ def api_download_annotated_pages(doc_id):
 
 @app.route("/api/doc/<doc_id>/download-original")
 def api_download_original(doc_id):
+    # The unannotated file would expose what blackouts hide, and a Share-link
+    # visitor is unidentified.
+    if g.user.is_guest:
+        raise DocumentError("The original PDF can't be downloaded through a Share link", 403)
     pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
     resp = Response(pdf_bytes, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
@@ -3264,6 +3268,13 @@ def annexure_annotations_to_draw(raw, mode):
     if mode == "blackouts":
         return [a for a in anns if a["kind"] == "blackout"]
     return anns if mode == "all" else []
+
+
+def guest_annotation_mode(mode):
+    """Someone in through a Share link (a key session) is unidentified, so
+    whatever they download keeps the blackouts that hide PII: "none" (or
+    anything unrecognised) becomes "blackouts" for them."""
+    return "blackouts" if g.user.is_guest and mode not in ("blackouts", "all") else mode
 
 
 # ---- Annexure "List of Documents" ----------------------------------------
@@ -3602,6 +3613,7 @@ def api_report_annexure(report_id):
 def _annexure_pdf_bytes(payload):
     """The annexure payload rendered as one PDF (bytes)."""
     out = fitz.open()
+    mode = guest_annotation_mode(payload["annotations"])
     first_pages = []  # index in `out` of each document's first page
     spans = []  # (document, first, last index in `out`) of each document with pages
     try:
@@ -3609,10 +3621,10 @@ def _annexure_pdf_bytes(payload):
             pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
             with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
                 pages = annexure_selected_pages(d, src.page_count)
-                if payload["annotations"] != "none":
+                if mode != "none":
                     for n, raw_anns in storage.get_all_annotations(d["id"]).items():
                         if n.isdigit() and 1 <= int(n) <= src.page_count:
-                            draw_annotations_on_page(src[int(n) - 1], annexure_annotations_to_draw(raw_anns, payload["annotations"]), src[int(n) - 1].rect)
+                            draw_annotations_on_page(src[int(n) - 1], annexure_annotations_to_draw(raw_anns, mode), src[int(n) - 1].rect)
                 if pages:
                     first_pages.append(out.page_count)
                     spans.append((d, out.page_count, out.page_count + len(pages) - 1))

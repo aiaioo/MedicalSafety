@@ -96,7 +96,7 @@
         <hr>
         <button type="button" id="downloadBtn">Download annotated PDF</button>
         <button type="button" id="downloadPagesBtn" disabled>Download annotated pages only</button>
-        <button type="button" id="downloadOriginalBtn">Download original PDF</button>
+        <button type="button" id="downloadOriginalBtn" {% if g.user.is_guest %}disabled title="Not available through a Share link"{% endif %}>Download original PDF</button>
       </div>
     </nav>
     <button type="button" class="btn" id="shareBtn" {{ 'title="Share this document with a secret key"' if can_edit and not g.user.is_guest else 'disabled title="Only the owner, or a collaborator with edit access, can share this"' }}>Share&hellip;</button>
