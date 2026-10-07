@@ -1787,8 +1787,7 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), (where.width - 2 * PDF_BODY_INSET_PT - 2) * 96 / 72)
-    # Tabs are padded out to the editor's 30pt stops (fitz.Story has no tab-size); the body is 11pt Helvetica.
-    numbered_body_html = _tabs_to_stops(_json_blocks_to_html(doc_json.get("content") or [], raw_tabs=True), "Helvetica", 11)
+    numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
 
@@ -3557,15 +3556,24 @@ def list_of_documents_docx(ctx, rows):
     return buf.getvalue()
 
 
+def _tab_faces(font):
+    """The built-in (regular, bold) font names nearest the CSS font `font`, for measuring text."""
+    if "Courier" in font:
+        return ("cour", "cobo")
+    if any(f in font for f in ("Arial", "Helvetica", "Verdana", "Calibri")):
+        return ("helv", "hebo")
+    return ("tiro", "tibo")
+
+
 def _tabs_to_stops(html, font, size):
     """`html` with each raw tab padded with non-breaking spaces up to the next 30pt (40px) tab stop, as the cause title
-    editor lays them out; fitz.Story has no tab-size. Text is measured in the nearest built-in font (bold and font-size
-    spans included), so stops are close, not exact."""
-    family = "cour" if "Courier" in font else "helv" if any(f in font for f in ("Arial", "Helvetica", "Verdana", "Calibri")) else "tiro"
-    faces = {"tiro": ("tiro", "tibo"), "helv": ("helv", "hebo"), "cour": ("cour", "cobo")}[family]
-    stack = []  # (tag, bold, size) of each open inline element that changes the measuring
+    editor lays them out; fitz.Story has no tab-size. Text is measured in the nearest built-in font, following bold,
+    font-family and font-size spans, so stops are close, not exact."""
+    stack = []  # (tag, faces, bold, size) of each open inline element that changes the measuring
+    def current():
+        return stack[-1][1:] if stack else (_tab_faces(font), False, size)
     def width(text):
-        bold, pt = (stack[-1][1], stack[-1][2]) if stack else (False, size)
+        faces, bold, pt = current()
         return fitz.get_text_length(text, fontname=faces[bold], fontsize=pt)
     stop = 30.0
     x = 0.0
@@ -3582,13 +3590,15 @@ def _tabs_to_stops(html, font, size):
                         del stack[i:]
                         break
             elif name in ("b", "strong", "span") and not token.endswith("/>"):
-                bold, pt = (stack[-1][1], stack[-1][2]) if stack else (False, size)
-                if name != "span":
-                    bold = True
+                faces, bold, pt = current()
+                bold = bold or name != "span"
                 m = re.search(r"font-size:\s*([\d.]+)(pt|px)", token)
                 if m:
                     pt = float(m.group(1)) * (0.75 if m.group(2) == "px" else 1)
-                stack.append((name, bold, pt))
+                m = re.search(r"font-family:\s*([^;\"]+)", token)
+                if m:
+                    faces = _tab_faces(unescape(m.group(1)))
+                stack.append((name, faces, bold, pt))
             out.append(token)
             continue
         for piece in re.split(r"(\t)", token):
