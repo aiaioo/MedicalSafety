@@ -961,7 +961,7 @@ a.tag:hover { background: #d7deec; }
 .key-form select { padding: 8px; border: 1px solid #cfd4e0; border-radius: 6px; max-width: 280px; }
 .key-form .modal-field { margin: 0; }
 .key-group h4 { margin: 14px 0 6px; }
-.key-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid #e6e9f0; }
+.key-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; margin-top: 10px; border: 1px solid #cfd4e0; border-radius: 10px; background: #fafbfd; }
 .key-row.inactive { opacity: .65; }
 .key-title { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .key-value { font-size: 12px; background: #f1f3f8; padding: 2px 6px; border-radius: 4px; user-select: all; }
