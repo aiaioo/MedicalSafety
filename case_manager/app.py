@@ -1787,7 +1787,8 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
     doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), (where.width - 2 * PDF_BODY_INSET_PT - 2) * 96 / 72)
-    numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
+    # Tabs are padded out to the editor's 30pt stops (fitz.Story has no tab-size); the body is 11pt Helvetica.
+    numbered_body_html = _tabs_to_stops(_json_blocks_to_html(doc_json.get("content") or [], raw_tabs=True), "Helvetica", 11)
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
 
