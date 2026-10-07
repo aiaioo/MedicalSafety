@@ -1867,6 +1867,10 @@ def _docx_apply_run_format(run, fmt):
     run.italic = bool(fmt.get("italic"))
     run.underline = bool(fmt.get("underline"))
     run.font.strike = bool(fmt.get("strike"))
+    if fmt.get("font"):
+        run.font.name = fmt["font"]
+    if fmt.get("size"):
+        run.font.size = Pt(fmt["size"])
     if fmt.get("code"):
         run.font.name = "Courier New"
     if fmt.get("color"):
@@ -1907,8 +1911,14 @@ def _docx_run_format_from_marks(marks):
         attrs = mark.get("attrs") or {}
         if t in ("bold", "italic", "underline", "strike", "code"):
             fmt[t] = True
-        elif t == "textStyle" and attrs.get("color"):
-            fmt["color"] = attrs["color"]
+        elif t == "textStyle":
+            if attrs.get("color"):
+                fmt["color"] = attrs["color"]
+            if attrs.get("fontFamily"):
+                fmt["font"] = _docx_clean_font_name(attrs["fontFamily"].split(",")[0].strip())
+            size = re.match(r"([\d.]+)(pt|px)", str(attrs.get("fontSize") or ""))
+            if size:
+                fmt["size"] = float(size.group(1)) * (0.75 if size.group(2) == "px" else 1)
     return fmt
 
 
@@ -3370,6 +3380,7 @@ def guest_annotation_mode(mode):
 # "List of Documents" heading, and a Sl.No. / Particulars / Pg.Nos. table.
 
 LIST_OF_DOCUMENTS_BLANK_LINES = 9
+CAUSE_TITLE_DEFAULT_FONT, CAUSE_TITLE_DEFAULT_SIZE = "Times New Roman", 14  # as in the cause title editor
 
 
 def _cause_title_parties(case, side):
@@ -3479,15 +3490,16 @@ def _docx_add_list_of_documents(doc, ctx, rows, max_width_emu):
     cause = (ctx.get("causeTitleDoc") or {}).get("content")
     if cause:
         _docx_render_blocks(cause, doc, max_width_emu)
-        font, size = _docx_clean_font_name(ctx.get("causeFont") or ""), ctx.get("causeFontSize")
+        font = _docx_clean_font_name(ctx.get("causeFont") or CAUSE_TITLE_DEFAULT_FONT)
+        size = ctx.get("causeFontSize") or CAUSE_TITLE_DEFAULT_SIZE
         for p in doc.paragraphs[first_new:]:
             # As in the PDF, where the List of Documents CSS gives every paragraph no margin and a 1.4 line height.
             p.paragraph_format.space_before = p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = 1.4
             for run in p.runs:
-                if font and run.font.name is None:
+                if run.font.name is None:
                     run.font.name = font
-                if size:
+                if run.font.size is None:
                     run.font.size = Pt(size)
     else:
         for _ in range(LIST_OF_DOCUMENTS_BLANK_LINES):
@@ -3547,20 +3559,41 @@ def list_of_documents_docx(ctx, rows):
 
 def _tabs_to_stops(html, font, size):
     """`html` with each raw tab padded with non-breaking spaces up to the next 30pt (40px) tab stop, as the cause title
-    editor lays them out; fitz.Story has no tab-size. Text is measured in the nearest built-in font, so stops are close, not exact."""
-    face = "cour" if "Courier" in font else "helv" if any(f in font for f in ("Arial", "Helvetica", "Verdana", "Calibri")) else "tiro"
-    width = lambda text: fitz.get_text_length(text, fontname=face, fontsize=size)
-    space, stop = width(" "), 30.0
+    editor lays them out; fitz.Story has no tab-size. Text is measured in the nearest built-in font (bold and font-size
+    spans included), so stops are close, not exact."""
+    family = "cour" if "Courier" in font else "helv" if any(f in font for f in ("Arial", "Helvetica", "Verdana", "Calibri")) else "tiro"
+    faces = {"tiro": ("tiro", "tibo"), "helv": ("helv", "hebo"), "cour": ("cour", "cobo")}[family]
+    stack = []  # (tag, bold, size) of each open inline element that changes the measuring
+    def width(text):
+        bold, pt = (stack[-1][1], stack[-1][2]) if stack else (False, size)
+        return fitz.get_text_length(text, fontname=faces[bold], fontsize=pt)
+    stop = 30.0
     x = 0.0
     out = []
     for token in re.split(r"(<[^>]*>)", html):
         if token.startswith("<"):
+            name = re.match(r"</?\s*([a-z0-9]+)", token, re.I)
+            name = name.group(1).lower() if name else ""
             if re.match(r"</?(p|div|h\d|li|ul|ol|blockquote)\b|<br", token):
                 x = 0.0
+            elif token.startswith("</"):
+                for i in range(len(stack) - 1, -1, -1):
+                    if stack[i][0] == name:
+                        del stack[i:]
+                        break
+            elif name in ("b", "strong", "span") and not token.endswith("/>"):
+                bold, pt = (stack[-1][1], stack[-1][2]) if stack else (False, size)
+                if name != "span":
+                    bold = True
+                m = re.search(r"font-size:\s*([\d.]+)(pt|px)", token)
+                if m:
+                    pt = float(m.group(1)) * (0.75 if m.group(2) == "px" else 1)
+                stack.append((name, bold, pt))
             out.append(token)
             continue
         for piece in re.split(r"(\t)", token):
             if piece == "\t":
+                space = width(" ")
                 pad = max(1, round((stop - x % stop) / space))
                 out.append("&nbsp;" * pad)
                 x += pad * space
@@ -3572,10 +3605,9 @@ def _tabs_to_stops(html, font, size):
 
 def list_of_documents_html(ctx, rows):
     """`rows`: [(particulars, page range)]."""
-    cause_css = f"font-family: {ctx['causeFont']}, Times, serif;" if ctx["causeFont"] else ""
-    if ctx["causeFontSize"]:
-        cause_css += f" font-size: {ctx['causeFontSize']}pt;"
-    cause_html = _tabs_to_stops(ctx["causeTitleHtml"], ctx["causeFont"], ctx["causeFontSize"] or 12)
+    font, size = ctx["causeFont"] or CAUSE_TITLE_DEFAULT_FONT, ctx["causeFontSize"] or CAUSE_TITLE_DEFAULT_SIZE
+    cause_css = f"font-family: {font}, Times, serif; font-size: {size}pt;"
+    cause_html = _tabs_to_stops(ctx["causeTitleHtml"], font, size)
     top = f'<div style="{html_escape(cause_css, quote=True)}">{cause_html}</div>' if ctx["causeTitleHtml"] \
         else "<p>&nbsp;</p>" * LIST_OF_DOCUMENTS_BLANK_LINES
     body = "".join(
