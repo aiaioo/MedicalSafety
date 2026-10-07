@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from html import escape as html_escape, unescape
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import fitz  # PyMuPDF
 import psycopg2.errors
@@ -2671,8 +2672,14 @@ def activities_view():
     require_role("cause", cause_id, "editor")
     cause = storage.get_cause(cause_id)
     page = request.args.get("page", 1, type=int)
-    return render_template("activities.html", cause_id=cause_id, cause_title=cause["title"] or cause_id,
-                           log=storage.list_cause_activity(cause_id, page), kind_labels=ACTIVITY_KIND_LABELS)
+    # The browser records its zone in the "tz" cookie; Indian Standard Time until it has.
+    tz = request.cookies.get("tz", "")
+    try:
+        ZoneInfo(tz)
+    except (ValueError, OSError):
+        tz = "Asia/Kolkata"
+    return render_template("activities.html", cause_id=cause_id, cause_title=cause["title"] or cause_id, tz=tz,
+                           log=storage.list_cause_activity(cause_id, page, tz), kind_labels=ACTIVITY_KIND_LABELS)
 
 
 @app.route("/cases")

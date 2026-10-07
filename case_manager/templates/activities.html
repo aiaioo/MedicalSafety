@@ -16,7 +16,7 @@
 
 <main class="activities-page">
   <h2>Activity on “{{ cause_title }}”</h2>
-  <p class="activities-note">Downloads, the first view of each day, and saves, for this cause and everything under it. Dates and times are UTC.</p>
+  <p class="activities-note">Downloads, the first view of each day, and saves, for this cause and everything under it. Dates and times are in {{ tz.replace('_', ' ') }} time.</p>
   {% for day in log.days %}
   <section class="activity-day">
     <h3>{{ day.date }}</h3>
@@ -43,5 +43,17 @@
   </nav>
   {% endif %}
 </main>
+<script>
+// Remember the browser's time zone for the server; reload once if it differs from what was used.
+(function () {
+  var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!tz || tz === {{ tz|tojson }}) return;
+  document.cookie = "tz=" + encodeURIComponent(tz) + "; path=/; max-age=31536000; samesite=lax";
+  if (document.cookie.indexOf("tz=") !== -1 && !sessionStorage.getItem("tzReloaded")) {
+    sessionStorage.setItem("tzReloaded", "1");
+    location.reload();
+  }
+})();
+</script>
 </body>
 </html>

@@ -39,6 +39,7 @@ import secrets
 import uuid
 from collections.abc import Collection
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 
 import encryptor
@@ -2609,29 +2610,32 @@ def log_activity(action: str, kind: str, object_id: str, actor_id: int, detail: 
             )
 
 
-def list_cause_activity(cause_id: str, page: int = 1) -> dict:
+def list_cause_activity(cause_id: str, page: int = 1, tz: str = "Asia/Kolkata") -> dict:
     """One page of a cause's activity, newest day first: {"days": [{"date",
     "entries": [{"time", "action", "kind", "resource_id", "resource", "actor",
     "detail"}]}], "page", "pages"}. A page holds ACTIVITY_DAYS_PER_PAGE days that
-    have activity; names are resolved here, since stored titles are encrypted."""
+    have activity; names are resolved here, since stored titles are encrypted.
+    Days and times are in the IANA zone `tz`."""
+    zone = ZoneInfo(tz)
+    local_day = "(occurred_at AT TIME ZONE %s)::date"
     with _cursor() as cur:
-        cur.execute("SELECT count(DISTINCT day) AS n FROM cause_activity WHERE cause_id = %s", (cause_id,))
+        cur.execute(f"SELECT count(DISTINCT {local_day}) AS n FROM cause_activity WHERE cause_id = %s", (tz, cause_id))
         pages = max(1, -(-cur.fetchone()["n"] // ACTIVITY_DAYS_PER_PAGE))
         page = min(max(page, 1), pages)
         cur.execute(
-            "SELECT DISTINCT day FROM cause_activity WHERE cause_id = %s ORDER BY day DESC LIMIT %s OFFSET %s",
-            (cause_id, ACTIVITY_DAYS_PER_PAGE, (page - 1) * ACTIVITY_DAYS_PER_PAGE),
+            f"SELECT DISTINCT {local_day} AS day FROM cause_activity WHERE cause_id = %s ORDER BY day DESC LIMIT %s OFFSET %s",
+            (tz, cause_id, ACTIVITY_DAYS_PER_PAGE, (page - 1) * ACTIVITY_DAYS_PER_PAGE),
         )
         days = [r["day"] for r in cur.fetchall()]
         rows = []
         if days:
             cur.execute(
-                """
-                SELECT day, occurred_at, action, resource_kind, resource_id, actor_id, detail
-                FROM cause_activity WHERE cause_id = %s AND day BETWEEN %s AND %s
-                ORDER BY day DESC, occurred_at DESC, id DESC
+                f"""
+                SELECT occurred_at, action, resource_kind, resource_id, actor_id, detail
+                FROM cause_activity WHERE cause_id = %s AND {local_day} BETWEEN %s AND %s
+                ORDER BY occurred_at DESC, id DESC
                 """,
-                (cause_id, days[-1], days[0]),
+                (cause_id, tz, days[-1], days[0]),
             )
             rows = cur.fetchall()
         titles: dict[tuple[str, str], str] = {}
@@ -2650,8 +2654,9 @@ def list_cause_activity(cause_id: str, page: int = 1) -> dict:
     by_day: dict = {d: [] for d in days}
     for r in rows:
         actor = people.get(r["actor_id"], "A deleted user") if r["actor_id"] > 0 else f"Share-link visitor #{-r['actor_id']}"
-        by_day[r["day"]].append({
-            "time": r["occurred_at"].astimezone(timezone.utc).strftime("%H:%M:%S"),
+        local = r["occurred_at"].astimezone(zone)
+        by_day[local.date()].append({
+            "time": local.strftime("%H:%M:%S"),
             "action": r["action"], "kind": r["resource_kind"], "resource_id": r["resource_id"],
             "resource": titles.get((r["resource_kind"], r["resource_id"]), "(deleted)"),
             "actor": actor, "detail": r["detail"],
