@@ -1160,6 +1160,22 @@ def set_report_sections(user_id: int, sections: list) -> None:
         )
 
 
+def get_document_sections(user_id: int) -> list:
+    """The user's documents-page layout: [{"id", "name", "documents": [...]}]."""
+    with _cursor() as cur:
+        cur.execute("SELECT document_sections FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    return row["document_sections"] if row else []
+
+
+def set_document_sections(user_id: int, sections: list) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE users SET document_sections = %s::jsonb WHERE id = %s",
+            (json.dumps(sections), user_id),
+        )
+
+
 def get_profile(user_id: int) -> dict:
     """{"full_name", "city", "country", "has_photo"} for the account page."""
     with _cursor() as cur:

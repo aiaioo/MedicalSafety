@@ -18,11 +18,15 @@
   <main class="viewer-layout">
     <div class="editor-container">
       <div class="doc-landing">
-        <h2>Your documents</h2>
+        <div class="landing-head">
+          <h2>Your documents</h2>
+          {% if docs and not (g.user and g.user.is_guest) %}<button type="button" class="btn" id="addSectionBtn" title="Add a document section">+ Add section</button>{% endif %}
+        </div>
         {% if docs %}
-        <div class="report-grid">
+        <div id="docSections" class="report-sections" data-sections-url="{{ url_for('api_document_sections') }}"></div>
+        <div id="docCardPool" class="report-grid">
           {% for d in docs %}
-          <a class="report-card" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
+          <a class="report-card" data-doc-id="{{ d.id }}" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
             {% if d.role == "owner" %}<button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>{% endif %}
             <div class="report-card-name">{{ d.title }}</div>
             <div class="report-card-meta">{{ d.type }}</div>
