@@ -870,12 +870,35 @@ def sanitize_annotations(raw, max_count=500, max_points=2000):
     return out
 
 
+def redact_under_blackouts(page, annotations, page_rect):
+    """Removes the text, image pixels and line art under each blackout from the
+    in-memory page, so a downloaded PDF's covered PII can't be selected,
+    copied or lifted out of the file. Done for Share-link visitors, who are
+    unidentified; the black rectangle itself is drawn afterwards."""
+    blackouts = [a for a in annotations if a["kind"] == "blackout"]
+    if not blackouts:
+        return
+    for a in blackouts:
+        visible = fitz.Rect(
+            page_rect.x0 + a["x"] * page_rect.width,
+            page_rect.y0 + a["y"] * page_rect.height,
+            page_rect.x0 + (a["x"] + a["w"]) * page_rect.width,
+            page_rect.y0 + (a["y"] + a["h"]) * page_rect.height,
+        )
+        page.add_redact_annot(visible * page.derotation_matrix)  # annotation rects are in unrotated page space
+    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS, graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                          text=fitz.PDF_REDACT_TEXT_REMOVE)
+
+
 def draw_annotations_on_page(page, annotations, page_rect):
     """Burn sanitized annotations into a fitz page's content stream (in memory only,
     never saved back to disk) so a subsequent get_pixmap() render includes them
     as sharp vector shapes at whatever DPI is requested."""
     if not annotations:
         return
+    user = getattr(g, "user", None)
+    if user is not None and user.is_guest:
+        redact_under_blackouts(page, annotations, page_rect)
     shape = page.new_shape()
     line_width = max(1.2, page_rect.width * 0.0025)
     for a in annotations:
