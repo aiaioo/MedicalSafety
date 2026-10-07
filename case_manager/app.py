@@ -2729,46 +2729,44 @@ def key_kind(raw):
     return raw
 
 
-@app.route("/api/keys", methods=["GET", "POST"])
-def api_keys():
+def require_key_manager(kind, object_id):
+    """Only a signed-in user -- the owner, or a collaborator with edit access -- may see, create or delete an
+    object's secret keys; someone who got in with a key (a guest) may not, even with edit access."""
+    if g.user.is_guest:
+        raise DocumentError("You don't have permission to share this", 403)
+    if kind == "allegation":
+        allegation = storage.get_allegation(object_id)
+        if allegation is None:
+            raise_no_access(kind, object_id, f"No allegation with id {object_id!r}")
+        require_allegation_role(allegation, "editor")
+    else:
+        require_role(kind, object_id, "editor")
+
+
+@app.route("/api/keys/<kind>/<object_id>", methods=["GET", "POST"])
+def api_object_keys(kind, object_id):
+    kind = key_kind(kind)
+    require_key_manager(kind, object_id)
     if request.method == "GET":
-        keys = storage.list_keys(g.user.id)
-        for kind, items in keys.items():
-            endpoint, param = KEY_PAGE_URLS[kind]
-            for item in items:
-                item["url"] = url_for(endpoint, _external=True, **{param: item["object_id"]})
-        return jsonify({"keys": keys, "shareable": storage.list_owned_objects(g.user.id)})
+        endpoint, param = KEY_PAGE_URLS[kind]
+        url = url_for(endpoint, _external=True, **{param: object_id})
+        return jsonify({"keys": [{**k, "url": url} for k in storage.list_object_keys(kind, object_id)]})
 
     body = request.get_json(silent=True) or {}
-    kind = key_kind(body.get("kind"))
-    object_id = body.get("object_id")
-    if not isinstance(object_id, str):
-        raise DocumentError("Choose what to share", 400)
     if body.get("permission") not in storage.KEY_PERMISSIONS:
         raise DocumentError("Permission must be viewer or editor", 400)
-    require_role(kind, object_id, "owner")  # only an owner can share it
     storage.create_key(g.user.id, kind, object_id, body["permission"])
     return jsonify({"ok": True}), 201
 
 
-@app.route("/api/key/<kind>/<int:key_id>", methods=["PATCH", "DELETE"])
-def api_key_item(kind, key_id):
+@app.route("/api/key/<kind>/<int:key_id>", methods=["DELETE"])
+def api_object_key_item(kind, key_id):
     kind = key_kind(kind)
-    if request.method == "DELETE":
-        done = storage.delete_key(g.user.id, kind, key_id)
-    else:
-        body = request.get_json(silent=True) or {}
-        if "permission" in body:
-            if body["permission"] not in storage.KEY_PERMISSIONS:
-                raise DocumentError("Permission must be viewer or editor", 400)
-            done = storage.set_key_permission(g.user.id, kind, key_id, body["permission"])
-        else:
-            active = body.get("active")
-            if not isinstance(active, bool):
-                raise DocumentError("active must be true or false", 400)
-            done = storage.set_key_active(g.user.id, kind, key_id, active)
-    if not done:
+    object_id = storage.get_key_object(kind, key_id)
+    if object_id is None:
         raise DocumentError("No such key", 404)
+    require_key_manager(kind, object_id)
+    storage.delete_key_by_id(kind, key_id)
     return jsonify({"ok": True})
 
 

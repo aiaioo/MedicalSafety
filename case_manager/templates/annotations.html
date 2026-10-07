@@ -7,7 +7,7 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 {% if not doc_id %}
 <div id="app">
   <header class="docbar">
@@ -95,6 +95,7 @@
         <button type="button" id="downloadOriginalBtn">Download original PDF</button>
       </div>
     </nav>
+    <button type="button" class="btn" id="shareBtn" {{ 'title="Share this document with a secret key"' if can_edit and not g.user.is_guest else 'disabled title="Only the owner, or a collaborator with edit access, can share this"' }}>Share&hellip;</button>
     <div class="mode-group" role="group" aria-label="Drawing mode">
       <button type="button" class="mode-btn active" data-mode="select" title="Select tool: click an annotation to select it, then press Delete" aria-label="Select">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -3px"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
@@ -171,6 +172,8 @@ try { localStorage.setItem("lastSourceUrl", location.pathname + location.search)
   }
 })();
 </script>
+<script src="{{ url_for('static', filename='share-key.js') }}"></script>
+{% if doc_id %}<script>document.getElementById("shareBtn").addEventListener("click", function () { ShareKey.open("source", {{ doc_id | tojson }}); });</script>{% endif %}
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>

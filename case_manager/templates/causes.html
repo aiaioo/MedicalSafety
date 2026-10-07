@@ -7,7 +7,7 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 <div id="causesApp"
      data-can-create="{{ '1' if can_create else '' }}"
      data-causes-url="{{ url_for('api_causes') }}"
@@ -39,6 +39,7 @@
     </div>
   </main>
 </div>
+<script src="{{ url_for('static', filename='share-key.js') }}"></script>
 <script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='causes.js') }}"></script>
 </body>

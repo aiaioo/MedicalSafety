@@ -7,7 +7,7 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 <div id="docApp"
      class="{{ 'doc-app-landing' if not report_id else ('' if can_edit else 'report-readonly') }}"
      data-report="{{ report_id }}"
@@ -66,6 +66,7 @@
         <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
       </div>
     </nav>
+    {% if report_id %}<button type="button" class="btn" id="shareBtn" {{ 'title="Share this report with a secret key"' if can_edit and not g.user.is_guest else 'disabled title="Only the owner, or a collaborator with edit access, can share this"' }}>Share&hellip;</button>{% endif %}
     <span class="toolbar-sep"></span>
     <div class="fmt-controls" id="fmtControls" style="display: {{ 'none' if not report_id else 'contents' }};">
     <button type="button" class="fmt-btn" id="undoBtn" title="Undo">
@@ -388,6 +389,8 @@
 {% if report_id %}<script>
 try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); } catch (e) {}
 </script>{% endif %}
+<script src="{{ url_for('static', filename='share-key.js') }}"></script>
+{% if report_id %}<script>document.getElementById("shareBtn").addEventListener("click", function () { ShareKey.open("report", {{ report_id | tojson }}); });</script>{% endif %}
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
 <script src="{{ url_for('static', filename='cause-title.js') }}"></script>

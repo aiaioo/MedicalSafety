@@ -21,37 +21,6 @@
   </header>
 
   <main class="collab-page">
-    <section class="collab-invite" id="keySection"
-             data-keys-url="{{ url_for('api_keys') }}"
-             data-item-url-base="{{ url_for('api_key_item', kind='KIND', key_id=0) }}">
-      <h3>Share using a secret key</h3>
-      <p class="modal-hint">Anyone with a key can open the item (and everything beneath it) without an account, after solving a captcha. Delete a key to stop sharing.</p>
-      <form id="keyForm" class="key-form">
-        <label class="modal-field">Share
-          <select id="keyKind">
-            <option value="cause">a cause</option>
-            <option value="case">a case</option>
-            <option value="allegation">an allegation</option>
-            <option value="report">a report</option>
-            <option value="source">a document</option>
-          </select>
-        </label>
-        <label class="modal-field">Item
-          <select id="keyObject" required></select>
-        </label>
-        <label class="modal-field">Permission
-          <select id="keyPermission">
-            <option value="viewer">Can view</option>
-            <option value="editor">Can edit</option>
-          </select>
-        </label>
-        <p class="error-message" id="keyError" role="alert" style="display:none"></p>
-        <button type="submit" class="btn" id="keyBtn">Create key</button>
-      </form>
-      <p class="empty" id="keyEmpty" style="display:none">You haven't shared anything by key yet.</p>
-      <div id="keyList"></div>
-    </section>
-
     <section id="receivedSection" style="display:none; margin-bottom: 32px">
       <h2>Invitations received</h2>
       <div class="collab-list" id="receivedList"></div>
@@ -80,6 +49,5 @@
   </main>
 </div>
 <script src="{{ url_for('static', filename='collaborations.js') }}"></script>
-<script src="{{ url_for('static', filename='secret-keys.js') }}"></script>
 </body>
 </html>

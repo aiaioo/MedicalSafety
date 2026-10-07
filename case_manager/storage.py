@@ -1882,6 +1882,34 @@ def list_keys(owner_id: int) -> dict[str, list[dict]]:
     return result
 
 
+def list_object_keys(kind: str, object_id: str) -> list[dict]:
+    """[{"id", "key", "permission", "active"}] of every key on this object, oldest first."""
+    table, column = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(
+            f"SELECT id, key, permission, active FROM {table} WHERE {column} = %s ORDER BY id",  # noqa: S608 (fixed names)
+            (object_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_key_object(kind: str, key_id: int) -> str | None:
+    """The id of the object this key is on, or None if there is no such key."""
+    table, column = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT {column} AS object_id FROM {table} WHERE id = %s", (key_id,))  # noqa: S608 (fixed names)
+        row = cur.fetchone()
+    return row["object_id"] if row else None
+
+
+def delete_key_by_id(kind: str, key_id: int) -> bool:
+    """Like delete_key, for a caller who has already checked they may manage the object's keys."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"DELETE FROM {table} WHERE id = %s", (key_id,))  # noqa: S608
+        return cur.rowcount == 1
+
+
 def set_key_active(owner_id: int, kind: str, key_id: int, active: bool) -> bool:
     table, _ = _KEY_TABLES[kind]
     with _cursor() as cur:

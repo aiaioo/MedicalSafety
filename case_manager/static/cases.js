@@ -784,6 +784,7 @@
       if (newCard) setTimeout(() => newCard.focus(), 0);
     });
 
+    caseDetailEl.querySelector(".detail-head-actions").appendChild(ShareKey.button("case", detailCase.id, { enabled: canEdit(detailCase.role) }));
     renderHearingList();
     enableDragReorder(caseDetailEl.querySelector(".hearing-list"), ".hearing-card", reorderHearingsFromDom);
     if (!canEdit(detailCase.role)) window.ReadOnlyLock.lock(caseDetailEl);

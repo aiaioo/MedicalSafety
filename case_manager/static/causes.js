@@ -555,6 +555,7 @@
     causeDetailEl.innerHTML = `
       <div class="allegation-detail-head">
         <h2>${escapeHtml(detailCause.title || "Untitled cause")}</h2>
+        <span class="detail-head-actions share-slot"></span>
       </div>
       <div class="allegations-column-head">
         <h2>Goals</h2>
@@ -563,6 +564,7 @@
       <p class="empty goal-empty" style="display:none">No goals yet.</p>
       <div class="evidence-list goal-list"></div>`;
 
+    causeDetailEl.querySelector(".share-slot").appendChild(ShareKey.button("cause", detailCause.id, { enabled: canEdit(detailCause.role) }));
     causeDetailEl.querySelector("#addGoalBtn").addEventListener("click", () => {
       const goal = { id: genId(), title: "", description: "", case_ids: [] };
       detailCause.goals.push(goal);

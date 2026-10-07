@@ -943,9 +943,11 @@
     allegationDetailEl.innerHTML = `
       <div class="allegation-detail-head">
         <h2>${escapeHtml(allegation.title || "Untitled allegation")}</h2>
+        <span class="detail-head-actions share-slot"></span>
       </div>
       <div class="to-prove-slot"></div>
       <div class="evidence-columns"></div>`;
+    allegationDetailEl.querySelector(".share-slot").appendChild(ShareKey.button("allegation", allegation.id, { enabled: canEdit(allegation.role) }));
     allegationDetailEl.querySelector(".to-prove-slot").replaceWith(buildToProveSection(allegation));
     const columnsEl = allegationDetailEl.querySelector(".evidence-columns");
     columnsEl.appendChild(buildEvidenceColumn(allegation, "inculpatory", "Inculpatory Evidence"));
