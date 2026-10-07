@@ -1453,6 +1453,7 @@ def inline_doc_images(node):
     return node
 
 
+PDF_BODY_INSET_PT = 11  # how far fitz.Story insets the body from each side of the page area it is given
 REPORT_PDF_CSS = """
   body { font-family: Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1c1c1c; }
   h1 { font-size: 20pt; margin-bottom: 4pt; }
@@ -1751,7 +1752,7 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     m = sanitize_margins(margins)
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
-    doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), where.width * 96 / 72 - 2)
+    doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), (where.width - 2 * PDF_BODY_INSET_PT - 2) * 96 / 72)
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
