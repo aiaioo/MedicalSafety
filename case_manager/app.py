@@ -3623,7 +3623,7 @@ def list_of_documents_html(ctx, rows):
     body = "".join(
         f"<tr><td style=\"text-align:center\">{i}</td><td>{html_escape(text)}</td><td style=\"text-align:center\">{html_escape(pages)}</td></tr>"
         for i, (text, pages) in enumerate(rows, 1))
-    css = ("body { font-family: Times, serif; font-size: 12pt; line-height: 1.4; color: #000; }"
+    css = ("body { font-family: Times, serif; font-size: 12pt; line-height: 1.4; color: #000; margin: 0; }"
            " p { margin: 0; } table { border-collapse: collapse; width: 100%; }"
            " td, th { border: 1px solid #000; padding: 5pt; vertical-align: top; text-align: left; }")
     # Story ignores float and table widths, so push the role to the right margin with a run of non-breaking spaces.
