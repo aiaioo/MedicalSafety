@@ -12,6 +12,7 @@ import { handleTabCharacter } from "./tabKey.js";
 import { ListMarkerSelect } from "./listNumbering.js";
 import { Link } from "@tiptap/extension-link";
 import { setupLinkAndImage } from "./linkImage.js";
+import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
 import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resizableImage.js";
 
 (function () {
@@ -272,6 +273,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       ParagraphSpacing,
       Link.configure({ openOnClick: false, autolink: false }),
       ResizableImage,
+      ...TableTools,
     ],
     content: "",
     editorProps: {
@@ -291,7 +293,7 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
       e.preventDefault();
       if (!e.shiftKey && editor.can().sinkListItem("listItem")) editor.chain().focus().sinkListItem("listItem").run();
       else if (e.shiftKey && editor.can().liftListItem("listItem")) editor.chain().focus().liftListItem("listItem").run();
-      else handleTabCharacter(editor, e);
+      else if (!handleTableTab(editor, !e.shiftKey)) handleTabCharacter(editor, e);
     },
     true
   );
@@ -313,6 +315,8 @@ import { ResizableImage, setSelectedImageAlign, isImageSelected } from "./resiza
   document.getElementById("insertUnorderedListBtn").addEventListener("click", () => {
     editor.chain().focus().toggleBulletList().run();
   });
+
+  setupTableToolbar(editor, markDirty);
 
   // ---------------------------------------------------------------------
   // Link + image

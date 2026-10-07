@@ -4,9 +4,7 @@
 // edge case -- Enter/Tab around list items, multilevel section numbers --
 // had to be hand-built against raw DOM mutations).
 //
-// Known gap versus the old editor, deliberately deferred rather than
-// dropped silently: pasting a table is flattened -- there's no Table
-// extension yet, and the exporters have no table-rendering path.
+// Tables live in tableTools.js (and are rendered by both exporters in app.py).
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
@@ -36,6 +34,7 @@ import {
   exitEmptyListItemOnEnter,
 } from "./listNumbering.js";
 import { Pagination, repaginate } from "./pagination.js";
+import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
 
 (function () {
   const appEl = document.getElementById("docApp");
@@ -787,6 +786,7 @@ import { Pagination, repaginate } from "./pagination.js";
       ResizableImage,
       SnippetRef,
       SnippetRefGroups,
+      ...TableTools,
       Pagination.configure({ getMargins: () => margins, onPaginate: renderMarginGuides }),
     ],
     content: "",
@@ -849,7 +849,7 @@ import { Pagination, repaginate } from "./pagination.js";
         const dir = e.shiftKey ? -1 : 1;
         if (dir === 1 && editor.can().sinkListItem("listItem")) editor.chain().focus().sinkListItem("listItem").run();
         else if (dir === -1 && editor.can().liftListItem("listItem")) editor.chain().focus().liftListItem("listItem").run();
-        else handleTabCharacter(editor, e);
+        else if (!handleTableTab(editor, dir === 1)) handleTabCharacter(editor, e);
         return;
       }
       if (e.key === "Enter" && !e.shiftKey) {
@@ -1032,6 +1032,9 @@ import { Pagination, repaginate } from "./pagination.js";
   document.querySelector('.fmt-btn[data-cmd="insertUnorderedList"]').addEventListener("click", () => {
     editor.chain().focus().toggleBulletList().run();
   });
+
+  // Table tool (insert / add / delete rows, columns, table): see tableTools.js.
+  setupTableToolbar(editor, markDirty);
 
   // ---------------------------------------------------------------------
   // Formatting toolbar

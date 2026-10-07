@@ -113,6 +113,24 @@
     <span class="toolbar-sep"></span>
     <button type="button" class="fmt-btn" id="insertUnorderedListBtn" title="Bullet list">&bull; List</button>
     <button type="button" class="fmt-btn" id="insertOrderedListBtn" title="Numbered list">1. List</button>
+    <span class="fmt-btn-group">
+      <button type="button" class="fmt-btn" id="tableBtn" title="Insert table">&#9638; Table</button>
+      <div class="menu-dropdown table-insert-dropdown" id="tableInsertDropdown">
+        <label>Rows <input type="number" id="tableRowsInput" min="1" max="60" step="1" value="3"></label>
+        <label>Columns <input type="number" id="tableColsInput" min="1" max="12" step="1" value="3"></label>
+        <button type="button" id="tableInsertConfirm">Insert table</button>
+        <p class="table-insert-error" id="tableInsertError"></p>
+      </div>
+    </span>
+    <span class="fmt-btn-group table-tools" id="tableTools" hidden>
+      <button type="button" class="fmt-btn" data-table-cmd="addRowBefore" title="Insert row above">+ Row &uarr;</button>
+      <button type="button" class="fmt-btn" data-table-cmd="addRowAfter" title="Insert row below">+ Row &darr;</button>
+      <button type="button" class="fmt-btn" data-table-cmd="addColumnBefore" title="Insert column to the left">+ Col &larr;</button>
+      <button type="button" class="fmt-btn" data-table-cmd="addColumnAfter" title="Insert column to the right">+ Col &rarr;</button>
+      <button type="button" class="fmt-btn" data-table-cmd="deleteRow" title="Delete the selected row(s)">Delete row</button>
+      <button type="button" class="fmt-btn" data-table-cmd="deleteColumn" title="Delete the selected column(s)">Delete column</button>
+      <button type="button" class="fmt-btn" data-table-cmd="deleteTable" title="Delete the whole table">Delete table</button>
+    </span>
     <span class="toolbar-sep"></span>
     <button type="button" class="fmt-btn" id="linkBtn" title="Insert or edit link">&#128279; Link</button>
     <button type="button" class="fmt-btn" id="insertImageBtn" title="Insert image">&#128247; Image</button>

@@ -43,6 +43,10 @@ function marginsPx(margins) {
 // single paragraph/heading's own content. Mirrors the recursive walk
 // buildMarkerIndex (listNumbering.js) uses to compute markers, for the
 // same reason: list nesting is structural, not a unit of "atomic content".
+//
+// A table's rows are break units too (`cols` = its column count, so the
+// break widget can be a full-width table row): a row is atomic -- its cells
+// are never walked -- so a row never straddles two pages.
 function collectBreakUnits(doc) {
   const units = [];
   function walk(node, basePos) {
@@ -50,8 +54,11 @@ function collectBreakUnits(doc) {
       const absPos = basePos + offset;
       if (child.type.name === "orderedList" || child.type.name === "bulletList" || child.type.name === "listItem") {
         walk(child, absPos + 1);
+      } else if (child.type.name === "table") {
+        const cols = child.firstChild ? child.firstChild.childCount : 1;
+        child.forEach((row, rowOffset) => units.push({ pos: absPos + 1 + rowOffset, cols }));
       } else {
-        units.push(absPos);
+        units.push({ pos: absPos, cols: 0 });
       }
     });
   }
@@ -111,14 +118,14 @@ function computeBreaks(view, margins, oldBreaks) {
     return bottom - insertedBefore;
   }
 
-  for (const pos of collectBreakUnits(view.state.doc)) {
+  for (const { pos, cols } of collectBreakUnits(view.state.doc)) {
     const dom = view.nodeDOM(pos);
     if (!(dom instanceof HTMLElement)) continue;
     const bottom = subtractInsertedFiller(pos, dom.getBoundingClientRect().bottom);
     if (prevBottom !== null && bottom - pageContentTop > pageContentHeight) {
       const fillerBefore = Math.max(0, pageContentHeight - (prevBottom - pageContentTop) + m.footer);
       pageNum += 1;
-      breaks.push({ pos, fillerBefore, headerAfter: m.header, pageNum });
+      breaks.push({ pos, fillerBefore, headerAfter: m.header, pageNum, cols, width: editorRect.width });
       pageContentTop = prevBottom;
     }
     prevBottom = bottom;
@@ -177,7 +184,19 @@ function renderBreakWidget(b) {
   fillerAfter.style.height = b.headerAfter + "px";
 
   wrap.append(fillerBefore, brk, fillerAfter);
-  return wrap;
+  if (!b.cols) return wrap;
+
+  // Between table rows the group has to live in a table row of its own; it
+  // is as wide as the page's text column, not the (maybe narrower) table.
+  wrap.style.width = b.width + "px";
+  const td = document.createElement("td");
+  td.colSpan = b.cols;
+  td.contentEditable = "false";
+  td.appendChild(wrap);
+  const tr = document.createElement("tr");
+  tr.className = "page-break-row";
+  tr.appendChild(td);
+  return tr;
 }
 
 export const Pagination = Extension.create({
@@ -216,7 +235,7 @@ export const Pagination = Extension.create({
             if (!breaks.length) return null;
             return DecorationSet.create(
               state.doc,
-              breaks.map((b) => Decoration.widget(b.pos, () => renderBreakWidget(b), { side: -1, key: `pb-${b.pos}` }))
+              breaks.map((b) => Decoration.widget(b.pos, () => renderBreakWidget(b), { side: -1, key: `pb-${b.pos}-${Math.round(b.fillerBefore)}-${b.cols || 0}-${Math.round(b.width || 0)}` }))
             );
           },
         },

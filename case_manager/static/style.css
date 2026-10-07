@@ -1059,3 +1059,40 @@ a.tag:hover { background: #d7deec; }
 .annexed-controls { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; }
 .annexed-controls select { min-width: 0; flex: 1; font-size: 13px; }
 .annexed-error:empty { display: none; }
+
+/* ---- tables (static/src/tableTools.js) ---- */
+.table-insert-dropdown { min-width: 170px; padding: 8px; }
+.table-insert-dropdown label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.table-insert-dropdown input { width: 64px; }
+.table-insert-dropdown button { text-align: center; border: 1px solid #c3c8d4; background: #f5f6f8; }
+.table-insert-error { margin: 4px 0 0; font-size: 12px; color: #a33; min-height: 0; }
+.table-tools[hidden] { display: none; }
+.editor .tiptap-content .tableWrapper { position: relative; margin: 8px 0; }
+.editor .tiptap-content table {
+  border-collapse: separate; border-spacing: 0; table-layout: fixed;
+  border-top: 1px solid #8a8f9c; border-left: 1px solid #8a8f9c;
+}
+.editor .tiptap-content td, .editor .tiptap-content th {
+  position: relative; box-sizing: border-box; vertical-align: top; text-align: left;
+  border-right: 1px solid #8a8f9c; border-bottom: 1px solid #8a8f9c;
+  padding: 4px 6px; overflow-wrap: anywhere; min-width: 30px;
+}
+.editor .tiptap-content th { background: #f1f3f6; font-weight: bold; }
+.editor .tiptap-content td p, .editor .tiptap-content th p { margin: 0 0 6px; }
+.editor .tiptap-content td > :last-child, .editor .tiptap-content th > :last-child { margin-bottom: 0; }
+.editor .tiptap-content .selectedCell::after {
+  content: ""; position: absolute; inset: 0; background: rgba(34, 102, 221, 0.18); pointer-events: none; z-index: 2;
+}
+.editor .tiptap-content .column-resize-handle {
+  position: absolute; right: -2px; top: 0; bottom: -2px; width: 4px; background: #2266dd; pointer-events: none; z-index: 3;
+}
+.editor .tiptap-content.resize-cursor, .editor .tiptap-content.resize-cursor * { cursor: col-resize; }
+.editor .tiptap-content.row-resize-cursor, .editor .tiptap-content.row-resize-cursor * { cursor: row-resize; }
+/* The page-break widget between two table rows: a row of its own, no borders. */
+.editor .tiptap-content .page-break-row > td { border: 0; padding: 0; min-width: 0; overflow: visible; }
+.editor .tiptap-content .page-break-row + tr > td { border-top: 1px solid #8a8f9c; }
+.table-grips { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.table-grip { position: absolute; pointer-events: auto; box-sizing: border-box; background: #dfe3ec; border: 1px solid #b8bfcf; border-radius: 2px; cursor: pointer; }
+.table-grip:hover { background: #bcd0f7; border-color: #2266dd; }
+.table-grip-scale { background: #2266dd; border-color: #174aa8; cursor: nwse-resize; border-radius: 50%; }
+.table-scale-ghost { position: absolute; border: 2px dashed #2266dd; background: rgba(34, 102, 221, 0.06); pointer-events: none; }

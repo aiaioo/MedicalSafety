@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import fitz  # PyMuPDF
 import psycopg2.errors
 from docx import Document as DocxDocument
+from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.image.image import Image as DocxImage
 from docx.oxml import OxmlElement
@@ -1006,7 +1007,31 @@ def _sanitize_marks(raw):
 REPORT_BLOCK_TYPES = {
     "paragraph", "heading", "bulletList", "orderedList", "listItem",
     "blockquote", "horizontalRule", "codeBlock", "image", "hardBreak", "snippetRef",
+    "table", "tableRow", "tableCell", "tableHeader",
 }
+REPORT_TABLE_PARENT = {"tableRow": "table", "tableCell": "tableRow", "tableHeader": "tableRow"}
+REPORT_TABLE_MAX_PX = 3000
+
+
+def _sanitize_table_attrs(t, attrs):
+    """Attributes of a tableRow (a minimum pixel `height`) or a cell (`colspan`, `rowspan`, per-column `colwidth`)."""
+    clean = {}
+
+    def px(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and 0 < v <= REPORT_TABLE_MAX_PX
+
+    if t == "tableRow":
+        if px(attrs.get("height")):
+            clean["height"] = round(attrs["height"])
+    elif t in ("tableCell", "tableHeader"):
+        for key in ("colspan", "rowspan"):
+            v = attrs.get(key)
+            if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 50:
+                clean[key] = v
+        widths = attrs.get("colwidth")
+        if isinstance(widths, list) and 0 < len(widths) <= 50 and all(px(w) for w in widths):
+            clean["colwidth"] = [round(w) for w in widths]
+    return clean
 
 
 def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
@@ -1022,7 +1047,9 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
     except (TypeError, ValueError):
         return {"type": "doc", "content": []}
 
-    def sanitize_node(node):
+    def sanitize_node(node, parent=None, nested=False):
+        """`parent` is the sanitized parent's type, `nested` whether the node is inside a list item or table cell
+        (where a table isn't allowed)."""
         if not isinstance(node, dict):
             return None
         t = node.get("type")
@@ -1033,10 +1060,16 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
             return {"type": "text", "text": text, "marks": _sanitize_marks(node.get("marks"))}
         if t not in REPORT_BLOCK_TYPES:
             return None
+        if t == "table" and nested:
+            return None
+        if t in REPORT_TABLE_PARENT and parent != REPORT_TABLE_PARENT[t]:
+            return None
+        if parent in ("table", "tableRow") and t not in REPORT_TABLE_PARENT:
+            return None
 
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         out = {"type": t}
-        clean_attrs = {}
+        clean_attrs = _sanitize_table_attrs(t, attrs)
         if t == "heading":
             level = attrs.get("level")
             clean_attrs["level"] = level if level in (1, 2, 3, 4) else 1
@@ -1093,10 +1126,15 @@ def sanitize_report_doc(raw, max_chars=REPORT_MAX_DOC_JSON_CHARS):
 
         if t not in ("image", "hardBreak"):
             content = []
+            child_nested = nested or t in ("listItem", "tableCell", "tableHeader")
             for child in node.get("content") or []:
-                cleaned = sanitize_node(child)
+                cleaned = sanitize_node(child, t, child_nested)
                 if cleaned is not None:
                     content.append(cleaned)
+            if t in ("table", "tableRow") and not content:
+                return None
+            if t in ("tableCell", "tableHeader") and not content:
+                content = [{"type": "paragraph", "content": []}]
             out["content"] = content
         return out
 
@@ -1426,7 +1464,11 @@ REPORT_PDF_CSS = """
   table.page-row td { border: none; padding: 0 6pt 0 0; vertical-align: top; }
   table.page-row p { margin: 0; }
   table { border-collapse: collapse; width: 100%; }
-  td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; }
+  td, th { border: 1px solid #ccc; padding: 4pt; text-align: left; vertical-align: top; }
+  table.rt { border-spacing: 0; border-top: 0.75pt solid #8a8f9c; border-left: 0.75pt solid #8a8f9c; }
+  table.rt td, table.rt th { border: 0; border-right: 0.75pt solid #8a8f9c; border-bottom: 0.75pt solid #8a8f9c; padding: 3pt 4.5pt; }
+  table.rt th { background-color: #f1f3f6; }
+  table.rt p { margin: 0 0 4pt; }
   ol, ul { list-style: none; margin: 0; padding-left: 0; }
   li { margin: 2pt 0; }
   li ol, li ul { margin-left: 18pt; }
@@ -1537,6 +1579,8 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0, raw_tabs=False):
             if attrs.get("annexLink"):
                 img = f'<a href="#snipimg:{html_escape(attrs["annexLink"], quote=True)}">{img}</a>'
             out.append(f'<p class="img-p" style="text-align:{align}">{img}</p>')
+        elif t == "table":
+            out.append(_table_to_html(node, raw_tabs))
         elif t == "pageRow":
             cells = "".join(f"<td>{_json_blocks_to_html(c.get('content') or [], raw_tabs=raw_tabs)}</td>" for c in content)
             out.append(f'<table class="page-row"><tr>{cells}</tr></table>')
@@ -1557,6 +1601,68 @@ def _json_blocks_to_html(nodes, num_state=None, depth=0, raw_tabs=False):
             first_html = _json_inline_to_html(first.get("content") or [], raw_tabs) if first and first.get("type") in ("paragraph", "heading") else ""
             out.append(f"<li>{marker}{first_html}{_json_blocks_to_html(rest, num_state=num_state, depth=depth, raw_tabs=raw_tabs)}</li>")
     return "".join(out)
+
+
+def _table_grid_widths(table):
+    """Pixel width of each grid column of a table node, from its first row's cells' `colwidth`s; None where a column
+    has no width saved."""
+    widths = []
+    for cell in (table["content"][0].get("content") or []):
+        a = cell.get("attrs") or {}
+        span = a.get("colspan", 1)
+        cw = a.get("colwidth") or []
+        widths += [cw[i] if i < len(cw) else None for i in range(span)]
+    return widths
+
+
+def fit_tables(node, content_px):
+    """`node` with every table's saved column widths scaled down, when they add up to more than `content_px`, so the
+    table fits the page's text column."""
+    if not isinstance(node, dict) or "content" not in node:
+        return node
+    if node.get("type") == "table":
+        widths = _table_grid_widths(node)
+        total = sum(w for w in widths if w)
+        if widths and all(widths) and total > content_px:
+            k = content_px / total
+            rows = []
+            for row in node["content"]:
+                cells = []
+                for cell in row.get("content") or []:
+                    a = dict(cell.get("attrs") or {})
+                    if a.get("colwidth"):
+                        a["colwidth"] = [max(1, int(w * k)) for w in a["colwidth"]]
+                    cells.append({**cell, "attrs": a})
+                rows.append({**row, "content": cells})
+            node = {**node, "content": rows}
+    return {**node, "content": [fit_tables(c, content_px) for c in node["content"]]}
+
+
+def _table_to_html(table, raw_tabs=False):
+    """A table as HTML for the PDF. Rows are kept whole across pages (page-break-inside: avoid)."""
+    widths = _table_grid_widths(table)
+    fixed = widths and all(widths)
+    rows = []
+    for ri, row in enumerate(table.get("content") or []):
+        height = (row.get("attrs") or {}).get("height")
+        cells = []
+        col = 0
+        for cell in row.get("content") or []:
+            a = cell.get("attrs") or {}
+            span = a.get("colspan", 1)
+            tag = "th" if cell.get("type") == "tableHeader" else "td"
+            style = []
+            if ri == 0 and fixed:
+                style.append(f"width:{sum(widths[col:col + span]) * 0.75:.1f}pt")
+            if height:
+                style.append(f"height:{height * 0.75:.1f}pt")
+            span_attrs = (f' colspan="{span}"' if span > 1 else "") + (f' rowspan="{a["rowspan"]}"' if a.get("rowspan", 1) > 1 else "")
+            style_attr = f' style="{";".join(style)}"' if style else ""
+            cells.append(f"<{tag}{span_attrs}{style_attr}>{_json_blocks_to_html(cell.get('content') or [], raw_tabs=raw_tabs)}</{tag}>")
+            col += span
+        rows.append(f'<tr style="page-break-inside:avoid{f";height:{height * 0.75:.1f}pt" if height else ""}">{"".join(cells)}</tr>')
+    width = f"{sum(widths) * 0.75:.1f}pt" if fixed else "100%"
+    return f'<table class="rt" style="width:{width}">{"".join(rows)}</table>'
 
 
 def _flatten_json_text(node):
@@ -1634,7 +1740,7 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     m = sanitize_margins(margins)
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (m["left"], m["header"], -m["right"], -m["footer"])
-    doc_json = split_page_rows(doc_json, where.width * 96 / 72)
+    doc_json = fit_tables(split_page_rows(doc_json, where.width * 96 / 72), where.width * 96 / 72 - 2)
     numbered_body_html = _json_blocks_to_html(doc_json.get("content") or [])
 
     full_html = f"<html><head><style>{REPORT_PDF_CSS}</style></head><body>{numbered_body_html}</body></html>"
@@ -1885,6 +1991,60 @@ DOCX_TEXT_ALIGN = {
 }
 
 
+def _docx_render_table(node, doc, max_width_emu):
+    """A table node as a Word table: gridded, column widths from the saved ones (scaled to fit the text column),
+    each row at least its saved height and not splittable across pages."""
+    placed, taken = [], set()  # (row, col, rowspan, colspan, cell)
+    for ri, row in enumerate(node.get("content") or []):
+        col = 0
+        for cell in row.get("content") or []:
+            while (ri, col) in taken:
+                col += 1
+            a = cell.get("attrs") or {}
+            rs, cs = a.get("rowspan", 1), a.get("colspan", 1)
+            taken.update((ri + i, col + j) for i in range(rs) for j in range(cs))
+            placed.append((ri, col, rs, cs, cell))
+            col += cs
+    nrows = len(node.get("content") or [])
+    ncols = max((c + cs for _, c, _, cs, _ in placed), default=0)
+    if not nrows or not ncols:
+        return
+    widths = [None] * ncols
+    for _, c, _, cs, cell in placed:
+        cw = (cell.get("attrs") or {}).get("colwidth") or []
+        for j in range(cs):
+            if j < len(cw):
+                widths[c + j] = cw[j]
+    total = sum(widths) if all(widths) else 0
+    px_budget = max_width_emu / EMU_PER_CSS_PX
+    scale = min(1, px_budget / total) if total else 1
+
+    table = doc.add_table(rows=nrows, cols=ncols)
+    table.style = "Table Grid"
+    table.autofit = False
+    for row_el, row in zip(table.rows, node.get("content")):
+        tr_pr = row_el._tr.get_or_add_trPr()
+        tr_pr.append(OxmlElement("w:cantSplit"))
+        height = (row.get("attrs") or {}).get("height")
+        if height:
+            row_el.height = Pt(height * 0.75)
+            row_el.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+    if total:
+        for j, w in enumerate(widths):
+            table.columns[j].width = Emu(int(w * scale * EMU_PER_CSS_PX))
+    for ri, col, rs, cs, cell in placed:
+        target = table.cell(ri, col)
+        if rs > 1 or cs > 1:
+            target = target.merge(table.cell(ri + rs - 1, col + cs - 1))
+        if total:
+            target.width = Emu(int(sum(widths[col:col + cs]) * scale * EMU_PER_CSS_PX))
+        target._tc.remove(target.paragraphs[0]._p)
+        _docx_render_blocks(cell.get("content") or [], target, max_width_emu)
+        if not target.paragraphs:
+            target.add_paragraph()
+    doc.add_paragraph().paragraph_format.space_after = Pt(0)
+
+
 def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
     for node in nodes:
         t = node.get("type")
@@ -1938,6 +2098,8 @@ def _docx_render_blocks(nodes, doc, max_width_emu, num_state=None, depth=0):
         elif t == "codeBlock":
             run = doc.add_paragraph().add_run(_flatten_json_text(node))
             run.font.name = "Courier New"
+        elif t == "table":
+            _docx_render_table(node, doc, max_width_emu)
         elif t == "pageRow":
             table = doc.add_table(rows=1, cols=len(content))
             table.autofit = False

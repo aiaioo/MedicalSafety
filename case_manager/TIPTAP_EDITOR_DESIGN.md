@@ -206,3 +206,17 @@ npm run watch     # same, rebuilding on change, for local development
 ```
 
 Flask serves the resulting bundle as an ordinary static file — no Node process at runtime.
+
+## Tables (`tableTools.js`)
+
+`table > tableRow+ > (tableCell | tableHeader)+`, built on `@tiptap/extension-table` (column dragging,
+cell selection, Tab navigation come from prosemirror-tables). A cell may hold paragraphs, headings, lists,
+quotes, code, rules and images, but **not a table** (the cell content expression omits it); a `TableNesting`
+`filterTransaction` also rejects a table inside a list item (paste/wrap). `tableRow.height` is a minimum
+pixel height; cells carry `colwidth`. Row-boundary dragging is `TableRowResize` (live height via a node
+decoration), and `TableGrips` draws row/column/table select grips and a corner handle that scales the whole
+table in an overlay inside `.editor-page-wrap`. `pagination.js` treats each table row as a break unit and
+renders the page break between rows as a `<tr class="page-break-row">`, so a row never spans two pages.
+`app.py`: `sanitize_report_doc` whitelists the table nodes (and drops nested tables/stray rows),
+`_table_to_html` + `fit_tables` render them in the PDF, `_docx_render_table` in Word. Known limit: the PDF
+engine ignores row `height`, so exported rows are content-height.
