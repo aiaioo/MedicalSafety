@@ -319,8 +319,8 @@ export const TableGrips = Extension.create({
             const lastRow = info.map.height - 1;
             const lastCol = info.map.width - 1;
 
-            addGrip("corner", left - 14, top - 14, 12, 12, "Select table", () => {
-              select(new CellSelection(cellAt(view, info, 0, 0), cellAt(view, info, lastRow, lastCol)));
+            addGrip("corner", left - 14, top - 14, 12, 12, "Click to select the table; drag to move it up or down", (e) => {
+              startMove(e, info, () => select(new CellSelection(cellAt(view, info, 0, 0), cellAt(view, info, lastRow, lastCol))));
             });
             info.rows.forEach((trEl, i) => {
               const r = trEl.getBoundingClientRect();
@@ -343,6 +343,54 @@ export const TableGrips = Extension.create({
           const schedule = () => {
             if (!raf) raf = requestAnimationFrame(render);
           };
+
+          // Drag the table to another place between top-level blocks. A press without movement just selects it.
+          function startMove(e, info, onClick) {
+            const w = wrap.getBoundingClientRect();
+            const doc = view.state.doc;
+            const targets = []; // {pos: doc position of a boundary between top-level blocks, y: its viewport y}
+            let prevBottom = null;
+            doc.forEach((child, offset, i) => {
+              const dom = view.nodeDOM(offset);
+              if (!(dom instanceof HTMLElement)) return;
+              const r = dom.getBoundingClientRect();
+              targets.push({ pos: offset, y: prevBottom === null ? r.top : (prevBottom + r.top) / 2 });
+              prevBottom = r.bottom;
+            });
+            targets.push({ pos: doc.content.size, y: prevBottom });
+            const size = info.node.nodeSize;
+            const usable = targets.filter((t) => t.pos < info.pos || t.pos > info.pos + size);
+            const line = document.createElement("div");
+            line.className = "table-move-line";
+            let moved = false;
+            let best = null;
+            const move = (ev) => {
+              if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return;
+              moved = true;
+              best = usable.reduce((a, t) => (!a || Math.abs(t.y - ev.clientY) < Math.abs(a.y - ev.clientY) ? t : a), null);
+              if (!line.isConnected) layer.appendChild(line);
+              if (best) line.style.cssText = `left:0;right:0;top:${best.y - w.top - 1}px`;
+            };
+            const up = () => {
+              document.removeEventListener("mousemove", move);
+              document.removeEventListener("mouseup", up);
+              line.remove();
+              if (!moved) return onClick();
+              if (!best) return;
+              const tr = view.state.tr;
+              const node = info.node;
+              tr.delete(info.pos, info.pos + size);
+              const at = tr.mapping.map(best.pos);
+              tr.insert(at, node);
+              const after = at + size;
+              if (!tr.doc.resolve(after).nodeAfter) tr.insert(after, view.state.schema.nodes.paragraph.create());
+              tr.setSelection(TextSelection.near(tr.doc.resolve(at + 1))).scrollIntoView();
+              view.dispatch(tr);
+              view.focus();
+            };
+            document.addEventListener("mousemove", move);
+            document.addEventListener("mouseup", up);
+          }
 
           function startScale(e, info, tableEl) {
             const t0 = tableEl.getBoundingClientRect();

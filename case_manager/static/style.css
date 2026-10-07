@@ -1096,3 +1096,5 @@ a.tag:hover { background: #d7deec; }
 .table-grip:hover { background: #bcd0f7; border-color: #2266dd; }
 .table-grip-scale { background: #2266dd; border-color: #174aa8; cursor: nwse-resize; border-radius: 50%; }
 .table-scale-ghost { position: absolute; border: 2px dashed #2266dd; background: rgba(34, 102, 221, 0.06); pointer-events: none; }
+.table-move-line { position: absolute; height: 3px; background: #2266dd; border-radius: 2px; pointer-events: none; }
+.table-grip-corner { cursor: grab; }
