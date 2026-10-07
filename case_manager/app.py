@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import fitz  # PyMuPDF
 import psycopg2.errors
 from docx import Document as DocxDocument
+from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.image.image import Image as DocxImage
@@ -2270,7 +2271,17 @@ def _docx_apply_page_numbers(doc, page_numbers):
     doc.settings.element.append(update_fields)
 
 
-def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pdf=None):
+def _docx_new_unnumbered_section(doc):
+    """Starts a new page in a section with an empty header and footer, so the report's page numbers stop."""
+    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    section.header.is_linked_to_previous = False
+    section.footer.is_linked_to_previous = False
+    return section
+
+
+def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pdf=None, list_of_documents=None):
+    """`list_of_documents`: (ctx, rows) as for list_of_documents_docx; added as editable text after the report, before
+    the annexure pages (which are images). Neither is page-numbered, as they carry their own numbers."""
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
@@ -2282,13 +2293,23 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexur
     section.top_margin = Pt(m["header"])
     section.bottom_margin = Pt(m["footer"])
     max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+    max_height_emu = int(section.page_height - section.top_margin - section.bottom_margin)
+    report_layout = (section.page_width, section.page_height, section.left_margin, section.right_margin,
+                     section.top_margin, section.bottom_margin)
 
     _docx_apply_page_numbers(doc, sanitize_page_numbers(page_numbers))
 
     doc_json = split_page_rows(doc_json, max_width_emu / EMU_PER_CSS_PX)
     _docx_render_blocks(doc_json.get("content") or [], doc, max_width_emu)
+    if list_of_documents:
+        list_section = _docx_new_unnumbered_section(doc)
+        list_width = _docx_set_list_of_documents_layout(list_section)
+        _docx_add_list_of_documents(doc, *list_of_documents, list_width)
     if annexure_pdf:
-        _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, int(section.page_height - section.top_margin - section.bottom_margin))
+        annex_section = _docx_new_unnumbered_section(doc)
+        (annex_section.page_width, annex_section.page_height, annex_section.left_margin, annex_section.right_margin,
+         annex_section.top_margin, annex_section.bottom_margin) = report_layout
+        _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, max_height_emu)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -2299,14 +2320,13 @@ ANNEXURE_DOCX_DPI = 130
 
 
 def _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, max_height_emu):
-    """Appends each page of the annexure PDF (its list of documents, then the annexed pages) as an image on a page of
-    its own, scaled to fit the text area."""
+    """Appends each page of the annexure PDF as an image on a page of its own, scaled to fit the text area."""
     with fitz.open(stream=annexure_pdf, filetype="pdf") as src:
-        for page in src:
+        for n, page in enumerate(src):
             img = page.get_pixmap(dpi=ANNEXURE_DOCX_DPI).tobytes("jpeg", jpg_quality=85)
             scale = min(max_width_emu / page.rect.width, max_height_emu / page.rect.height)
             p = doc.add_paragraph()
-            p.paragraph_format.page_break_before = True
+            p.paragraph_format.page_break_before = n > 0  # the first follows the new section's own page break
             p.paragraph_format.space_after = Pt(0)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.add_run().add_picture(io.BytesIO(img), width=Emu(int(page.rect.width * scale)), height=Emu(int(page.rect.height * scale)))
@@ -3454,22 +3474,14 @@ def _tabs_as_spaces(nodes):
             for n in nodes]
 
 
-def list_of_documents_docx(ctx, rows):
-    """The List of Documents as a Word file: `ctx` as from annexure_list_context(include_doc=True), `rows` as for list_of_documents_html."""
-    doc = DocxDocument()
-    doc.styles["Normal"].font.name = "Times New Roman"
-    doc.styles["Normal"].font.size = Pt(12)
-    section = doc.sections[0]
-    section.page_width, section.page_height = Pt(595.28), Pt(841.89)
-    for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
-        setattr(section, side, Pt(64))
-    max_width_emu = int(section.page_width - section.left_margin - section.right_margin)
-
+def _docx_add_list_of_documents(doc, ctx, rows, max_width_emu):
+    """Appends the List of Documents to `doc` (see list_of_documents_docx for the arguments)."""
+    first_new = len(doc.paragraphs)
     cause = (ctx.get("causeTitleDoc") or {}).get("content")
     if cause:
         _docx_render_blocks(_tabs_as_spaces(cause), doc, max_width_emu)
         font, size = _docx_clean_font_name(ctx.get("causeFont") or ""), ctx.get("causeFontSize")
-        for p in doc.paragraphs:
+        for p in doc.paragraphs[first_new:]:
             # As in the PDF, where the List of Documents CSS gives every paragraph no margin and a 1.4 line height.
             p.paragraph_format.space_before = p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = 1.4
@@ -3513,6 +3525,21 @@ def list_of_documents_docx(ctx, rows):
         # Right-aligned so the user can sign above it.
         date_line.paragraph_format.tab_stops.add_tab_stop(Emu(int(max_width_emu)), WD_TAB_ALIGNMENT.RIGHT)
         date_line.add_run("\t" + ctx["role"])
+
+
+def _docx_set_list_of_documents_layout(section):
+    section.page_width, section.page_height = Pt(595.28), Pt(841.89)
+    for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
+        setattr(section, side, Pt(64))
+    return int(section.page_width - section.left_margin - section.right_margin)
+
+
+def list_of_documents_docx(ctx, rows):
+    """The List of Documents as a Word file: `ctx` as from annexure_list_context(include_doc=True), `rows` as for list_of_documents_html."""
+    doc = DocxDocument()
+    doc.styles["Normal"].font.name = "Times New Roman"
+    doc.styles["Normal"].font.size = Pt(12)
+    _docx_add_list_of_documents(doc, ctx, rows, _docx_set_list_of_documents_layout(doc.sections[0]))
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
@@ -3741,18 +3768,8 @@ def api_report_annexure_export(report_id):
     return resp
 
 
-@app.route("/api/report/<report_id>/annexure/list.docx")
-def api_report_annexure_list_docx(report_id):
-    """The annexure's List of Documents as a Word file (whether or not the PDF includes it)."""
-    check_report_id(report_id)
-    require_role("report", report_id)
-    report = storage.get_report(report_id)
-    if report is None:
-        raise DocumentError(f"No report with id {report_id!r}", 404)
-    payload = _annexure_payload(report_id, storage.get_annexure(report_id))
-    if not payload["documents"]:
-        raise DocumentError("The annexure is empty — add a document before downloading", 400)
-
+def _annexure_list_rows(payload):
+    """The List of Documents rows [(particulars, page range)] for the annexure payload's documents that have pages."""
     dn, pn = payload["docNumbers"], payload["pageNumbers"]
     rows = []
     shown = 0  # annexure pages laid out so far, across documents
@@ -3765,6 +3782,22 @@ def api_report_annexure_list_docx(report_id):
             rows.append((f"{doc_number_label(dn, len(rows))} - {text}" if dn["enabled"] else text,
                          annexure_page_range(shown, shown + count - 1, pn)))
             shown += count
+    return rows
+
+
+@app.route("/api/report/<report_id>/annexure/list.docx")
+def api_report_annexure_list_docx(report_id):
+    """The annexure's List of Documents as a Word file (whether or not the PDF includes it)."""
+    check_report_id(report_id)
+    require_role("report", report_id)
+    report = storage.get_report(report_id)
+    if report is None:
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    if not payload["documents"]:
+        raise DocumentError("The annexure is empty — add a document before downloading", 400)
+
+    rows = _annexure_list_rows(payload)
 
     data = list_of_documents_docx(annexure_list_context(report, include_doc=True), rows)
     log_activity("download", "report", report_id, "List of documents (Word)")
@@ -3836,11 +3869,16 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    # The annexures (list of documents, then the annexed pages) follow the report as images, as in the PDF.
+    # The annexed pages follow the report as images, as in the PDF.
     payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    # The List of Documents is added as editable text, so the PDF behind the annexure images leaves it out.
+    list_of_documents = None
+    if payload["documents"] and payload["listOfDocuments"]["enabled"]:
+        list_of_documents = (annexure_list_context(data, include_doc=True), _annexure_list_rows(payload))
+        payload["listOfDocuments"]["enabled"] = False
     annexure_pdf = _annexure_pdf_bytes(payload) if payload["documents"] else None
     docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))),
-                                    data.get("margins"), data.get("pageNumbers"), annexure_pdf)
+                                    data.get("margins"), data.get("pageNumbers"), annexure_pdf, list_of_documents)
 
     log_activity("download", "report", report_id, "Word")
     resp = Response(
