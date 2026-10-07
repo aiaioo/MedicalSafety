@@ -4074,7 +4074,7 @@ def api_allegation_item(allegation_id):
     existing = storage.get_allegation(allegation_id)
     if existing is None:
         raise DocumentError(f"No allegation with id {allegation_id!r}", 404)
-    require_allegation_role(existing, "viewer" if request.method == "GET" else "editor")
+    require_allegation_role(existing, {"GET": "viewer", "DELETE": "owner"}.get(request.method, "editor"))
 
     if request.method == "GET":
         return jsonify(with_allegation_roles([existing])[0])

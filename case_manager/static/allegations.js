@@ -341,7 +341,9 @@
 
     card.appendChild(buildCardSaveBtn(card, allegation.id));
 
+    // Only editors may change an allegation; only its owner may delete it.
     if (!canEdit(allegation.role)) window.ReadOnlyLock.lock(card);
+    else if (allegation.role !== "owner") card.querySelector(".card-delete-btn").disabled = true;
 
     return card;
   }
