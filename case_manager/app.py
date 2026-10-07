@@ -2237,7 +2237,7 @@ def _docx_apply_page_numbers(doc, page_numbers):
     doc.settings.element.append(update_fields)
 
 
-def render_report_docx(title, doc_json, margins=None, page_numbers=None):
+def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pdf=None):
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
@@ -2254,10 +2254,29 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None):
 
     doc_json = split_page_rows(doc_json, max_width_emu / EMU_PER_CSS_PX)
     _docx_render_blocks(doc_json.get("content") or [], doc, max_width_emu)
+    if annexure_pdf:
+        _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, int(section.page_height - section.top_margin - section.bottom_margin))
 
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+ANNEXURE_DOCX_DPI = 130
+
+
+def _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, max_height_emu):
+    """Appends each page of the annexure PDF (its list of documents, then the annexed pages) as an image on a page of
+    its own, scaled to fit the text area."""
+    with fitz.open(stream=annexure_pdf, filetype="pdf") as src:
+        for page in src:
+            img = page.get_pixmap(dpi=ANNEXURE_DOCX_DPI).tobytes("jpeg", jpg_quality=85)
+            scale = min(max_width_emu / page.rect.width, max_height_emu / page.rect.height)
+            p = doc.add_paragraph()
+            p.paragraph_format.page_break_before = True
+            p.paragraph_format.space_after = Pt(0)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(io.BytesIO(img), width=Emu(int(page.rect.width * scale)), height=Emu(int(page.rect.height * scale)))
 
 
 @app.context_processor
@@ -3721,7 +3740,11 @@ def api_report_export_docx(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))), data.get("margins"), data.get("pageNumbers"))
+    # The annexures (list of documents, then the annexed pages) follow the report as images, as in the PDF.
+    payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    annexure_pdf = _annexure_pdf_bytes(payload) if payload["documents"] else None
+    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))),
+                                    data.get("margins"), data.get("pageNumbers"), annexure_pdf)
 
     resp = Response(
         docx_bytes,
