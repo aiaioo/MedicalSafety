@@ -3604,9 +3604,9 @@ def _tabs_to_stops(html, font, size):
         for piece in re.split(r"(\t)", token):
             if piece == "\t":
                 space = width(" ")
-                pad = max(1, round((stop - x % stop) / space))
-                out.append("&nbsp;" * pad)
-                x += pad * space
+                target = (x // stop + 1) * stop
+                out.append("&nbsp;" * max(1, round((target - x) / space)))
+                x = target  # not x + pad * space: rounding short of the stop would make the next tab pad only one space
             else:
                 x += width(unescape(piece))
                 out.append(piece)
