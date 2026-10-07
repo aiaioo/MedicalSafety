@@ -205,8 +205,13 @@
   async function refresh() {
     const data = await api(listUrl);
     shareable = data.shareable;
-    listEl.replaceChildren.apply(listEl, data.collaborations.map(renderCard));
-    emptyEl.style.display = data.collaborations.length ? "none" : "";
+    // Invitations you've received go in their own section above the invite form.
+    const received = data.collaborations.filter(function (c) { return c.status === "received"; });
+    const others = data.collaborations.filter(function (c) { return c.status !== "received"; });
+    document.getElementById("receivedList").replaceChildren.apply(document.getElementById("receivedList"), received.map(renderCard));
+    document.getElementById("receivedSection").style.display = received.length ? "" : "none";
+    listEl.replaceChildren.apply(listEl, others.map(renderCard));
+    emptyEl.style.display = others.length ? "none" : "";
   }
 
   // Once the page has shown any accepted invitations, they stop counting as notifications.
