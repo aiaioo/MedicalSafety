@@ -1469,6 +1469,7 @@ REPORT_PDF_CSS = """
   table.rt td, table.rt th { border: 0; border-right: 0.75pt solid #8a8f9c; border-bottom: 0.75pt solid #8a8f9c; padding: 3pt 4.5pt; }
   table.rt th { background-color: #f1f3f6; }
   table.rt p { margin: 0 0 4pt; }
+  div.tw { font-size: 1pt; line-height: 0; margin: 0; height: 0; }
   ol, ul { list-style: none; margin: 0; padding-left: 0; }
   li { margin: 2pt 0; }
   li ol, li ul { margin-left: 18pt; }
@@ -1638,6 +1639,17 @@ def fit_tables(node, content_px):
     return {**node, "content": [fit_tables(c, content_px) for c in node["content"]]}
 
 
+TABLE_CELL_FRAME_PT = 9.75  # a cell's horizontal padding (2 x 4.5pt) and right border, see REPORT_PDF_CSS
+_NBSP_EM = 0.278  # width of a no-break space in Helvetica, in ems
+
+
+def _table_width_spacer(width_pt):
+    """fitz.Story sizes table columns from their content and ignores every width setting, so a column's saved width
+    is imposed by a first-row cell holding an invisible line of no-break spaces that wide (1pt text, no height)."""
+    n = max(1, round(width_pt / _NBSP_EM))
+    return f'<div class="tw">{"&nbsp;" * n}</div>'
+
+
 def _table_to_html(table, raw_tabs=False):
     """A table as HTML for the PDF. Rows are kept whole across pages (page-break-inside: avoid)."""
     widths = _table_grid_widths(table)
@@ -1652,13 +1664,12 @@ def _table_to_html(table, raw_tabs=False):
             span = a.get("colspan", 1)
             tag = "th" if cell.get("type") == "tableHeader" else "td"
             style = []
-            if ri == 0 and fixed:
-                style.append(f"width:{sum(widths[col:col + span]) * 0.75:.1f}pt")
             if height:
                 style.append(f"height:{height * 0.75:.1f}pt")
             span_attrs = (f' colspan="{span}"' if span > 1 else "") + (f' rowspan="{a["rowspan"]}"' if a.get("rowspan", 1) > 1 else "")
             style_attr = f' style="{";".join(style)}"' if style else ""
-            cells.append(f"<{tag}{span_attrs}{style_attr}>{_json_blocks_to_html(cell.get('content') or [], raw_tabs=raw_tabs)}</{tag}>")
+            spacer = _table_width_spacer(sum(widths[col:col + span]) * 0.75 - TABLE_CELL_FRAME_PT) if ri == 0 and fixed else ""
+            cells.append(f"<{tag}{span_attrs}{style_attr}>{spacer}{_json_blocks_to_html(cell.get('content') or [], raw_tabs=raw_tabs)}</{tag}>")
             col += span
         rows.append(f'<tr style="page-break-inside:avoid{f";height:{height * 0.75:.1f}pt" if height else ""}">{"".join(cells)}</tr>')
     width = f"{sum(widths) * 0.75:.1f}pt" if fixed else "100%"
