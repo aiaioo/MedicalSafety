@@ -376,7 +376,8 @@ def allegation_roles(allegations):
 
 def with_allegation_roles(allegations):
     roles = allegation_roles(allegations)
-    return attach_owners("allegation", [{**a, "role": roles[a["id"]]} for a in allegations])
+    items = attach_owners("allegation", [{**a, "role": roles[a["id"]]} for a in allegations])
+    return attach_item_creators(items, ("inculpatory", "exculpatory", "to_prove"))
 
 
 def visible_allegations():
@@ -475,6 +476,28 @@ def attach_owners(kind, items):
         if owner:
             item["owner_name"] = "You" if owner[0] == g.user.id else owner[1]
     return items
+
+
+def acting_user_id():
+    """Who a newly added goal, hearing, evidence or to-prove item is recorded as added by (a guest has no account)."""
+    return None if g.user.is_guest else g.user.id
+
+
+def attach_item_creators(parents, list_keys):
+    """Sets item["creator_name"] on every item in the named lists of a parent dict (or list of them) -- who added
+    it: their name, or "You" -- leaving it off items from before creators were recorded, and for guests. Returns `parents`."""
+    if g.user.is_guest:
+        return parents
+    plist = [parents] if isinstance(parents, dict) else parents
+    items = [i for p in plist for key in list_keys for i in p.get(key, [])]
+    names = storage.user_names(i.get("creator_id") for i in items)
+    for i in items:
+        creator = i.get("creator_id")
+        if creator == g.user.id:
+            i["creator_name"] = "You"
+        elif creator in names:
+            i["creator_name"] = names[creator]
+    return parents
 
 
 def default_cause_only(create=False):
@@ -4085,7 +4108,7 @@ def api_allegation_cases():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_case(case_id, data, owner_id=g.user.id)
+    storage.save_case(case_id, data, owner_id=g.user.id, actor_id=acting_user_id())
     return jsonify({"id": case_id, **data})
 
 
@@ -4099,7 +4122,7 @@ def api_allegation_case(case_id):
 
     if request.method == "GET":
         log_activity("view", "case", case_id)
-        return jsonify({**existing, "role": role})
+        return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role})
 
     if request.method == "DELETE":
         storage.delete_case(case_id)
@@ -4139,7 +4162,7 @@ def api_allegation_case(case_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    storage.save_case(case_id, data)
+    storage.save_case(case_id, data, actor_id=acting_user_id())
     log_activity("save", "case", case_id)
     return jsonify(data)
 
@@ -4233,7 +4256,7 @@ def api_causes():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_cause(cause_id, data, owner_id=g.user.id)
+    storage.save_cause(cause_id, data, owner_id=g.user.id, actor_id=acting_user_id())
     return jsonify({"id": cause_id, **data})
 
 
@@ -4247,7 +4270,7 @@ def api_cause(cause_id):
 
     if request.method == "GET":
         log_activity("view", "cause", cause_id)
-        return jsonify({**existing, "role": role})
+        return jsonify({**attach_item_creators(existing, ("goals",)), "role": role})
 
     if request.method == "DELETE":
         # Another cause takes over as the default (if this was it) and as the
@@ -4276,7 +4299,7 @@ def api_cause(cause_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    storage.save_cause(cause_id, data)
+    storage.save_cause(cause_id, data, actor_id=acting_user_id())
     log_activity("save", "cause", cause_id)
     return jsonify(data)
 
@@ -4317,7 +4340,7 @@ def api_allegations():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_allegation(allegation_id, data)
+    storage.save_allegation(allegation_id, data, actor_id=acting_user_id())
     storage.grant_owner("allegation", allegation_id, g.user.id)
     return jsonify({"id": allegation_id, **data})
 
@@ -4362,7 +4385,7 @@ def api_allegation_item(allegation_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    storage.save_allegation(allegation_id, data)
+    storage.save_allegation(allegation_id, data, actor_id=acting_user_id())
     log_activity("save", "allegation", allegation_id)
     return jsonify({"id": allegation_id, **data})
 

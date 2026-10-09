@@ -116,6 +116,23 @@ class DeleteBlocked(Exception):
     a new dependent."""
 
 
+def _item_creators(cur, table: str, parent_column: str, parent_id: str) -> dict[str, int | None]:
+    """{item id: who added it} for a parent's existing items, read before a
+    save rewrites them, so the rewrite can keep each item's creator."""
+    cur.execute(f"SELECT id, created_by FROM {table} WHERE {parent_column} = %s", (parent_id,))  # noqa: S608 (fixed names)
+    return {r["id"]: r["created_by"] for r in cur.fetchall()}
+
+
+def user_names(user_ids) -> dict[int, str]:
+    """{user id: full name, else email} for these (positive) user ids."""
+    ids = [i for i in set(user_ids) if i and i > 0]
+    if not ids:
+        return {}
+    with _cursor() as cur:
+        cur.execute("SELECT id, full_name, email FROM users WHERE id = ANY(%s)", (ids,))
+        return {u["id"]: _dec_text(u["full_name"]) or _dec_text(u["email"]) for u in cur.fetchall()}
+
+
 def _lock(cur, table: str, object_id: str) -> bool:
     cur.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR UPDATE", (object_id,))  # noqa: S608 (fixed table names)
     return cur.fetchone() is not None
@@ -763,6 +780,7 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
             "date": _dec_text(h["hearing_date"]),
             "title": _dec_text(h["title"]),
             "summary": _dec_text(h["summary"]),
+            "creator_id": h["created_by"],
             "submitted_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "submitted"],
             "received_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "received"],
         })
@@ -813,7 +831,7 @@ def list_cases(user_id: int) -> list[dict]:
         case_rows = cur.fetchall()
         case_ids = [c["id"] for c in case_rows]
         cur.execute(
-            "SELECT id, case_id, hearing_date, title, summary FROM hearings WHERE case_id = ANY(%s) ORDER BY position",
+            "SELECT id, case_id, hearing_date, title, summary, created_by FROM hearings WHERE case_id = ANY(%s) ORDER BY position",
             (case_ids,),
         )
         hearing_rows = cur.fetchall()
@@ -839,7 +857,7 @@ def get_case(case_id: str) -> dict | None:
         case_row = cur.fetchone()
         if case_row is None:
             return None
-        cur.execute("SELECT id, case_id, hearing_date, title, summary FROM hearings WHERE case_id = %s ORDER BY position", (case_id,))
+        cur.execute("SELECT id, case_id, hearing_date, title, summary, created_by FROM hearings WHERE case_id = %s ORDER BY position", (case_id,))
         hearing_rows = cur.fetchall()
         cur.execute(_HEARING_DOC_JOIN + " JOIN hearings h ON h.id = hd.hearing_id WHERE h.case_id = %s ORDER BY hd.position", (case_id,))
         doc_link_rows = cur.fetchall()
@@ -850,7 +868,7 @@ def get_case(case_id: str) -> dict | None:
     return case
 
 
-def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
+def save_case(case_id: str, data: dict, owner_id: int | None = None, actor_id: int | None = None) -> None:
     """Creates or overwrites a case. Pass `owner_id` when creating, to
     record the creator's ownership in the same transaction."""
     with _cursor() as cur:
@@ -888,12 +906,13 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None) -> None:
         # A fresh DELETE + reinsert of every child row: exactly the "whole
         # record overwritten on every save" semantics the old JSON file had,
         # just spread across parent + child tables in one transaction.
+        creators = _item_creators(cur, "hearings", "case_id", case_id)
         cur.execute("DELETE FROM hearings WHERE case_id = %s", (case_id,))  # cascades to hearing_documents
         for position, hearing in enumerate(data.get("hearings") or []):
             cur.execute(
-                "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary) VALUES (%s, %s, %s, %s, %s, %s)",
+                "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (hearing["id"], case_id, position, _enc_text(hearing.get("date", "")), _enc_text(hearing.get("title", "")),
-                 _enc_text(hearing.get("summary", ""))),
+                 _enc_text(hearing.get("summary", "")), creators.get(hearing["id"], actor_id)),
             )
             for direction, key in (("submitted", "submitted_docs"), ("received", "received_docs")):
                 for doc_position, doc_item in enumerate(hearing.get(key) or []):
@@ -961,19 +980,19 @@ def list_case_ids_by_cause(cause_id: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _GOAL_QUERY = """
-    SELECT g.cause_id, g.id, g.title, g.description, g.position,
+    SELECT g.cause_id, g.id, g.title, g.description, g.position, g.created_by,
            COALESCE(array_agg(gc.case_id ORDER BY gc.position) FILTER (WHERE gc.case_id IS NOT NULL), '{{}}') AS case_ids
     FROM goals g
     LEFT JOIN goal_cases gc ON gc.goal_id = g.id
     {where}
-    GROUP BY g.cause_id, g.id, g.title, g.description, g.position
+    GROUP BY g.cause_id, g.id, g.title, g.description, g.position, g.created_by
     ORDER BY g.position
 """
 
 
 def _goal_dict(row: dict) -> dict:
     return {"id": row["id"], "title": _dec_text(row["title"]), "description": _dec_text(row["description"]),
-            "case_ids": list(row["case_ids"])}
+            "case_ids": list(row["case_ids"]), "creator_id": row["created_by"]}
 
 
 def list_causes(user_id: int) -> list[dict]:
@@ -1022,9 +1041,10 @@ def get_cause(cause_id: str) -> dict | None:
     }
 
 
-def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
+def save_cause(cause_id: str, data: dict, owner_id: int | None = None, actor_id: int | None = None) -> None:
     """Creates or overwrites a cause. Pass `owner_id` when creating, to
-    record the creator's ownership in the same transaction."""
+    record the creator's ownership in the same transaction. Goals not saved
+    before are recorded as added by `actor_id`; the others keep their creator."""
     with _cursor() as cur:
         cur.execute(
             """
@@ -1035,11 +1055,13 @@ def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
             """,
             (cause_id, _enc_text(data["title"]), _enc_text(data["description"]), data["created_at"], data["updated_at"]),
         )
+        creators = _item_creators(cur, "goals", "cause_id", cause_id)
         cur.execute("DELETE FROM goals WHERE cause_id = %s", (cause_id,))  # cascades to goal_cases
         for position, goal in enumerate(data.get("goals") or []):
             cur.execute(
-                "INSERT INTO goals (id, cause_id, title, description, position) VALUES (%s, %s, %s, %s, %s)",
-                (goal["id"], cause_id, _enc_text(goal.get("title", "")), _enc_text(goal.get("description", "")), position),
+                "INSERT INTO goals (id, cause_id, title, description, position, created_by) VALUES (%s, %s, %s, %s, %s, %s)",
+                (goal["id"], cause_id, _enc_text(goal.get("title", "")), _enc_text(goal.get("description", "")), position,
+                 creators.get(goal["id"], actor_id)),
             )
             for case_position, case_id in enumerate(goal.get("case_ids") or []):
                 cur.execute(
@@ -1284,23 +1306,24 @@ def reset_password(user_id: int, password_hash: str) -> None:
 # ---------------------------------------------------------------------------
 
 _TO_PROVE_QUERY = """
-    SELECT tp.allegation_id, tp.id, tp.title, tp.summary, tp.position,
+    SELECT tp.allegation_id, tp.id, tp.title, tp.summary, tp.position, tp.created_by,
            COALESCE(array_agg(tpe.evidence_id ORDER BY tpe.position) FILTER (WHERE tpe.evidence_id IS NOT NULL), '{{}}') AS evidence_ids
     FROM allegation_to_prove tp
     LEFT JOIN allegation_to_prove_evidence tpe ON tpe.to_prove_id = tp.id
     {where}
-    GROUP BY tp.allegation_id, tp.id, tp.title, tp.summary, tp.position
+    GROUP BY tp.allegation_id, tp.id, tp.title, tp.summary, tp.position, tp.created_by
     ORDER BY tp.position
 """
 
 
 def _evidence_dict(row: dict) -> dict:
-    return {"id": row["id"], "text": _dec_text(row["text"]), "report_id": row["report_id"] or ""}
+    return {"id": row["id"], "text": _dec_text(row["text"]), "report_id": row["report_id"] or "",
+            "creator_id": row["created_by"]}
 
 
 def _to_prove_dict(row: dict) -> dict:
     return {"id": row["id"], "title": _dec_text(row["title"]), "summary": _dec_text(row["summary"]),
-            "evidence_ids": list(row["evidence_ids"])}
+            "evidence_ids": list(row["evidence_ids"]), "creator_id": row["created_by"]}
 
 
 def _assemble_allegations(allegation_rows, evidence_rows, to_prove_rows, case_rows) -> list[dict]:
@@ -1344,7 +1367,7 @@ def list_allegations(cause_ids: Collection[str], allegation_ids: Collection[str]
             (list(cause_ids), list(allegation_ids)),
         )
         allegation_rows = cur.fetchall()
-        cur.execute("SELECT allegation_id, id, kind, text, report_id FROM allegation_evidence ORDER BY position")
+        cur.execute("SELECT allegation_id, id, kind, text, report_id, created_by FROM allegation_evidence ORDER BY position")
         evidence_rows = cur.fetchall()
         cur.execute(_TO_PROVE_QUERY.format(where=""))
         to_prove_rows = cur.fetchall()
@@ -1359,7 +1382,7 @@ def get_allegation(allegation_id: str) -> dict | None:
         allegation_row = cur.fetchone()
         if allegation_row is None:
             return None
-        cur.execute("SELECT allegation_id, id, kind, text, report_id FROM allegation_evidence WHERE allegation_id = %s ORDER BY position", (allegation_id,))
+        cur.execute("SELECT allegation_id, id, kind, text, report_id, created_by FROM allegation_evidence WHERE allegation_id = %s ORDER BY position", (allegation_id,))
         evidence_rows = cur.fetchall()
         cur.execute(_TO_PROVE_QUERY.format(where="WHERE tp.allegation_id = %s"), (allegation_id,))
         to_prove_rows = cur.fetchall()
@@ -1368,7 +1391,9 @@ def get_allegation(allegation_id: str) -> dict | None:
     return _assemble_allegations([allegation_row], evidence_rows, to_prove_rows, case_rows)[0]
 
 
-def save_allegation(allegation_id: str, data: dict) -> None:
+def save_allegation(allegation_id: str, data: dict, actor_id: int | None = None) -> None:
+    """Creates or overwrites an allegation; evidence and "to prove" items not
+    saved before are recorded as added by `actor_id`, the others keep their creator."""
     with _cursor() as cur:
         cur.execute(
             """
@@ -1381,18 +1406,23 @@ def save_allegation(allegation_id: str, data: dict) -> None:
             (allegation_id, data["cause_id"], _enc_text(data["title"]), _enc_text(data["description"]),
              data["created_at"], data["updated_at"]),
         )
+        evidence_creators = _item_creators(cur, "allegation_evidence", "allegation_id", allegation_id)
+        to_prove_creators = _item_creators(cur, "allegation_to_prove", "allegation_id", allegation_id)
         cur.execute("DELETE FROM allegation_evidence WHERE allegation_id = %s", (allegation_id,))  # cascades to allegation_to_prove_evidence
         for kind in ("inculpatory", "exculpatory"):
             for position, item in enumerate(data.get(kind) or []):
                 cur.execute(
-                    "INSERT INTO allegation_evidence (id, allegation_id, kind, text, report_id, position) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (item["id"], allegation_id, kind, _enc_text(item.get("text", "")), item.get("report_id") or None, position),
+                    "INSERT INTO allegation_evidence (id, allegation_id, kind, text, report_id, position, created_by) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (item["id"], allegation_id, kind, _enc_text(item.get("text", "")), item.get("report_id") or None, position,
+                     evidence_creators.get(item["id"], actor_id)),
                 )
         cur.execute("DELETE FROM allegation_to_prove WHERE allegation_id = %s", (allegation_id,))  # cascades to allegation_to_prove_evidence
         for position, item in enumerate(data.get("to_prove") or []):
             cur.execute(
-                "INSERT INTO allegation_to_prove (id, allegation_id, title, summary, position) VALUES (%s, %s, %s, %s, %s)",
-                (item["id"], allegation_id, _enc_text(item.get("title", "")), _enc_text(item.get("summary", "")), position),
+                "INSERT INTO allegation_to_prove (id, allegation_id, title, summary, position, created_by) VALUES (%s, %s, %s, %s, %s, %s)",
+                (item["id"], allegation_id, _enc_text(item.get("title", "")), _enc_text(item.get("summary", "")), position,
+                 to_prove_creators.get(item["id"], actor_id)),
             )
             for link_position, evidence_id in enumerate(item.get("evidence_ids") or []):
                 cur.execute(

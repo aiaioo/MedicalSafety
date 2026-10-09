@@ -48,6 +48,11 @@
     return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
   }
 
+  // Who added a goal / hearing / evidence / to-prove item, pinned bottom-left of its card.
+  function creatorLabel(item) {
+    return item.creator_name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(item.creator_name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -458,7 +463,8 @@
       <div class="evidence-card-body">
         <textarea rows="2" placeholder="Describe this evidence…" maxlength="10000"></textarea>
       </div>
-      <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
+      <button type="button" class="card-delete-btn" title="Delete">✕</button>
+      ${creatorLabel(item)}`;
 
     const bodyEl = card.querySelector(".evidence-card-body");
     const textEl = bodyEl.querySelector("textarea");
@@ -676,7 +682,7 @@
     enableDragReorder(listEl, ".evidence-card", reorderFromDom);
 
     col.querySelector(".add-evidence-btn").addEventListener("click", () => {
-      const item = { id: genId(), text: "", report_id: "" };
+      const item = { id: genId(), text: "", report_id: "", creator_name: "You" };
       allegation[kind].push(item);
       renderDetail();
       updateAllegationCardMeta(allegation.id);
@@ -873,7 +879,8 @@
         <textarea class="to-prove-summary-input" rows="2" placeholder="Summarize what needs to be proven…" maxlength="10000"></textarea>
         <div class="to-prove-evidence-links-slot"></div>
       </div>
-      <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
+      <button type="button" class="card-delete-btn" title="Delete">✕</button>
+      ${creatorLabel(item)}`;
 
     const titleEl = card.querySelector(".to-prove-title-input");
     titleEl.value = item.title || "";
@@ -931,7 +938,7 @@
     enableDragReorder(listEl, ".to-prove-card", reorderFromDom);
 
     section.querySelector(".add-to-prove-btn").addEventListener("click", () => {
-      const item = { id: genId(), title: "", summary: "", evidence_ids: [] };
+      const item = { id: genId(), title: "", summary: "", evidence_ids: [], creator_name: "You" };
       allegation.to_prove.push(item);
       renderDetail();
       scheduleSave(allegation.id);

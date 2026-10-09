@@ -36,6 +36,11 @@
     return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
   }
 
+  // Who added a goal / hearing / evidence / to-prove item, pinned bottom-left of its card.
+  function creatorLabel(item) {
+    return item.creator_name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(item.creator_name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -494,7 +499,8 @@
         <textarea class="goal-description-input" rows="2" placeholder="Describe this goal…" maxlength="10000"></textarea>
         <div class="case-links-inline"></div>
       </div>
-      ${(goal.case_ids || []).length === 0 ? '<button type="button" class="card-delete-btn" title="Delete goal">✕</button>' : ""}`;
+      ${(goal.case_ids || []).length === 0 ? '<button type="button" class="card-delete-btn" title="Delete goal">✕</button>' : ""}
+      ${creatorLabel(goal)}`;
 
     function flushGoalField(el) {
       flushSaveOnEnter(el, "detail:" + detailCause.id, detailCause.id, () => ({ goals: detailCause.goals }));
@@ -603,7 +609,7 @@
 
     causeDetailEl.querySelector(".share-slot").appendChild(ShareKey.button("cause", detailCause.id, { enabled: canEdit(detailCause.role) }));
     causeDetailEl.querySelector("#addGoalBtn").addEventListener("click", () => {
-      const goal = { id: genId(), title: "", description: "", case_ids: [] };
+      const goal = { id: genId(), title: "", description: "", case_ids: [], creator_name: "You" };
       detailCause.goals.push(goal);
       renderGoalList();
       updateSelectedCauseMeta();

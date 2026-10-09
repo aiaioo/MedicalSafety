@@ -44,6 +44,11 @@
     return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
   }
 
+  // Who added a goal / hearing / evidence / to-prove item, pinned bottom-left of its card.
+  function creatorLabel(item) {
+    return item.creator_name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(item.creator_name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -629,7 +634,8 @@
         <textarea class="hearing-summary-input" rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
         <div class="hearing-doc-lists"></div>
       </div>
-      <button type="button" class="card-delete-btn" title="Delete">✕</button>`;
+      <button type="button" class="card-delete-btn" title="Delete">✕</button>
+      ${creatorLabel(hearing)}`;
 
     function flushHearingField(el) {
       flushSaveOnEnter(el, "detail:" + detailCase.id, detailCase.id, () => ({
@@ -792,7 +798,7 @@
     }));
 
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
-      const hearing = { id: genId(), date: "", title: "", summary: "", submitted_docs: [], received_docs: [] };
+      const hearing = { id: genId(), date: "", title: "", summary: "", submitted_docs: [], received_docs: [], creator_name: "You" };
       detailCase.hearings.push(hearing);
       renderHearingList();
       updateSelectedCaseMeta();
