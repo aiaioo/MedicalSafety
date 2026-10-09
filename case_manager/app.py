@@ -312,6 +312,12 @@ def has_role(kind, object_id, min_role):
     return role is not None and ROLE_RANK[role] >= ROLE_RANK[min_role]
 
 
+def is_shared_with_me(kind, object_id):
+    """Whether the user reached this object through a collaborator's sharing rather than owning it (a guest's
+    Share link doesn't count: guests have no Collaborations page)."""
+    return not g.user.is_guest and storage.get_role(g.user.id, kind, object_id) not in (None, "owner")
+
+
 def require_role(kind, object_id, min_role="viewer"):
     label = ACCESS_LABELS[kind]
     role = storage.get_role(g.user.id, kind, object_id)
@@ -2567,6 +2573,7 @@ def page_view():
         doc_description=storage.get_document_description(doc_id),
         description_url=url_for("api_doc_description", doc_id=doc_id),
         can_edit=has_role("source", doc_id, "editor"),
+        shared_with_me=is_shared_with_me("source", doc_id),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
         page_count=page_count,
@@ -2615,6 +2622,7 @@ def documents_view():
         default_cause=default_cause_for_display(),
         report_id=report_id,
         can_edit=can_edit,
+        shared_with_me=bool(report_id) and is_shared_with_me("report", report_id),
         can_create=can_create_items(),
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
