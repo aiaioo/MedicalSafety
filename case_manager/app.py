@@ -2649,7 +2649,11 @@ def allegations_view():
         check_report_id(filter_case_id)
         require_role("case", filter_case_id)
 
-    return render_template("allegations.html", filter_case_id=filter_case_id, can_create=can_create_items())
+    # ?allegation= opens one allegation (a link to something shared with the user, who may not have its cause as their default).
+    focus_id = request.args.get("allegation", "")
+    if focus_id:
+        check_report_id(focus_id)
+    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, can_create=can_create_items())
 
 
 @app.route("/causes")

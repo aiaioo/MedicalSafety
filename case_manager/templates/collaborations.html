@@ -12,7 +12,7 @@
      data-list-url="{{ url_for('api_collaborations') }}"
      data-captcha-url="{{ url_for('api_collaborations_captcha') }}"
      data-seen-url="{{ url_for('api_collaborations_seen') }}"
-     data-open-urls='{{ {"cause": url_for("causes_view"), "case": url_for("case_details_view") ~ "?case=", "allegation": url_for("allegations_view"), "report": url_for("documents_view") ~ "?report=", "source": url_for("page_view") ~ "?doc="} | tojson | forceescape }}'
+     data-open-urls='{{ {"cause": url_for("causes_view"), "case": url_for("case_details_view") ~ "?case=", "allegation": url_for("allegations_view") ~ "?allegation=", "report": url_for("documents_view") ~ "?report=", "source": url_for("page_view") ~ "?doc="} | tojson | forceescape }}'
      data-item-url-base="{{ url_for('api_collaboration_item', collaboration_id=0) }}"
 >
   <header class="docbar" style="position: relative;">

@@ -10,6 +10,7 @@
   const reportsUrl = appEl.dataset.reportsUrl;
   const documentsPageUrl = appEl.dataset.documentsPageUrl;
   const filterCaseId = appEl.dataset.filterCase || "";
+  const focusAllegationId = appEl.dataset.focusAllegation || "";
 
   function reportUrl(reportId) {
     return `${documentsPageUrl}?report=${encodeURIComponent(reportId)}`;
@@ -973,6 +974,16 @@
       cases = casesRes.ok ? await casesRes.json() : [];
       reports = reportsRes.ok ? await reportsRes.json() : [];
       causes = causesRes.ok ? await causesRes.json() : [];
+      if (focusAllegationId) {
+        // The list is limited to the default cause; an allegation shared from elsewhere is fetched on its own.
+        if (!allegations.some((a) => a.id === focusAllegationId)) {
+          const res = await fetch(allegationUrl(focusAllegationId));
+          if (!res.ok) throw new Error(await res.text());
+          allegations.push(await res.json());
+        }
+        selectedId = focusAllegationId;
+        filterActive = false;
+      }
       renderFilterBar();
       renderAllegationList();
       renderDetail();

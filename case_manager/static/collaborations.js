@@ -5,7 +5,7 @@
   const captchaUrl = appEl.dataset.captchaUrl;
   const seenUrl = appEl.dataset.seenUrl;
   const itemUrlBase = appEl.dataset.itemUrlBase; // ends in /0
-  const openUrls = JSON.parse(appEl.dataset.openUrls); // where each kind opens; cases, reports and documents take the id on the end
+  const openUrls = JSON.parse(appEl.dataset.openUrls); // where each kind opens; all but causes take the id on the end
   const KIND_LABELS = {cause: "Causes", case: "Cases", allegation: "Allegations", report: "Reports", source: "Documents"};
   const KINDS = Object.keys(KIND_LABELS);
 
@@ -22,7 +22,7 @@
 
   function itemUrl(id, suffix) { return itemUrlBase.replace(/0$/, String(id)) + (suffix || ""); }
 
-  // Causes and allegations have no page of their own: their list pages show everything shared with the user.
+  // A cause has no page of its own: the causes list shows everything shared with the user.
   function openUrl(kind, id) {
     const base = openUrls[kind];
     return /[=]$/.test(base) ? base + encodeURIComponent(id) : base;
