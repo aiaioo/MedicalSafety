@@ -1112,3 +1112,6 @@ a.tag:hover { background: #d7deec; }
 .activity-action { font-weight: 600; white-space: nowrap; }
 .activity-detail, .activity-actor { color: #8a92a5; }
 .activity-pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 28px 0 8px; }
+
+/* A blank line between a cause's goals and its cases. */
+.cause-cases-head { margin-top: 1.5em; }

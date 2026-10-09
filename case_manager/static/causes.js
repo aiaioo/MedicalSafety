@@ -587,7 +587,7 @@
       </div>
       <p class="empty goal-empty" style="display:none">No goals yet.</p>
       <div class="evidence-list goal-list"></div>
-      <div class="allegations-column-head">
+      <div class="allegations-column-head cause-cases-head">
         <h2>Cases</h2>
       </div>
       <p class="empty cause-cases-empty" style="display:none">No cases under this cause.</p>
