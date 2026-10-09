@@ -566,7 +566,8 @@
       card.innerHTML = `
         <div class="allegation-card-head"><strong>${escapeHtml(c.name || c.id)}</strong></div>
         ${c.summary ? `<p>${escapeHtml(c.summary)}</p>` : ""}
-        <div class="allegation-card-meta">${escapeHtml(meta)}</div>`;
+        <div class="allegation-card-meta">${escapeHtml(meta)}</div>
+        ${ownerLabel(c)}`;
       listEl.appendChild(card);
     }
   }
