@@ -1580,6 +1580,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     try { localStorage.setItem(INSERT_STYLE_KEY, style); } catch (e) {}
     if (canEdit) applyStyleToSnippets(style);
   }));
+  if (!canEdit) insertStyleInputs.forEach((el) => { el.disabled = true; }); // it only restyles the report's snippets
 
   // Puts a snippet image (or its reference) into the report in the chosen
   // style. `rect` is the snippet's fractional rect on its page (default the
@@ -1702,6 +1703,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       const toSel = document.createElement("select");
       fromSel.setAttribute("aria-label", "First page");
       toSel.setAttribute("aria-label", "Last page");
+      fromSel.disabled = toSel.disabled = !canEdit; // the range only feeds Insert
       for (const sel of [fromSel, toSel]) {
         pages.forEach((p) => sel.add(new Option(label(p), String(p))));
       }
