@@ -1812,11 +1812,11 @@ def render_report_pdf(title, doc_json, margins=None, page_numbers=None, links=No
     writer.close()
     if links is not None:
         links.extend(_link_rects(buf.getvalue(), found))
-    if pn["position"] == "none":
-        return buf.getvalue()
+    # fitz.Story writes embedded images uncompressed (~11 MB for a 200 dpi page), so the file is always re-saved deflated.
     with fitz.open(stream=buf.getvalue(), filetype="pdf") as numbered:
-        stamp_page_numbers(numbered, pn, m)
-        return numbered.tobytes()
+        if pn["position"] != "none":
+            stamp_page_numbers(numbered, pn, m)
+        return numbered.tobytes(garbage=4, deflate=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3781,7 +3781,7 @@ def _annexure_pdf_bytes(payload):
                 rows.append((f"{doc_number_label(dn, n)} - {text}" if dn["enabled"] else text, annexure_page_range(first, last, pn)))
             with fitz.open(stream=list_of_documents_pdf(payload["listOfDocuments"], rows), filetype="pdf") as front:
                 out.insert_pdf(front, start_at=0)
-        data = out.tobytes()
+        data = out.tobytes(garbage=4, deflate=True)
     finally:
         out.close()
     return data
@@ -3894,7 +3894,7 @@ def api_report_export(report_id):
                 if target is not None:
                     merged[pno].insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": report_pages + front + target,
                                              "to": fitz.Point(0, 0)})
-            pdf_bytes = merged.tobytes()
+            pdf_bytes = merged.tobytes(garbage=4, deflate=True)
 
     log_activity("download", "report", report_id, "PDF" + (" with annexures" if payload else ""))
     resp = Response(pdf_bytes, mimetype="application/pdf")
