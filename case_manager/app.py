@@ -2661,7 +2661,14 @@ def allegations_view():
     focus_id = request.args.get("allegation", "")
     if focus_id:
         check_report_id(focus_id)
-    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, can_create=can_create_items())
+    shared = False
+    if focus_id and not g.user.is_guest:
+        allegation = storage.get_allegation(focus_id)
+        if allegation is not None:
+            # Governed by the better of the cause and allegation roles (see require_allegation_role).
+            roles = {storage.get_role(g.user.id, "cause", allegation["cause_id"]), storage.get_role(g.user.id, "allegation", focus_id)}
+            shared = "owner" not in roles and bool(roles - {None})
+    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_items())
 
 
 @app.route("/causes")
@@ -2701,7 +2708,9 @@ def cases_view():
 
 @app.route("/case-details")
 def case_details_view():
-    return render_template("case_details.html", is_admin=g.user.is_admin)
+    case_id = request.args.get("case", "")
+    shared = bool(DOC_ID_RE.match(case_id)) and is_shared_with_me("case", case_id)
+    return render_template("case_details.html", is_admin=g.user.is_admin, shared_with_me=shared)
 
 
 # ---------------------------------------------------------------------------
