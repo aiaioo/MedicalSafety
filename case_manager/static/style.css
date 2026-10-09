@@ -593,6 +593,11 @@ a.tag:hover { background: #d7deec; }
   font-size: 13px; padding: 4px 6px; border-radius: 4px; line-height: 1;
 }
 .card-save-btn:hover { background: #eef3fc; color: #2266dd; }
+/* The card's owner, pinned to the bottom-left corner opposite the save button. */
+.card-owner {
+  position: absolute; left: 20px; bottom: 10px; max-width: calc(100% - 70px); font-size: 11px; color: #8a92a5;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Brief highlight on a field right after Enter forces an immediate save,
    since the header's save-status text is easy to miss while eyes are on

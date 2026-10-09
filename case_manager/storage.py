@@ -1610,6 +1610,22 @@ def accessible_ids(user_id: int, kind: str) -> set[str]:
         return {r["id"] for r in cur.fetchall()}
 
 
+def owner_names(kind: str, object_ids: list[str]) -> dict[str, tuple[int, str]]:
+    """{object id: (owner's user id, owner's name)} for these objects -- the
+    earliest owner if several -- naming them by full name, else email."""
+    if not object_ids:
+        return {}
+    table, column = _ACCESS_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(
+            f"SELECT DISTINCT ON (a.{column}) a.{column} AS object_id, u.id AS user_id, u.full_name, u.email "  # noqa: S608
+            f"FROM {table} a JOIN users u ON u.id = a.user_id WHERE a.role = 'owner' AND a.{column} = ANY(%s) "
+            f"ORDER BY a.{column}, a.created_at, u.id",
+            (list(object_ids),),
+        )
+        return {r["object_id"]: (r["user_id"], _dec_text(r["full_name"]) or _dec_text(r["email"])) for r in cur.fetchall()}
+
+
 def document_annexed_in_viewable_report(user_id: int, document_id: str) -> bool:
     """Whether the document is annexed in a report the user can view, so they may see its whole pages there."""
     with _cursor() as cur:

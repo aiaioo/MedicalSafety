@@ -42,6 +42,12 @@
       .replace(/>/g, "&gt;");
   }
 
+  // The card's creator, pinned bottom-left .
+  function ownerLabel(a) {
+    const name = a.owner_name;
+    return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -304,7 +310,8 @@
       <textarea class="allegation-summary-input" rows="2" placeholder="Brief description of the allegation…" maxlength="10000"></textarea>
       <div class="allegation-card-meta"></div>
       <div class="case-links-inline"></div>
-      <div class="allegation-cause">Cause: <span class="allegation-cause-name"></span></div>`;
+      <div class="allegation-cause">Cause: <span class="allegation-cause-name"></span></div>
+      ${ownerLabel(allegation)}`;
 
     const titleEl = card.querySelector(".allegation-title-input");
     titleEl.value = allegation.title;
@@ -414,7 +421,7 @@
         return res.json();
       })
       .then((data) => {
-        allegations.push({ ...data, role: "owner" });
+        allegations.push({ ...data, role: "owner", owner_name: "You" });
         selectedId = data.id;
         renderAllegationList();
         renderDetail();

@@ -30,6 +30,12 @@
       .replace(/>/g, "&gt;");
   }
 
+  // The card's owner, pinned bottom-left .
+  function ownerLabel(c) {
+    const name = c.owner_name;
+    return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -219,7 +225,8 @@
         ${c.goal_count === 0 ? '<button type="button" class="card-delete-btn" title="Delete cause">✕</button>' : ""}
       </div>
       <textarea class="allegation-summary-input" rows="2" placeholder="Describe this cause…" maxlength="10000"></textarea>
-      <div class="allegation-card-meta"></div>`;
+      <div class="allegation-card-meta"></div>
+      ${ownerLabel(c)}`;
 
     const titleEl = card.querySelector(".allegation-title-input");
     titleEl.value = c.title;
@@ -312,7 +319,7 @@
         title: data.title,
         description: data.description,
         goal_count: 0,
-        role: "owner",
+        role: "owner", owner_name: "You",
         created_at: data.created_at,
         updated_at: data.updated_at,
       });

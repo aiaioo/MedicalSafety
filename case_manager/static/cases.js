@@ -38,6 +38,12 @@
       .replace(/>/g, "&gt;");
   }
 
+  // The card's owner, pinned bottom-left .
+  function ownerLabel(c) {
+    const name = c.owner_name;
+    return name ? `<span class="card-owner" title="Creator">Creator: ${escapeHtml(name)}</span>` : "";
+  }
+
   function genId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -289,7 +295,8 @@
       <div class="case-cause-row">
         <label class="case-cause-label">Cause</label>
       </div>
-      <div class="allegation-card-meta"></div>`;
+      <div class="allegation-card-meta"></div>
+      ${ownerLabel(c)}`;
 
     function cardPartial() {
       return { name: c.name, summary: c.summary, cause_id: c.cause_id };
@@ -399,7 +406,7 @@
         summary: data.summary,
         allegation_count: 0,
         hearing_count: 0,
-        role: "owner",
+        role: "owner", owner_name: "You",
         created_at: data.created_at,
         updated_at: data.updated_at,
       });

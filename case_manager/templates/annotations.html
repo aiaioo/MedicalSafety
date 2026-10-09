@@ -32,6 +32,7 @@
             <div class="report-card-meta">{{ d.type }}</div>
             <div class="report-card-meta">{{ d.snippet_count }} {{ "snippet" if d.snippet_count == 1 else "snippets" }}</div>
             <div class="report-card-meta" title="{{ d.cause_titles | join(", ") }}">Cause: {{ d.cause_titles | join(", ") or "None" }}</div>
+            {% if d.owner_name %}<div class="report-card-meta card-owner-line" title="Creator">Creator: {{ d.owner_name }}</div>{% endif %}
           </a>
           {% endfor %}
         </div>

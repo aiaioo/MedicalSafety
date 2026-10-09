@@ -376,7 +376,7 @@ def allegation_roles(allegations):
 
 def with_allegation_roles(allegations):
     roles = allegation_roles(allegations)
-    return [{**a, "role": roles[a["id"]]} for a in allegations]
+    return attach_owners("allegation", [{**a, "role": roles[a["id"]]} for a in allegations])
 
 
 def visible_allegations():
@@ -462,6 +462,19 @@ def add_cause_titles(items, only_cause=None):
         item["cause_titles"] = sorted(titles[i] for i in ids if i in titles)
         kept.append(item)
     return kept
+
+
+def attach_owners(kind, items):
+    """Sets item["owner_name"] on each cause / case / allegation / document dict for its card: its owner's name, or "You". Left
+    out for guests -- someone who got in with a link isn't told who the owner is."""
+    if g.user.is_guest:
+        return items
+    owners = storage.owner_names(kind, [i["id"] for i in items])
+    for item in items:
+        owner = owners.get(item["id"])
+        if owner:
+            item["owner_name"] = "You" if owner[0] == g.user.id else owner[1]
+    return items
 
 
 def default_cause_only(create=False):
@@ -2548,7 +2561,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        return render_template("annotations.html", doc_id="", docs=list_source_docs(resolve_default_cause_id(create=False)), default_cause=default_cause_for_display(), can_create=can_create_items())
+        return render_template("annotations.html", doc_id="", docs=attach_owners("source", list_source_docs(resolve_default_cause_id(create=False))), default_cause=default_cause_for_display(), can_create=can_create_items())
 
     try:
         page = int(request.args.get("page", 1))
@@ -4044,7 +4057,7 @@ def api_allegation_cases():
                 "updated_at": case["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(items)
+        return jsonify(attach_owners("case", items))
 
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()[:200]
@@ -4204,7 +4217,7 @@ def api_causes():
                 "updated_at": cause["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(items)
+        return jsonify(attach_owners("cause", items))
 
     body = request.get_json(silent=True) or {}
     title = str(body.get("title") or "").strip()[:ALLEGATION_MAX_TITLE_CHARS]
