@@ -45,8 +45,6 @@
     els.list = el("div");
     els.empty = el("p", {className: "empty", textContent: "No keys yet."});
     const close = el("button", {type: "button", textContent: "Close"});
-    els.reports = el("div", {className: "key-reports"});
-    els.perm.addEventListener("change", updateReportPickers);
     const form = el("div", {className: "key-form"}, [
       el("label", {className: "modal-field"}, ["Permission", els.perm]),
       els.create,
@@ -55,7 +53,7 @@
       el("div", {className: "modal modal-wide"}, [
         els.title,
         el("p", {className: "modal-hint", textContent: "Anyone with a key can open this (and everything beneath it) without an account, after solving a captcha. Delete a key to stop sharing."}),
-        form, els.reports, els.error, els.empty, els.list,
+        form, els.error, els.empty, els.list,
         el("div", {className: "modal-actions"}, [close]),
       ]),
     ]);
@@ -67,7 +65,7 @@
       showError("");
       els.create.disabled = true;
       try {
-        await api(keysUrl(current), "POST", {permission: els.perm.value, edit_reports: checkedReports(els.reports)});
+        await api(keysUrl(current), "POST", {permission: els.perm.value});
         await refresh();
       } catch (e) { showError(e.message); }
       finally { els.create.disabled = false; }
@@ -125,38 +123,42 @@
     return Array.prototype.map.call(container.querySelectorAll("input:checked"), function (cb) { return cb.value; });
   }
 
-  function updateReportPickers() {
-    els.reports.replaceChildren();
-    if (!canPickReports(els.perm.value)) return;
-    els.reports.appendChild(el("p", {className: "modal-hint", textContent: "Optionally let this link also edit these reports (and the documents they draw on):"}));
-    els.reports.appendChild(reportChecklist([]));
-  }
-
+  // Ticking or unticking a report saves straight away and flashes the box green; if the save fails the tick is undone.
   function keyReportsEditor(k) {
     const list = reportChecklist(k.edit_reports || []);
-    const save = el("button", {type: "button", className: "btn", textContent: "Save"});
-    const status = el("span", {className: "collab-role"});
-    save.addEventListener("click", async function () {
-      save.disabled = true;
+    const summary = el("summary");
+    const box = el("details", {className: "key-edit-reports", open: (k.edit_reports || []).length > 0}, [summary, list]);
+    function describe() {
+      const n = (k.edit_reports || []).length;
+      summary.textContent = n ? "Can also edit " + n + " report" + (n === 1 ? "" : "s") + " (and the documents they draw on)"
+                              : "Also allow editing particular reports\u2026";
+    }
+    describe();
+    list.addEventListener("change", async function (e) {
+      const cb = e.target;
+      const wanted = checkedReports(list);
+      list.querySelectorAll("input").forEach(function (i) { i.disabled = true; });
       try {
-        await api(itemUrl(current.kind, k.id) + "/reports", "PUT", {edit_reports: checkedReports(list)});
-        status.textContent = "Saved";
-        await refresh();
-      } catch (e) { showError(e.message); }
-      finally { save.disabled = false; }
+        await api(itemUrl(current.kind, k.id) + "/reports", "PUT", {edit_reports: wanted});
+        k.edit_reports = wanted;
+        describe();
+        showError("");
+        box.classList.remove("save-flash");
+        void box.offsetWidth; // restart the animation
+        box.classList.add("save-flash");
+      } catch (err) {
+        cb.checked = !cb.checked;
+        showError(err.message);
+      } finally {
+        list.querySelectorAll("input").forEach(function (i) { i.disabled = false; });
+      }
     });
-    const n = (k.edit_reports || []).length;
-    return el("details", {className: "key-edit-reports"}, [
-      el("summary", {textContent: n ? "Can also edit " + n + " report" + (n === 1 ? "" : "s") : "Also allow editing particular reports…"}),
-      list,
-      editableReports.length ? el("div", {}, [save, status]) : "",
-    ]);
+    return box;
   }
 
   async function refresh() {
     const data = await api(keysUrl(current));
     editableReports = data.editable_reports || [];
-    updateReportPickers();
     els.list.replaceChildren.apply(els.list, data.keys.map(keyRow));
     els.empty.style.display = data.keys.length ? "none" : "";
   }
