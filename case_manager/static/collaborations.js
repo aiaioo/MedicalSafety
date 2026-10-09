@@ -5,6 +5,7 @@
   const captchaUrl = appEl.dataset.captchaUrl;
   const seenUrl = appEl.dataset.seenUrl;
   const itemUrlBase = appEl.dataset.itemUrlBase; // ends in /0
+  const openUrls = JSON.parse(appEl.dataset.openUrls); // where each kind opens; cases, reports and documents take the id on the end
   const KIND_LABELS = {cause: "Causes", case: "Cases", allegation: "Allegations", report: "Reports", source: "Documents"};
   const KINDS = Object.keys(KIND_LABELS);
 
@@ -20,6 +21,12 @@
   let shareable = {};
 
   function itemUrl(id, suffix) { return itemUrlBase.replace(/0$/, String(id)) + (suffix || ""); }
+
+  // Causes and allegations have no page of their own: their list pages show everything shared with the user.
+  function openUrl(kind, id) {
+    const base = openUrls[kind];
+    return /[=]$/.test(base) ? base + encodeURIComponent(id) : base;
+  }
 
   function el(tag, opts, children) {
     const e = document.createElement(tag);
@@ -88,7 +95,7 @@
       const ul = el("ul");
       items.forEach(function (o) {
         const note = o.direct ? o.role : o.role + ", inherited from a parent";
-        ul.appendChild(el("li", {}, [o.title + " ", el("span", {className: "collab-role", textContent: "(" + note + ")"})]));
+        ul.appendChild(el("li", {}, [el("a", {href: openUrl(kind, o.id), textContent: o.title}), " ", el("span", {className: "collab-role", textContent: "(" + note + ")"})]));
       });
       box.appendChild(el("div", {}, [el("span", {className: "kind", textContent: KIND_LABELS[kind]}), ul]));
     });
