@@ -360,7 +360,17 @@
     try {
       const [casesRes] = await Promise.all([fetch(casesUrl + "?default_cause=1"), loadSourceDocs(), loadCauses()]);
       cases = await casesRes.json();
+      // A link from the Causes page may name a case under a different cause
+      // than the default one; the unfiltered list only holds cases this user
+      // can access.
+      const wanted = new URLSearchParams(location.search).get("case");
+      if (wanted && !cases.some((c) => c.id === wanted)) {
+        const all = await (await fetch(casesUrl)).json();
+        const extra = all.find((c) => c.id === wanted);
+        if (extra) cases.unshift(extra);
+      }
       renderCaseList();
+      if (wanted && cases.some((c) => c.id === wanted)) selectCase(wanted);
     } catch (e) {
       console.error(e);
     }

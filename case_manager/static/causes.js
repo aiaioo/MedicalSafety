@@ -540,6 +540,30 @@
     for (const g of detailCause.goals) listEl.appendChild(buildGoalCard(g));
   }
 
+  // Read-only cards for the cause's cases. `cases` comes from the same
+  // endpoint the rest of the app uses, which only returns cases the user has
+  // viewer or editor access to, so nothing else is ever shown.
+  function renderCauseCases() {
+    const listEl = causeDetailEl.querySelector(".cause-cases-list");
+    const emptyEl = causeDetailEl.querySelector(".cause-cases-empty");
+    const items = cases.filter((c) => c.cause_id === detailCause.id);
+    emptyEl.style.display = items.length ? "none" : "block";
+    listEl.innerHTML = "";
+    for (const c of items) {
+      const card = document.createElement("a");
+      card.className = "allegation-card case-card";
+      card.style.textDecoration = "none";
+      card.style.color = "inherit";
+      card.href = `${casesPageUrl}?case=${encodeURIComponent(c.id)}`;
+      const meta = [c.court, c.case_number].filter(Boolean).join(" · ");
+      card.innerHTML = `
+        <div class="allegation-card-head"><strong>${escapeHtml(c.name || c.id)}</strong></div>
+        ${c.summary ? `<p>${escapeHtml(c.summary)}</p>` : ""}
+        <div class="allegation-card-meta">${escapeHtml(meta)}</div>`;
+      listEl.appendChild(card);
+    }
+  }
+
   function reorderGoalsFromDom() {
     const listEl = causeDetailEl.querySelector(".goal-list");
     const ids = [...listEl.querySelectorAll(".goal-card")].map((el) => el.dataset.id);
@@ -562,7 +586,12 @@
         <button type="button" class="btn" id="addGoalBtn">+ Add goal</button>
       </div>
       <p class="empty goal-empty" style="display:none">No goals yet.</p>
-      <div class="evidence-list goal-list"></div>`;
+      <div class="evidence-list goal-list"></div>
+      <div class="allegations-column-head">
+        <h2>Cases</h2>
+      </div>
+      <p class="empty cause-cases-empty" style="display:none">No cases under this cause.</p>
+      <div class="allegation-list cause-cases-list"></div>`;
 
     causeDetailEl.querySelector(".share-slot").appendChild(ShareKey.button("cause", detailCause.id, { enabled: canEdit(detailCause.role) }));
     causeDetailEl.querySelector("#addGoalBtn").addEventListener("click", () => {
@@ -576,6 +605,7 @@
     });
 
     renderGoalList();
+    renderCauseCases();
     enableDragReorder(causeDetailEl.querySelector(".goal-list"), ".goal-card", reorderGoalsFromDom);
     if (!canEdit(detailCause.role)) window.ReadOnlyLock.lock(causeDetailEl);
   }
