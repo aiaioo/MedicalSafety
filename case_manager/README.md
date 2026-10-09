@@ -57,18 +57,29 @@ that specific object, in the `user_causes` / `user_cases` / `user_reports` /
 `user_sources` tables:
 
 - **viewer** -- can read it.
+- **creator** ("View and create"; granted on a cause only, as a share or a
+  Share-link key) -- can also create things under the cause: cases,
+  allegations, reports and uploaded documents. They own what they create, so
+  they can edit it (and annotate their documents), but not what others made,
+  nor the cause itself.
 - **editor** -- can also change it. On a cause, an editor can also create
-  cases under it. On a cause or case, an editor can also create reports and
-  upload sources associated with it.
+  cases and allegations under it. On a cause or case, an editor can also
+  create reports and upload sources associated with it.
 - **owner** -- can also delete it. Whoever creates something owns it.
+
+Share links (secret keys) never let their holder create anything, and only
+view -- except a report's or document's link, which may allow editing.
+A view-only link on a cause, case or allegation can also be given edit access to
+particular reports beneath it (`key_child_access`); the documents those reports
+draw on become editable with them, and no others do.
 
 Reports and sources don't belong to a cause or case. They're associated
 with any number of causes and/or cases (`report_causes`, `report_cases`,
 `source_causes`, `source_cases`). A new one is associated with its
 creator's **default cause** (`users.default_cause_id`): the cause they last
 selected in the causes workspace (or last put a case under). If that's
-unset or no longer editable, it's the most recently updated cause they can
-edit, or failing that a new "General" cause. Further associations are added or removed
+unset or they can no longer create in it, it's the most recently updated cause they can
+create in (creator, editor or owner), or failing that a new "General" cause. Further associations are added or removed
 with `POST` / `DELETE /api/report/<id>/links` or `/api/doc/<id>/links`
 (body `{"cause_id": ...}` or `{"case_id": ...}`), which needs edit access to
 both sides; the last association can't be removed.

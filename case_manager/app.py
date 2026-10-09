@@ -278,14 +278,15 @@ def handle_document_error(err):
 
 # ---------------------------------------------------------------------------
 # Per-object access (see db/migrations/001_users_and_access.sql). A viewer
-# can read an object, an editor can also change it -- and, for a cause,
-# create cases under it; for a cause or case, create reports / upload
-# sources associated with it --
-# and only its owner -- whoever created it -- can delete it. A user with no
+# can read an object; a creator ("View and create", granted on a cause only)
+# can also create things under the cause -- cases, allegations, reports,
+# uploaded documents -- and edit what they created, as its owner; an editor
+# can also change everything under it (and create too); and only an owner --
+# whoever created the object -- can delete it. A user with no
 # role on an object gets the same 404 as for one that doesn't exist, so ids
 # can't be probed for.
 # ---------------------------------------------------------------------------
-ROLE_RANK = {"viewer": 1, "editor": 2, "owner": 3}
+ROLE_RANK = {"viewer": 1, "creator": 2, "editor": 3, "owner": 4}
 ACCESS_LABELS = {"cause": "cause", "case": "case", "report": "report", "source": "document", "allegation": "allegation"}
 
 
@@ -339,11 +340,17 @@ def log_activity(action, kind, object_id, detail=""):
         app.logger.exception("Could not log %s of %s %s", action, kind, object_id)
 
 
+def _as_allegation_role(cause_role):
+    """What a role on a cause means for an allegation beneath it: creating
+    allegations (a "creator"'s right) isn't changing them, so it counts as viewing."""
+    return "viewer" if cause_role == "creator" else cause_role
+
+
 def require_allegation_role(allegation, min_role="viewer"):
     """An allegation is governed by the better of the user's role on its
     cause and their role on the allegation itself (a collaborator may be
     given one without the other)."""
-    roles = [storage.get_role(g.user.id, "cause", allegation["cause_id"]),
+    roles = [_as_allegation_role(storage.get_role(g.user.id, "cause", allegation["cause_id"])),
              storage.get_role(g.user.id, "allegation", allegation["id"])]
     best = max((r for r in roles if r), key=ROLE_RANK.get, default=None)
     if best is None:
@@ -357,7 +364,7 @@ def allegation_roles(allegations):
     """{allegation id: role} -- the better of the user's roles on the
     allegation's cause and on the allegation itself (as in
     require_allegation_role)."""
-    cause_roles = {c["id"]: c["role"] for c in storage.list_causes(g.user.id)}
+    cause_roles = {c["id"]: _as_allegation_role(c["role"]) for c in storage.list_causes(g.user.id)}
     roles = {}
     for a in allegations:
         candidates = [cause_roles.get(a["cause_id"])]
@@ -379,7 +386,7 @@ def visible_allegations():
 def require_link_target(fields, what):
     """The one cause or case a report/source is being associated with,
     from `fields` (a JSON body or form) carrying exactly one of cause_id /
-    case_id -- the user must be able to edit it. Returns ("cause" | "case",
+    case_id -- the user must be able to create things under it. Returns ("cause" | "case",
     id), the shape storage's link functions take."""
     cause_id, case_id = fields.get("cause_id"), fields.get("case_id")
     if bool(cause_id) == bool(case_id):
@@ -387,16 +394,15 @@ def require_link_target(fields, what):
     target_kind, target_id = ("cause", cause_id) if cause_id else ("case", case_id)
     if not isinstance(target_id, str) or not DOC_ID_RE.match(target_id):
         raise DocumentError(f"Invalid {target_kind} id: {target_id!r}", 400)
-    require_role(target_kind, target_id, "editor")
+    require_role(target_kind, target_id, "creator")
     return target_kind, target_id
 
 
 def can_create_items():
     """Whether this user can create new causes' children (cases,
     allegations, reports, uploads): anyone signed in can, since a cause is
-    made on the fly; a guest (key session) only if the key gave them a
-    cause they can edit."""
-    return not g.user.is_guest or resolve_default_cause_id(create=False) is not None
+    made on the fly; a guest (key session) never can."""
+    return not g.user.is_guest
 
 
 def editable_cases():
@@ -496,13 +502,16 @@ def slugify_report_name(name):
     return slug[:50] or "document"
 
 
-def require_editable_cause(raw):
-    """A cause a case is being put under -- the user must be able to edit
-    it (a case is a child of its cause)."""
+def require_creatable_cause(raw):
+    """A cause a case or allegation is being put under -- the user must be
+    able to create things in it (View and create, edit or own)."""
     if not isinstance(raw, str) or not DOC_ID_RE.match(raw):
         raise DocumentError(f"Invalid cause id: {raw!r}", 400)
-    require_role("cause", raw, "editor")
+    require_role("cause", raw, "creator")
     return raw
+
+
+
 
 
 def create_default_cause():
@@ -513,16 +522,16 @@ def create_default_cause():
 
 def resolve_default_cause_id(exclude_cause_id=None, create=True):
     """The user's default cause (see users.default_cause_id) -- the cause
-    they last selected, as long as they can still edit it; else the most
-    recently updated cause they can edit; else (when `create`) a freshly
+    they last selected, as long as they can still create in it (View and
+    create, edit or own); else the most recently updated cause they can; else (when `create`) a freshly
     created "General" cause they own, so a case or new report/source is
     never left without one. `exclude_cause_id` is passed when reassigning
     cases off a cause that's about to be deleted, so that cause is never
     offered back as its own replacement."""
     default = storage.get_default_cause(g.user.id)
-    if default and default != exclude_cause_id and has_role("cause", default, "editor"):
+    if default and default != exclude_cause_id and has_role("cause", default, "creator"):
         return default
-    fallback = storage.most_recently_updated_editable_cause_id(g.user.id, exclude=exclude_cause_id)
+    fallback = storage.most_recently_updated_creatable_cause_id(g.user.id, exclude=exclude_cause_id)
     return fallback or (create_default_cause() if create else None)
 
 
@@ -562,13 +571,13 @@ def inject_site_name():
 @app.context_processor
 def inject_cause_picker():
     """The title bar's cause picker (templates/_cause_picker.html): the
-    causes this user can edit -- only those can be a default -- and which
-    one is the default now."""
+    causes this user can create in (View and create, edit or own) -- only
+    those can be a default -- and which one is the default now."""
     if not getattr(g, "user", None) or g.user.is_guest:
         return {}
     causes = [
         {"id": c["id"], "title": c["title"] or c["id"]}
-        for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor")
+        for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor", "creator")
     ]
     # Every user has a default cause: if theirs is gone (e.g. it was deleted
     # from under them by a collaborator), pick or create one and keep it.
@@ -2827,7 +2836,7 @@ def api_collaboration_accept(collaboration_id):
 @app.route("/api/collaboration/<int:collaboration_id>/access", methods=["PUT"])
 def api_collaboration_access(collaboration_id):
     """Sets which of the user's own objects the collaborator can see/edit:
-    {"cause": {"<id>": "viewer" | "editor", ...}, "case": {...}, ...}. Each
+    {"cause": {"<id>": "viewer" | "creator" | "editor", ...}, "case": {...}, ...}. Each
     kind given is replaced wholesale; a kind left out is untouched."""
     _, other_id = own_collaboration(collaboration_id, confirmed=True)
     body = request.get_json(silent=True) or {}
@@ -2837,7 +2846,7 @@ def api_collaboration_access(collaboration_id):
             continue
         wanted = body[kind]
         if not isinstance(wanted, dict) or any(
-            not isinstance(oid, str) or role not in storage.SHARE_ROLES for oid, role in wanted.items()
+            not isinstance(oid, str) or role not in storage.share_roles(kind) for oid, role in wanted.items()
         ):
             raise DocumentError(f"Invalid access list for {kind}", 400)
         grants[kind] = wanted
@@ -2889,13 +2898,55 @@ def api_object_keys(kind, object_id):
     if request.method == "GET":
         endpoint, param = KEY_PAGE_URLS[kind]
         url = url_for(endpoint, _external=True, **{param: object_id})
-        return jsonify({"keys": [{**k, "url": url} for k in storage.list_object_keys(kind, object_id)]})
+        keys = [{**k, "url": url, "edit_reports": [c["id"] for c in storage.get_key_children(kind, k["id"])]}
+                for k in storage.list_object_keys(kind, object_id)]
+        return jsonify({"keys": keys, "editable_reports": editable_reports_under(kind, object_id)})
 
     body = request.get_json(silent=True) or {}
-    if body.get("permission") not in storage.KEY_PERMISSIONS:
-        raise DocumentError("Permission must be viewer or editor", 400)
-    storage.create_key(g.user.id, kind, object_id, body["permission"])
+    if body.get("permission") not in storage.key_permissions(kind):
+        raise DocumentError("Invalid permission for this kind of object", 400)
+    reports = checked_key_reports(kind, object_id, body.get("edit_reports"))
+    created = storage.create_key(g.user.id, kind, object_id, body["permission"])
+    if reports:
+        storage.set_key_children(kind, created["id"], [("report", r) for r in reports])
     return jsonify({"ok": True}), 201
+
+
+def editable_reports_under(kind, object_id):
+    """{"id", "name"} of the reports beneath a cause, case or allegation that
+    the user may let a link on it edit (they must be able to edit them
+    themselves), by name."""
+    reach = storage.key_reach(kind, object_id)
+    items = [{"id": r["id"], "name": r["name"] or r["id"]} for r in storage.list_reports(g.user.id)
+             if r["id"] in reach and ROLE_RANK[r["role"]] >= ROLE_RANK["editor"]]
+    items.sort(key=lambda r: r["name"].lower())
+    return items
+
+
+def checked_key_reports(kind, object_id, raw):
+    """The report ids a link may be given edit access to: reports beneath its
+    object that the user can edit. Their linked documents come with them."""
+    if raw in (None, []):
+        return []
+    if not isinstance(raw, list) or not all(isinstance(r, str) for r in raw):
+        raise DocumentError("edit_reports must be a list of report ids", 400)
+    allowed = {r["id"] for r in editable_reports_under(kind, object_id)}
+    if any(r not in allowed for r in raw):
+        raise DocumentError("A link can only allow editing reports beneath it that you can edit", 400)
+    return list(dict.fromkeys(raw))
+
+
+@app.route("/api/key/<kind>/<int:key_id>/reports", methods=["PUT"])
+def api_object_key_reports(kind, key_id):
+    """Replaces the list of reports (beyond what its permission gives) that a link lets its holders edit."""
+    kind = key_kind(kind)
+    object_id = storage.get_key_object(kind, key_id)
+    if object_id is None:
+        raise DocumentError("No such key", 404)
+    require_key_manager(kind, object_id)
+    reports = checked_key_reports(kind, object_id, (request.get_json(silent=True) or {}).get("edit_reports"))
+    storage.set_key_children(kind, key_id, [("report", r) for r in reports])
+    return jsonify({"edit_reports": reports})
 
 
 @app.route("/api/key/<kind>/<int:key_id>", methods=["DELETE"])
@@ -4005,7 +4056,7 @@ def api_allegation_cases():
     # most recently used -- see resolve_default_cause_id, which is
     # guaranteed to return a real, editable id.
     raw_cause_id = body.get("cause_id")
-    cause_id = require_editable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
+    cause_id = require_creatable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
     storage.set_default_cause(g.user.id, cause_id)
 
     case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
@@ -4051,7 +4102,7 @@ def api_allegation_case(case_id):
     # that cause, just like creating a case there would.
     cause_id = body.get("cause_id", existing["cause_id"]) or existing["cause_id"]
     if cause_id != existing["cause_id"]:
-        require_editable_cause(cause_id)
+        require_creatable_cause(cause_id)
         storage.set_default_cause(g.user.id, cause_id)
 
     existing_doc_ids = {
@@ -4235,7 +4286,7 @@ def api_allegations():
     # An allegation's cause is mandatory: an explicit cause_id wins (the user
     # must be able to edit that cause), else their default cause.
     raw_cause_id = body.get("cause_id")
-    cause_id = require_editable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
+    cause_id = require_creatable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
     allegation_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
     allowed_report_ids = linkable_ids("report")
@@ -4285,7 +4336,7 @@ def api_allegation_item(allegation_id):
     # to the new one.
     cause_id = body.get("cause_id", existing["cause_id"]) or existing["cause_id"]
     if cause_id != existing["cause_id"]:
-        require_editable_cause(cause_id)
+        require_creatable_cause(cause_id)
     data = {
         "cause_id": cause_id,
         "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
@@ -4322,7 +4373,7 @@ def api_default_cause():
     -- the cause every report/source they create is associated with, so it
     has to be one they can edit."""
     body = request.get_json(silent=True) or {}
-    cause_id = require_editable_cause(body.get("cause_id"))
+    cause_id = require_creatable_cause(body.get("cause_id"))
     storage.set_default_cause(g.user.id, cause_id)
     return jsonify({"default_cause_id": cause_id})
 

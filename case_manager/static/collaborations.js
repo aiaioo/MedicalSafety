@@ -8,6 +8,8 @@
   const openUrls = JSON.parse(appEl.dataset.openUrls); // where each kind opens; all but causes take the id on the end
   const KIND_LABELS = {cause: "Causes", case: "Cases", allegation: "Allegations", report: "Reports", source: "Documents"};
   const KINDS = Object.keys(KIND_LABELS);
+  const ROLE_LABELS = {creator: "view and create"};
+  function roleLabel(role) { return ROLE_LABELS[role] || role; }
 
   const form = document.getElementById("inviteForm");
   const emailEl = document.getElementById("inviteEmail");
@@ -94,7 +96,7 @@
       any = true;
       const ul = el("ul");
       items.forEach(function (o) {
-        const note = o.direct ? o.role : o.role + ", inherited from a parent";
+        const note = roleLabel(o.direct ? o.role : o.role) + (o.direct ? "" : ", inherited from a parent");
         ul.appendChild(el("li", {}, [el("a", {href: openUrl(kind, o.id), textContent: o.title}), " ", el("span", {className: "collab-role", textContent: "(" + note + ")"})]));
       });
       box.appendChild(el("div", {}, [el("span", {className: "kind", textContent: KIND_LABELS[kind]}), ul]));
@@ -115,17 +117,19 @@
       wrap.appendChild(el("h4", {textContent: KIND_LABELS[kind]}));
       selects[kind] = [];
       objs.forEach(function (o) {
+        // "View and create" only applies to a cause: it's what things are created under.
         const sel = el("select", {}, [
           el("option", {value: "", textContent: "No access"}),
           el("option", {value: "viewer", textContent: "Can view"}),
+          kind === "cause" ? el("option", {value: "creator", textContent: "Can view and create"}) : null,
           el("option", {value: "editor", textContent: "Can edit"}),
-        ]);
+        ].filter(Boolean));
         const cur = byKind[kind][o.id];
         sel.value = (cur && cur.direct) || "";
         selects[kind].push({id: o.id, select: sel});
         const row = el("div", {className: "collab-edit-row"}, [el("span", {className: "title", textContent: o.title, title: o.title}), sel]);
         if (cur && cur.role !== cur.direct) {
-          row.insertBefore(el("span", {className: "collab-role", textContent: "inherits: " + cur.role}), sel);
+          row.insertBefore(el("span", {className: "collab-role", textContent: "inherits: " + roleLabel(cur.role)}), sel);
         }
         wrap.appendChild(row);
       });

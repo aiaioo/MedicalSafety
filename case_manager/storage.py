@@ -1111,14 +1111,14 @@ def create_general_cause(user_id: int) -> str:
     return cause_id
 
 
-def most_recently_updated_editable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
-    """The most recently updated cause this user can add cases to (editor
-    or owner), optionally skipping `exclude`."""
+def most_recently_updated_creatable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
+    """The most recently updated cause this user can create things in -- one
+    they have at least "View and create" on -- optionally skipping `exclude`."""
     with _cursor() as cur:
         cur.execute(
             """
             SELECT c.id FROM causes c
-            JOIN user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s AND uc.role IN ('owner', 'editor')
+            JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s AND uc.role IN ('owner', 'editor', 'creator')
             WHERE c.id IS DISTINCT FROM %s
             ORDER BY c.updated_at DESC LIMIT 1
             """,
@@ -1658,8 +1658,21 @@ _OBJECT_TITLES = {
 }
 # Every kind's title column is stored encrypted, so it can be neither read nor
 # ordered by in SQL -- the listings below decrypt and sort in Python.
-SHARE_ROLES = ("viewer", "editor")
 SHARE_KINDS = tuple(_OBJECT_TITLES)
+
+
+def share_roles(kind: str) -> tuple[str, ...]:
+    """The roles an owner can grant on this kind of object. "creator" (View
+    and create) only makes sense on a cause, the one object things are
+    created under."""
+    return ("viewer", "creator", "editor") if kind == "cause" else ("viewer", "editor")
+
+
+def key_permissions(kind: str) -> tuple[str, ...]:
+    """What a Share link can allow. Anyone may hold a link, so a link can
+    only let its holder view -- except for a report or document, which it can
+    let them edit (a report's link covers its documents)."""
+    return ("viewer", "editor") if kind in ("report", "source") else ("viewer",)
 
 
 def find_collaboration(user_a: int, user_b: int) -> dict | None:
@@ -1827,7 +1840,7 @@ def list_shared_objects(owner_id: int, collaborator_id: int) -> dict[str, list[d
 
 def set_shared_objects(owner_id: int, collaborator_id: int, grants: dict[str, dict[str, str]]) -> None:
     """Makes the collaborator's roles on the owner's objects of each kind
-    named in `grants` ({kind: {object_id: "viewer" | "editor"}}) exactly
+    named in `grants` ({kind: {object_id: "viewer" | "creator" | "editor"}}) exactly
     those: objects not listed lose the collaborator's access. Only objects
     the owner owns are touched, and a role of "owner" is never granted,
     changed or removed."""
@@ -1864,7 +1877,6 @@ _KEY_TABLES = {
     "report": ("report_keys", "report_id"),
     "source": ("document_keys", "document_id"),
 }
-KEY_PERMISSIONS = ("viewer", "editor")
 
 
 def create_key(owner_id: int, kind: str, object_id: str, permission: str) -> dict:
@@ -1903,12 +1915,67 @@ def get_key_object(kind: str, key_id: int) -> str | None:
     return row["object_id"] if row else None
 
 
+def key_reach(kind: str, object_id: str) -> set[str]:
+    """Ids of the reports beneath a cause, case or allegation -- those a link
+    on it covers and so can be given edit access individually: reports
+    associated with it or (for a cause) its cases, or cited by its allegations."""
+    queries = {
+        "cause": [
+            "SELECT report_id AS id FROM report_causes WHERE cause_id = %(o)s",
+            "SELECT rc.report_id AS id FROM report_cases rc JOIN cases c ON c.id = rc.case_id WHERE c.cause_id = %(o)s",
+            "SELECT ae.report_id AS id FROM allegation_evidence ae JOIN allegations a ON a.id = ae.allegation_id "
+            "WHERE a.cause_id = %(o)s AND ae.report_id IS NOT NULL",
+        ],
+        "case": [
+            "SELECT report_id AS id FROM report_cases WHERE case_id = %(o)s",
+            "SELECT ae.report_id AS id FROM allegation_evidence ae JOIN allegation_cases ac ON ac.allegation_id = ae.allegation_id "
+            "WHERE ac.case_id = %(o)s AND ae.report_id IS NOT NULL",
+        ],
+        "allegation": [
+            "SELECT report_id AS id FROM allegation_evidence WHERE allegation_id = %(o)s AND report_id IS NOT NULL",
+        ],
+    }.get(kind, [])
+    found: set[str] = set()
+    with _cursor() as cur:
+        for sql in queries:
+            cur.execute(sql, {"o": object_id})
+            found |= {r["id"] for r in cur.fetchall()}
+    return found
+
+
+def get_key_children(kind: str, key_id: int) -> list[dict]:
+    """[{"kind": "report", "id"}] the key lets its holders edit beneath its object."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(
+            f"SELECT g.kind, g.object_id FROM key_child_access g JOIN {table} k ON k.key = g.key WHERE k.id = %s "  # noqa: S608
+            "ORDER BY g.kind, g.object_id",
+            (key_id,),
+        )
+        return [{"kind": r["kind"], "id": r["object_id"]} for r in cur.fetchall()]
+
+
+def set_key_children(kind: str, key_id: int, children: list[tuple[str, str]]) -> None:
+    """Makes the key's edit grants exactly these (kind, id) pairs (kind is always "report")."""
+    table, _ = _KEY_TABLES[kind]
+    with _cursor() as cur:
+        cur.execute(f"SELECT key FROM {table} WHERE id = %s", (key_id,))  # noqa: S608
+        row = cur.fetchone()
+        if row is None:
+            return
+        cur.execute("DELETE FROM key_child_access WHERE key = %s", (row["key"],))
+        for child_kind, child_id in children:
+            cur.execute("INSERT INTO key_child_access (key, kind, object_id) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (row["key"], child_kind, child_id))
+
+
 def delete_key_by_id(kind: str, key_id: int) -> bool:
     """Deletes the key, so the object is no longer shared by it; the caller has already checked they may manage
     the object's keys. Redemptions of it are kept (they no longer grant anything) so its holders can be told the
     key was deleted -- see has_deleted_key."""
     table, _ = _KEY_TABLES[kind]
     with _cursor() as cur:
+        cur.execute(f"DELETE FROM key_child_access WHERE key IN (SELECT key FROM {table} WHERE id = %s)", (key_id,))  # noqa: S608
         cur.execute(f"DELETE FROM {table} WHERE id = %s", (key_id,))  # noqa: S608
         return cur.rowcount == 1
 
@@ -2002,6 +2069,7 @@ def delete_key_session(token_hash: str) -> None:
 def grant_owner(kind: str, object_id: str, user_id: int) -> None:
     with _cursor() as cur:
         _grant(cur, user_id, kind, object_id, "owner")
+
 
 
 # ---------------------------------------------------------------------------

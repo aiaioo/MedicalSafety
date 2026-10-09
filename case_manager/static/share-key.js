@@ -4,9 +4,11 @@
 // who got in with a key never get a working button: the server refuses them too (require_key_manager).
 (function () {
   const NOUNS = {cause: "cause", case: "case", allegation: "allegation", report: "report", source: "document"};
+  const PERMISSION_LABELS = {viewer: "Can view", creator: "Can view and create", editor: "Can edit"};
   let overlay = null;
   let current = null; // {kind, id}
   let els = {};
+  let editableReports = []; // reports under the current object that the user may let a link edit
 
   function el(tag, opts, children) {
     const e = document.createElement(tag);
@@ -35,14 +37,16 @@
   function build() {
     els.title = el("h3");
     els.perm = el("select", {id: "shareKeyPermission"}, [
-      el("option", {value: "viewer", textContent: "Can view"}),
-      el("option", {value: "editor", textContent: "Can edit"}),
+      el("option", {value: "viewer", textContent: PERMISSION_LABELS.viewer}),
+      el("option", {value: "editor", textContent: PERMISSION_LABELS.editor}),
     ]);
     els.create = el("button", {type: "button", className: "btn", textContent: "Create key"});
     els.error = el("p", {className: "error-message", style: "display:none"});
     els.list = el("div");
     els.empty = el("p", {className: "empty", textContent: "No keys yet."});
     const close = el("button", {type: "button", textContent: "Close"});
+    els.reports = el("div", {className: "key-reports"});
+    els.perm.addEventListener("change", updateReportPickers);
     const form = el("div", {className: "key-form"}, [
       el("label", {className: "modal-field"}, ["Permission", els.perm]),
       els.create,
@@ -51,7 +55,7 @@
       el("div", {className: "modal modal-wide"}, [
         els.title,
         el("p", {className: "modal-hint", textContent: "Anyone with a key can open this (and everything beneath it) without an account, after solving a captcha. Delete a key to stop sharing."}),
-        form, els.error, els.empty, els.list,
+        form, els.reports, els.error, els.empty, els.list,
         el("div", {className: "modal-actions"}, [close]),
       ]),
     ]);
@@ -63,7 +67,7 @@
       showError("");
       els.create.disabled = true;
       try {
-        await api(keysUrl(current), "POST", {permission: els.perm.value});
+        await api(keysUrl(current), "POST", {permission: els.perm.value, edit_reports: checkedReports(els.reports)});
         await refresh();
       } catch (e) { showError(e.message); }
       finally { els.create.disabled = false; }
@@ -90,16 +94,69 @@
       del.disabled = true;
       api(itemUrl(current.kind, k.id), "DELETE").then(refresh).catch(function (e) { showError(e.message); del.disabled = false; });
     });
-    return el("div", {className: "key-row" + (k.active ? "" : " inactive")}, [
-      el("span", {className: "collab-role", textContent: k.permission === "editor" ? "Can edit" : "Can view"}),
+    const row = el("div", {className: "key-row" + (k.active ? "" : " inactive")}, [
+      el("span", {className: "collab-role", textContent: PERMISSION_LABELS[k.permission] || "Can view"}),
       el("code", {className: "key-value", textContent: k.key}),
       el("a", {className: "key-link", href: k.url, textContent: "link", title: k.url}),
       el("span", {className: "collab-actions"}, [copier("Copy link", new URL(k.url, window.location.href).href), copier("Copy key", k.key), del]),
+    ]);
+    if (canPickReports(k.permission)) row.appendChild(keyReportsEditor(k));
+    return row;
+  }
+
+  // A link can let its holders edit particular reports beneath its object (and the documents those reports draw on)
+  // even though the link itself only views. Only reports the user can edit are offered.
+  function canPickReports(permission) { return current.kind !== "report" && current.kind !== "source" && permission === "viewer"; }
+
+  function reportChecklist(selected) {
+    const box = el("div", {className: "key-report-list"});
+    if (!editableReports.length) {
+      box.appendChild(el("p", {className: "empty", textContent: "No reports under this that you can edit."}));
+      return box;
+    }
+    editableReports.forEach(function (r) {
+      const cb = el("input", {type: "checkbox", value: r.id, checked: selected.indexOf(r.id) >= 0});
+      box.appendChild(el("label", {className: "key-report-option"}, [cb, " " + r.name]));
+    });
+    return box;
+  }
+
+  function checkedReports(container) {
+    return Array.prototype.map.call(container.querySelectorAll("input:checked"), function (cb) { return cb.value; });
+  }
+
+  function updateReportPickers() {
+    els.reports.replaceChildren();
+    if (!canPickReports(els.perm.value)) return;
+    els.reports.appendChild(el("p", {className: "modal-hint", textContent: "Optionally let this link also edit these reports (and the documents they draw on):"}));
+    els.reports.appendChild(reportChecklist([]));
+  }
+
+  function keyReportsEditor(k) {
+    const list = reportChecklist(k.edit_reports || []);
+    const save = el("button", {type: "button", className: "btn", textContent: "Save"});
+    const status = el("span", {className: "collab-role"});
+    save.addEventListener("click", async function () {
+      save.disabled = true;
+      try {
+        await api(itemUrl(current.kind, k.id) + "/reports", "PUT", {edit_reports: checkedReports(list)});
+        status.textContent = "Saved";
+        await refresh();
+      } catch (e) { showError(e.message); }
+      finally { save.disabled = false; }
+    });
+    const n = (k.edit_reports || []).length;
+    return el("details", {className: "key-edit-reports"}, [
+      el("summary", {textContent: n ? "Can also edit " + n + " report" + (n === 1 ? "" : "s") : "Also allow editing particular reports…"}),
+      list,
+      editableReports.length ? el("div", {}, [save, status]) : "",
     ]);
   }
 
   async function refresh() {
     const data = await api(keysUrl(current));
+    editableReports = data.editable_reports || [];
+    updateReportPickers();
     els.list.replaceChildren.apply(els.list, data.keys.map(keyRow));
     els.empty.style.display = data.keys.length ? "none" : "";
   }
@@ -107,6 +164,11 @@
   function open(kind, id) {
     if (!overlay) build();
     current = {kind: kind, id: id};
+    // A link can only allow editing a report or document: anyone may hold a link, so nothing wider.
+    const editOption = els.perm.querySelector('option[value="editor"]');
+    editableReports = [];
+    editOption.hidden = editOption.disabled = kind !== "report" && kind !== "source";
+    if (editOption.disabled && els.perm.value === "editor") els.perm.value = "viewer";
     els.title.textContent = "Share this " + (NOUNS[kind] || "item");
     showError("");
     els.list.replaceChildren();
