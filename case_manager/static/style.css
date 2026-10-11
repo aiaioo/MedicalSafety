@@ -1137,3 +1137,7 @@ a.tag:hover { background: #d7deec; }
 .images-save-row input { flex: 1; padding: 8px 10px; font-size: 14px; border: 1px solid #cfd4e0; border-radius: 4px; }
 .images-modal .modal-actions button:last-child { background: #f7f8fa; color: inherit; border-color: #cfd4e0; }
 #imagesSave:not(:disabled) { background: #2266dd; color: white; border-color: #2266dd; }
+.image-thumb .image-thumb-rotate { position: absolute; bottom: 2px; border: none; border-radius: 50%; width: 22px; height: 22px;
+  background: rgba(0,0,0,0.6); color: white; cursor: pointer; font-size: 14px; line-height: 22px; padding: 0; }
+.image-thumb .image-thumb-rotate.left { right: 26px; }
+.image-thumb .image-thumb-rotate.right { right: 2px; }

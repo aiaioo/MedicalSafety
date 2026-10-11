@@ -16,9 +16,8 @@
   const status = document.getElementById("imagesStatus");
 
   const THUMB = 100;
-  const MAX_PX = 3000;      // longest side after re-encoding
   const MAX_PAGE_PT = 842;  // longest page side, in PDF points
-  let items = [];           // [{file, thumb: canvas}] in page order
+  let items = [];           // [{file, base: canvas, thumb: canvas, rot: quarter turns clockwise}] in page order
   let busy = false;
   let dragItem = null;
 
@@ -44,7 +43,9 @@
       const num = document.createElement("span");
       num.className = "image-thumb-num";
       num.textContent = i + 1;
-      cell.append(it.thumb, rm, num);
+      const rotL = rotateButton("↺", "Rotate left", () => { it.rot = (it.rot + 3) % 4; refreshThumb(it); render(); });
+      const rotR = rotateButton("↻", "Rotate right", () => { it.rot = (it.rot + 1) % 4; refreshThumb(it); render(); });
+      cell.append(it.thumb, rm, num, rotL, rotR);
       cell.addEventListener("dragstart", (e) => {
         dragItem = it;
         cell.classList.add("dragging");
@@ -76,6 +77,30 @@
     addBtn.disabled = busy;
   }
 
+  function rotateButton(label, title, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "image-thumb-rotate " + (label === "↺" ? "left" : "right");
+    b.textContent = label;
+    b.title = title;
+    b.disabled = busy;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // Redraw the displayed thumbnail from the unrotated base canvas.
+  function refreshThumb(it) {
+    const swap = it.rot % 2 === 1;
+    const c = document.createElement("canvas");
+    c.width = swap ? it.base.height : it.base.width;
+    c.height = swap ? it.base.width : it.base.height;
+    const ctx = c.getContext("2d");
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(it.rot * Math.PI / 2);
+    ctx.drawImage(it.base, -it.base.width / 2, -it.base.height / 2);
+    it.thumb = c;
+  }
+
   async function decode(file) {
     return createImageBitmap(file, { imageOrientation: "from-image" });
   }
@@ -91,7 +116,7 @@
         c.height = Math.max(1, Math.round(bmp.height * s));
         c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
         bmp.close();
-        items.push({ file, thumb: c });
+        items.push({ file, base: c, thumb: c, rot: 0 });
       } catch (e) {
         failed.push(file.name);
       }
@@ -100,26 +125,95 @@
     render();
   }
 
-  // ---- PDF assembly (JPEG pages, DCTDecode) ----
-  async function toJpeg(file) {
+  // ---- PDF assembly ----
+  const dv = (u8) => new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+
+  // EXIF orientation (1-8) from an APP1 segment payload, or 1.
+  function exifOrientation(u8, start, end) {
+    try {
+      if (end - start < 14 || String.fromCharCode(...u8.subarray(start, start + 4)) !== "Exif") return 1;
+      const t = start + 6, v = dv(u8);
+      const le = u8[t] === 0x49;
+      let ifd = t + v.getUint32(t + 4, le);
+      const n = v.getUint16(ifd, le);
+      for (let k = 0; k < n; k++) {
+        const e = ifd + 2 + k * 12;
+        if (v.getUint16(e, le) === 0x0112) return v.getUint16(e + 8, le) || 1;
+      }
+    } catch (e) { /* malformed EXIF: treat as upright */ }
+    return 1;
+  }
+
+  // Walk a JPEG's header segments. Returns null when it can't be embedded as-is (not a JPEG, arithmetic /
+  // lossless / 12-bit coding), else {w, h, comps, adobe, orient, parts, length}: parts is the original bytes.
+  function parseJpeg(u8) {
+    if (u8.length < 4 || u8[0] !== 0xFF || u8[1] !== 0xD8) return null;
+    let i = 2, w = 0, h = 0, comps = 0, adobe = false, orient = 1;
+    while (i + 4 <= u8.length) {
+      if (u8[i] !== 0xFF) return null;
+      const m = u8[i + 1];
+      if (m === 0xFF) { i++; continue; }  // fill byte
+      const len = (u8[i + 2] << 8) | u8[i + 3];
+      const end = i + 2 + len;
+      if (len < 2 || end > u8.length) return null;
+      if (m === 0xDA) {                    // start of scan: the rest is entropy-coded data
+        if (!w) return null;
+        return { w, h, comps, adobe, orient, parts: [u8], length: u8.length };
+      }
+      if (m === 0xE1 && orient === 1) orient = exifOrientation(u8, i + 4, end);
+      const isSof = m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC;
+      if (isSof) {
+        if (m > 0xC2 || u8[i + 4] !== 8) return null;  // only 8-bit baseline/extended/progressive Huffman
+        h = (u8[i + 5] << 8) | u8[i + 6];
+        w = (u8[i + 7] << 8) | u8[i + 8];
+        comps = u8[i + 9];
+      }
+      if (m === 0xEE) adobe = true;
+      i = end;
+    }
+    return null;
+  }
+
+  // Quarter turns clockwise that display an EXIF orientation upright, or null if it needs mirroring.
+  const EXIF_TURNS = { 1: 0, 3: 2, 6: 1, 8: 3 };
+
+  async function deflate(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  // Lossless fallback: decoded pixels (EXIF already applied by the browser), Flate-compressed, alpha as an SMask.
+  async function rawImage(file) {
     const bmp = await decode(file);
-    const s = Math.min(1, MAX_PX / Math.max(bmp.width, bmp.height));
-    const w = Math.max(1, Math.round(bmp.width * s));
-    const h = Math.max(1, Math.round(bmp.height * s));
+    const w = bmp.width, h = bmp.height;
     const c = document.createElement("canvas");
     c.width = w; c.height = h;
     const ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(bmp, 0, 0, w, h);
+    ctx.drawImage(bmp, 0, 0);
     bmp.close();
-    const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.92));
+    const rgba = ctx.getImageData(0, 0, w, h).data;
     c.width = c.height = 0;
-    if (!blob) throw new Error(`Could not encode ${file.name}`);
-    return { w, h, bytes: new Uint8Array(await blob.arrayBuffer()) };
+    const px = w * h, rgb = new Uint8Array(px * 3);
+    let alpha = null;
+    for (let k = 0, o = 0; k < px; k++, o += 3) {
+      rgb[o] = rgba[k * 4]; rgb[o + 1] = rgba[k * 4 + 1]; rgb[o + 2] = rgba[k * 4 + 2];
+      if (rgba[k * 4 + 3] !== 255) {
+        if (!alpha) { alpha = new Uint8Array(px).fill(255); }
+        alpha[k] = rgba[k * 4 + 3];
+      }
+    }
+    return { w, h, turns: 0, rgb: await deflate(rgb), alpha: alpha && await deflate(alpha) };
   }
 
-  async function buildPdf(files) {
+  async function prepare(file) {
+    const jpeg = parseJpeg(new Uint8Array(await file.arrayBuffer()));
+    if (jpeg && EXIF_TURNS[jpeg.orient] !== undefined && [1, 3, 4].includes(jpeg.comps)) {
+      return { ...jpeg, turns: EXIF_TURNS[jpeg.orient], jpeg: true };
+    }
+    return rawImage(file);
+  }
+
+  async function buildPdf(list) {
     const enc = new TextEncoder();
     const parts = [];
     const offsets = [];
@@ -128,25 +222,38 @@
     const obj = (n, head, stream) => {
       offsets[n] = len;
       push(`${n} 0 obj\n${head}\n`);
-      if (stream) { push("stream\n"); push(stream); push("\nendstream\n"); }
+      if (stream) { push("stream\n"); for (const p of [].concat(stream)) push(p); push("\nendstream\n"); }
       push("endobj\n");
     };
-    const n = files.length;
+    const n = list.length;
+    let next = 3 + n;  // objects 3..2+n are the pages; content/image streams follow
     push("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
     obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
-    obj(2, `<< /Type /Pages /Count ${n} /Kids [${files.map((_, i) => `${3 + i * 3} 0 R`).join(" ")}] >>`);
+    obj(2, `<< /Type /Pages /Count ${n} /Kids [${list.map((_, i) => `${3 + i} 0 R`).join(" ")}] >>`);
     for (let i = 0; i < n; i++) {
-      const img = await toJpeg(files[i]);
+      const img = await prepare(list[i].file);
       const k = Math.min(1, MAX_PAGE_PT / Math.max(img.w, img.h));
       const pw = +(img.w * k).toFixed(2), ph = +(img.h * k).toFixed(2);
-      const page = 3 + i * 3;
-      obj(page, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${page + 2} 0 R >> >> /Contents ${page + 1} 0 R >>`);
+      const rotate = ((img.turns + list[i].rot) % 4) * 90;
       const content = enc.encode(`q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`);
-      obj(page + 1, `<< /Length ${content.length} >>`, content);
-      obj(page + 2, `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.bytes.length} >>`, img.bytes);
-      img.bytes = null;
+      const contentId = next++, imageId = next++;
+      obj(3 + i, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Rotate ${rotate} /Resources << /XObject << /Im0 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+      obj(contentId, `<< /Length ${content.length} >>`, content);
+      if (img.jpeg) {
+        const cs = img.comps === 1 ? "/DeviceGray" : img.comps === 4 ? "/DeviceCMYK" : "/DeviceRGB";
+        const decode = img.comps === 4 && img.adobe ? " /Decode [1 0 1 0 1 0 1 0]" : "";  // Adobe CMYK is stored inverted
+        obj(imageId, `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} /ColorSpace ${cs}${decode} /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.length} >>`, img.parts);
+      } else {
+        let smask = "";
+        if (img.alpha) {
+          const maskId = next++;
+          smask = ` /SMask ${maskId} 0 R`;
+          obj(maskId, `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length ${img.alpha.length} >>`, img.alpha);
+        }
+        obj(imageId, `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode${smask} /Length ${img.rgb.length} >>`, img.rgb);
+      }
     }
-    const total = 3 + n * 3;
+    const total = next;
     const xref = len;
     let x = `xref\n0 ${total}\n0000000000 65535 f \n`;
     for (let i = 1; i < total; i++) x += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
@@ -162,7 +269,7 @@
     nameInput.disabled = true;
     try {
       setStatus("Building PDF…");
-      const pdf = await buildPdf(items.map((it) => it.file));
+      const pdf = await buildPdf(items);
       setStatus("Uploading…");
       const body = new FormData();
       body.append("file", new File([pdf], name.replace(/[\\/]/g, "-") + ".pdf", { type: "application/pdf" }));
