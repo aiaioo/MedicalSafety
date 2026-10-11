@@ -41,6 +41,7 @@
         {% endif %}
         <div class="upload-form">
           <button type="button" id="uploadSubmit" class="btn" {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
+          <button type="button" id="imagesOpen" class="btn" {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images&hellip;</button>
           <input type="file" id="uploadInput" accept=".pdf" hidden>
           <span id="uploadStatus" class="upload-status"></span>
         </div>
@@ -49,6 +50,25 @@
     </div>
   </main>
 </div>
+<div class="modal-overlay" id="imagesModal">
+  <div class="modal images-modal" role="dialog" aria-modal="true" aria-labelledby="imagesTitle">
+    <h3 id="imagesTitle">Create document from images</h3>
+    <p class="modal-hint">Images stay in this browser tab's memory only &mdash; nothing is written to disk or sent anywhere until you save. Drag thumbnails to reorder them.</p>
+    <div id="imagesGrid" class="images-grid"></div>
+    <p id="imagesEmpty" class="empty">No images added yet.</p>
+    <div class="images-add-row">
+      <button type="button" class="btn" id="imagesAdd">Add more images&hellip;</button>
+      <input type="file" id="imagesInput" accept="image/*" multiple hidden>
+    </div>
+    <div class="images-save-row">
+      <input type="text" id="imagesName" placeholder="Document name" maxlength="100" autocomplete="off">
+      <button type="button" class="btn" id="imagesSave" disabled>Save as document</button>
+    </div>
+    <div id="imagesStatus" class="upload-status"></div>
+    <div class="modal-actions"><button type="button" id="imagesClose">Close</button></div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='images-to-pdf.js') }}"></script>
 <script src="{{ url_for('static', filename='annotations-landing.js') }}"></script>
 {% else %}
 <div id="app"

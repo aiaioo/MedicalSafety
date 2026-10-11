@@ -1120,3 +1120,20 @@ a.tag:hover { background: #d7deec; }
 
 /* A blank line between a cause's goals and its cases. */
 .cause-cases-head { margin-top: 1.5em; }
+
+/* ---- create document from images (static/images-to-pdf.js) ---- */
+.images-modal { width: 640px; max-height: 90vh; overflow-y: auto; }
+.images-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+.image-thumb { position: relative; width: 110px; height: 110px; border: 2px solid #e0e2e8; border-radius: 6px;
+  background: #f3f4f7; cursor: grab; display: flex; align-items: center; justify-content: center; }
+.image-thumb canvas { max-width: 100%; max-height: 100%; display: block; pointer-events: none; }
+.image-thumb.dragging { opacity: 0.4; }
+.image-thumb .image-thumb-num { position: absolute; left: 4px; bottom: 4px; background: rgba(0,0,0,0.6); color: white;
+  font-size: 11px; padding: 0 5px; border-radius: 8px; pointer-events: none; }
+.image-thumb .image-thumb-remove { position: absolute; top: 2px; right: 2px; border: none; border-radius: 50%; width: 20px; height: 20px;
+  background: rgba(0,0,0,0.6); color: white; cursor: pointer; font-size: 11px; line-height: 20px; padding: 0; }
+.images-add-row { margin: 10px 0; }
+.images-save-row { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.images-save-row input { flex: 1; padding: 8px 10px; font-size: 14px; border: 1px solid #cfd4e0; border-radius: 4px; }
+.images-modal .modal-actions button:last-child { background: #f7f8fa; color: inherit; border-color: #cfd4e0; }
+#imagesSave:not(:disabled) { background: #2266dd; color: white; border-color: #2266dd; }
