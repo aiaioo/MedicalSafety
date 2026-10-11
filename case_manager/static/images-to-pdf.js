@@ -45,7 +45,9 @@
       num.textContent = i + 1;
       const rotL = rotateButton("↺", "Rotate left", () => { it.rot = (it.rot + 3) % 4; refreshThumb(it); render(); });
       const rotR = rotateButton("↻", "Rotate right", () => { it.rot = (it.rot + 1) % 4; refreshThumb(it); render(); });
-      cell.append(it.thumb, rm, num, rotL, rotR);
+      const mvL = moveButton("◀", "Move earlier", i === 0, () => move(it, -1));
+      const mvR = moveButton("▶", "Move later", i === items.length - 1, () => move(it, 1));
+      cell.append(it.thumb, rm, num, rotL, rotR, mvL, mvR);
       cell.addEventListener("dragstart", (e) => {
         dragItem = it;
         cell.classList.add("dragging");
@@ -75,6 +77,25 @@
     emptyHint.hidden = items.length > 0;
     saveBtn.disabled = busy || items.length === 0;
     addBtn.disabled = busy;
+  }
+
+  // Tap-friendly alternative to drag-and-drop (HTML5 drag doesn't work on touch screens).
+  function moveButton(label, title, atEnd, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "image-thumb-move " + (label === "◀" ? "left" : "right");
+    b.textContent = label;
+    b.title = title;
+    b.disabled = busy || atEnd;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function move(it, delta) {
+    const from = items.indexOf(it);
+    items.splice(from, 1);
+    items.splice(from + delta, 0, it);
+    render();
   }
 
   function rotateButton(label, title, onClick) {
