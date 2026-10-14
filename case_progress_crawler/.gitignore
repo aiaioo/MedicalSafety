@@ -1,0 +1,6 @@
+.venv/
+cron.log
+cron.log.tmp
+__pycache__/
+pdfs/
+state.json
