@@ -26,8 +26,8 @@ import tempfile
 from datetime import datetime
 from urllib.parse import unquote, urljoin, urlparse
 
-import certifi
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
@@ -41,8 +41,6 @@ FUTURE_DIR = os.path.join(PDF_DIR, "future_hearings")
 PAST_DIR = os.path.join(PDF_DIR, "past_hearings")
 UNCLASSIFIED_DIR = os.path.join(PDF_DIR, "unclassified")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
-# The site does not send its intermediate certificate, so ship it with the script.
-EXTRA_CA_FILE = os.path.join(BASE_DIR, "certs", "sectigo_dv_r36.pem")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; kmc-case-progress-crawler)"}
 TIMEOUT = 60
@@ -56,18 +54,13 @@ def log(msg):
 
 
 def make_session():
-    """Requests session that verifies TLS against certifi plus the intermediate cert."""
-    bundle = tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False)
-    with open(certifi.where()) as f:
-        bundle.write(f.read())
-    bundle.write("\n")
-    with open(EXTRA_CA_FILE) as f:
-        bundle.write(f.read())
-    bundle.close()
+    """Requests session with TLS verification off, so an expired or misconfigured
+    certificate on the site does not stop the daily run."""
     session = requests.Session()
     session.headers.update(HEADERS)
-    session.verify = bundle.name
-    return session, bundle.name
+    session.verify = False
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    return session
 
 
 def load_state():
@@ -194,7 +187,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="list new PDFs without downloading")
     args = parser.parse_args()
 
-    session, bundle_path = make_session()
+    session = make_session()
     try:
         resp = session.get(PAGE_URL, timeout=TIMEOUT)
         resp.raise_for_status()
@@ -216,7 +209,7 @@ def main():
                 log(f"  FAILED {url}: {e}")
         return 1 if failures else 0
     finally:
-        os.remove(bundle_path)
+        session.close()
 
 
 if __name__ == "__main__":
