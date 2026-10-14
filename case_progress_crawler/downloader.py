@@ -14,13 +14,19 @@ them into pdfs/future_hearings or pdfs/past_hearings, and records them in
 state.json so they are never downloaded twice. A PDF that fails to download is
 not recorded, so the next run retries it.
 
+Files placed by hand in manually_downloaded/{future,past}_hearings are also
+copied into pdfs/ (same sub-folder, renamed KMC_Enquiry_<date>.pdf) when no
+identical file is already there.
+
 Usage:  python downloader.py [--dry-run]
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime
@@ -40,6 +46,7 @@ PDF_DIR = os.path.join(BASE_DIR, "pdfs")
 FUTURE_DIR = os.path.join(PDF_DIR, "future_hearings")
 PAST_DIR = os.path.join(PDF_DIR, "past_hearings")
 UNCLASSIFIED_DIR = os.path.join(PDF_DIR, "unclassified")
+MANUAL_DIR = os.path.join(BASE_DIR, "manually_downloaded")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; kmc-case-progress-crawler)"}
@@ -182,10 +189,59 @@ def download(session, url, title, state, dry_run):
     return True
 
 
+MANUAL_NAME_RE = re.compile(r"KMC_Enquiry_(\d{8})(?:_after)?\.pdf$", re.IGNORECASE)
+
+
+def file_hash(path):
+    with open(path, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+
+def sync_manual(dry_run):
+    """Copy PDFs from manually_downloaded/ that are not yet in pdfs/ (by content)."""
+    known = set()
+    for root, _, files in os.walk(PDF_DIR):
+        known.update(file_hash(os.path.join(root, f)) for f in files if f.lower().endswith(".pdf"))
+
+    added = 0
+    for root, _, files in sorted(os.walk(MANUAL_DIR)):
+        for f in sorted(files):
+            if f.startswith("."):
+                continue
+            src = os.path.join(root, f)
+            if not f.lower().endswith(".pdf"):
+                log(f"Manual file is not a PDF, skipped: {os.path.relpath(src, BASE_DIR)}")
+                continue
+            digest = file_hash(src)
+            if digest in known:
+                continue
+            # The folder you put it in decides past/future; the name or PDF text gives the date.
+            folder = os.path.basename(root)
+            if folder in ("past_hearings", "future_hearings"):
+                dest_dir = PAST_DIR if folder == "past_hearings" else FUTURE_DIR
+            else:
+                dest_dir = UNCLASSIFIED_DIR
+            m = MANUAL_NAME_RE.match(f)
+            date = m.group(1) if m else hearing_date(pdf_text(src), "")
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = unique_path(dest_dir, f"KMC_Enquiry_{date}") if date else os.path.join(dest_dir, f)
+            log(f"Manual: {os.path.relpath(src, BASE_DIR)} -> {os.path.relpath(dest, BASE_DIR)}")
+            if not dry_run:
+                shutil.copy2(src, dest)
+            known.add(digest)
+            added += 1
+    log(f"{added} manually downloaded PDFs {'would be ' if dry_run else ''}added to pdfs/")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="list new PDFs without downloading")
     args = parser.parse_args()
+
+    try:
+        sync_manual(args.dry_run)
+    except Exception as e:
+        log(f"ERROR syncing manually_downloaded: {e}")
 
     session = make_session()
     try:
