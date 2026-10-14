@@ -16,7 +16,7 @@ not recorded, so the next run retries it.
 
 Files placed by hand in manually_downloaded/{future,past}_hearings are also
 copied into pdfs/ (same sub-folder, renamed KMC_Enquiry_<date>.pdf) when no
-identical file is already there.
+identical (or near-identical) file is already there.
 
 Usage:  python downloader.py [--dry-run]
 """
@@ -30,6 +30,7 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime
+from difflib import SequenceMatcher
 from urllib.parse import unquote, urljoin, urlparse
 
 import requests
@@ -197,11 +198,29 @@ def file_hash(path):
         return hashlib.md5(f.read()).hexdigest()
 
 
+def text_key(path):
+    """PDF text with whitespace removed, so a re-saved or converted copy of the same
+    document matches. None when there is no text (e.g. a scan)."""
+    text = re.sub(r"\s+", "", pdf_text(path))
+    return re.sub(r"\d+\|Page", "", text, flags=re.IGNORECASE) or None  # drop "1 | P a g e" footers
+
+
+SAME_TEXT_RATIO = 0.98
+
+
 def sync_manual(dry_run):
-    """Copy PDFs from manually_downloaded/ that are not yet in pdfs/ (by content)."""
-    known = set()
+    """Copy PDFs from manually_downloaded/ that are not yet in pdfs/. A file counts
+    as already there if its bytes match, or if its text nearly matches (a converted
+    or re-saved copy) a pdfs/ file for the same hearing date."""
+    hashes, texts = set(), {}  # texts: yyyymmdd -> [text_key, ...]
     for root, _, files in os.walk(PDF_DIR):
-        known.update(file_hash(os.path.join(root, f)) for f in files if f.lower().endswith(".pdf"))
+        for f in files:
+            if f.lower().endswith(".pdf"):
+                path = os.path.join(root, f)
+                hashes.add(file_hash(path))
+                m = re.match(r"KMC_Enquiry_(\d{8})", f)
+                if m:
+                    texts.setdefault(m.group(1), []).append(text_key(path))
 
     added = 0
     for root, _, files in sorted(os.walk(MANUAL_DIR)):
@@ -213,22 +232,29 @@ def sync_manual(dry_run):
                 log(f"Manual file is not a PDF, skipped: {os.path.relpath(src, BASE_DIR)}")
                 continue
             digest = file_hash(src)
-            if digest in known:
+            if digest in hashes:
                 continue
-            # The folder you put it in decides past/future; the name or PDF text gives the date.
+            m = MANUAL_NAME_RE.match(f)
+            date = m.group(1) if m else hearing_date(pdf_text(src), "")
+            text = text_key(src)
+            if text and any(
+                t and SequenceMatcher(None, t, text, autojunk=False).ratio() >= SAME_TEXT_RATIO
+                for t in texts.get(date, [])
+            ):
+                continue
+            # The folder you put it in decides past/future.
             folder = os.path.basename(root)
             if folder in ("past_hearings", "future_hearings"):
                 dest_dir = PAST_DIR if folder == "past_hearings" else FUTURE_DIR
             else:
                 dest_dir = UNCLASSIFIED_DIR
-            m = MANUAL_NAME_RE.match(f)
-            date = m.group(1) if m else hearing_date(pdf_text(src), "")
             os.makedirs(dest_dir, exist_ok=True)
             dest = unique_path(dest_dir, f"KMC_Enquiry_{date}") if date else os.path.join(dest_dir, f)
             log(f"Manual: {os.path.relpath(src, BASE_DIR)} -> {os.path.relpath(dest, BASE_DIR)}")
             if not dry_run:
                 shutil.copy2(src, dest)
-            known.add(digest)
+            hashes.add(digest)
+            texts.setdefault(date, []).append(text)
             added += 1
     log(f"{added} manually downloaded PDFs {'would be ' if dry_run else ''}added to pdfs/")
 
