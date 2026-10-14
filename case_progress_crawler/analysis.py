@@ -53,6 +53,7 @@ DATE_RE = re.compile(r"\b(\d{1,2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{4})\b")
 HELD_RE = re.compile(r"(?:held|to\s+be\s+held)\s+on\s+[^\d]{0,20}?(\d{1,2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{4})", re.IGNORECASE)
 LIST_RE = re.compile(r"^\s*LIST\s+([A-Z])\b\s*[:\-–—.]?\s*(.*)$", re.IGNORECASE)
 FOOTER_RE = re.compile(r"(\d+\s*\|\s*Page|Enquiries\s+(?:held|to\s+be\s+held)\s+on|KARNATAKA MEDICAL COUNCIL,?\s*BANGALORE|^\s*Sd/-|^\s*Registrar)", re.IGNORECASE)
+TIME_RE = re.compile(r"(?<![\d/-])(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\s*([ap])\s*\.?\s*m\b\.?", re.IGNORECASE)
 NUMBERED_RE = re.compile(r"(?:(?<=\s)|^)\(?(\d{1,2})[).]\s*(?=\S)")
 
 warnings = []
@@ -72,6 +73,23 @@ def norm_id(s):
 
 def squash(s):
     return re.sub(r"\s+", " ", s).strip()
+
+
+def parse_time(text):
+    """First clock time in text as 24-hour 'HH:MM', e.g. '3:00 p.m.' -> '15:00'."""
+    m = TIME_RE.search(text or "")
+    if not m:
+        return None
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3).lower()
+    if not (1 <= h <= 12 and mi < 60):
+        return None
+    return f"{h % 12 + (12 if ap == 'p' else 0):02d}:{mi:02d}"
+
+
+def is_heading_continuation(text):
+    """A wrapped second line of a list heading: capitals only, apart from 'at <time>'."""
+    s = re.sub(r"\bat\b", "", TIME_RE.sub("", text), flags=re.I)
+    return not re.match(r"\d", text) and not ID_RE.search(text) and not re.search(r"[a-z]", s) and bool(re.search(r"[A-Z]{3}", s))
 
 
 def make_date(d, m, y):
@@ -201,6 +219,9 @@ def page_body(words, edges):
             body.append(("list", (lm.group(1).upper(), squash(lm.group(2))), y))
         elif re.fullmatch(r"PRONOUNCEMENT OF FINAL ORDERS\W*", text, re.I):
             body.append(("list", ("FO", "PRONOUNCEMENT OF FINAL ORDERS"), y))
+        elif body and body[-1][0] == "list" and is_heading_continuation(text):
+            letter, title = body[-1][1]
+            body[-1] = ("list", (letter, squash(title + " " + text)), body[-1][2])
         elif re.search(r"Inquiry\s+Number|^Sl\.|^No\.$|KARNATAKA MEDICAL COUNCIL\s*-|Enquiries\s+(?:held|to\s+be\s+held)\s+on\s*$|AT\s+\d+[.:]\d+\s*[AP]\.?M|^NIL$", text, re.I) and not ID_RE.search(text):
             continue
         else:
@@ -334,6 +355,9 @@ def parse_vs_style(text):
             continue
         if re.search(r"COMPLAINANTS?\s+RESPONDENTS?|ENQUIRIES TO BE HELD", ln, re.I):
             continue
+        if cur is None and cur_list[0] and is_heading_continuation(squash(ln)):
+            cur_list = (cur_list[0], squash(cur_list[1] + " " + ln))
+            continue
         im = re.match(r"^\s*\(?\d+\)\s*(" + ID_RE.pattern + r")(.*)$", ln, re.I)
         if im:
             cur = {"ids": [norm_id(im.group(1))], "list": cur_list[0], "list_title": cur_list[1], "lines": []}
@@ -405,6 +429,22 @@ def parse_past_text_style(text):
     return entries
 
 
+def add_times(entries, sitting):
+    """Give each entry a start time: the one in its list heading, else the sitting's start time.
+
+    Lists A/B state theirs; C/D usually follow List A (the sitting time) or say 'at 3 p.m.'.
+    Final orders (FO) are pronounced with List D.
+    """
+    d_time = None
+    for e in entries:
+        t = parse_time(e["list_title"])
+        if e["list"] == "D" and t:
+            d_time = t
+        if e["list"] == "FO" and d_time and not t:
+            t = d_time
+        e["time"], e["time_source"] = (t, "list heading") if t else (sitting, "sitting start" if sitting else None)
+
+
 def parse_file(path, kind):
     text = extract_text(path)
     if not text.strip():
@@ -417,6 +457,7 @@ def parse_file(path, kind):
         entries = parse_past_text_style(text)
     else:
         entries = parse_vs_style(text)
+    add_times(entries, parse_time(text[:800]))
     return d, entries
 
 
@@ -516,10 +557,12 @@ def build(files):
         for e in entries:
             for eid in e["ids"]:
                 rec = enq[eid]
-                h = rec["hearings"].setdefault(hd, {"date": hd, "list": None, "list_title": "", "sources": [],
+                h = rec["hearings"].setdefault(hd, {"date": hd, "list": None, "list_title": "", "time": None, "time_source": None, "sources": [],
                                                     "outcome": "", "next_date": None, "next_stage": "",
                                                     "next_stage_tags": [], "next_stage_details": {}})
                 h["sources"].append(f"{kind}_hearings/{fn}")
+                if e["time"] and (h["time"] is None or (h["time_source"] != "list heading" and e["time_source"] == "list heading")):
+                    h["time"], h["time_source"] = e["time"], e["time_source"]
                 if kind == "future":
                     # a case can only sit in one list per day; later duplicate file keeps the first
                     if h["list"] is None:
@@ -585,12 +628,12 @@ def write_outputs(result, outdir):
             w.writerow([eid, r["status"], " | ".join(r["complainants"]), " | ".join(r["respondents"]), r["as_of"] or ""])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["enquiry_id", "hearing_date", "list", "held", "purpose_tags", "purpose_text",
+        w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
                     "outcome_text", "next_date", "next_stage_tags", "cross_examination_of"])
         for eid, r in result.items():
             for h in r["hearings"]:
                 p = h["purpose"] or {}
-                w.writerow([eid, h["date"], h["list"] or "", "yes" if h["held"] else "no",
+                w.writerow([eid, h["date"], h["time"] or "", h["time_source"] or "", h["list"] or "", "yes" if h["held"] else "no",
                             ", ".join(p.get("tags", [])), p.get("text", ""),
                             h["outcome"], h["next_date"] or "", ", ".join(h["next_stage_tags"]),
                             "; ".join(h["next_stage_details"].get("cross_examination_of", []))])
