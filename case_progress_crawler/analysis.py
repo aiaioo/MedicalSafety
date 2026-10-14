@@ -228,17 +228,29 @@ def detect_alignment(bodies, edges):
     return "centre" if cont > 0.25 * (cont + new) else "bottom"
 
 
+def has_id(lines, edges):
+    """Does the ID column of these lines hold a complete enquiry ID?"""
+    words = [w[2] for it in lines for w in it[1] if edges[0] <= w[0] < edges[1]]
+    return bool(ID_RE.search(" ".join(words)))
+
+
 def table_rows(bodies, edges, align, name):
     """Yield (list_info, lines) for each table row, across pages."""
-    cur_list, buf = (None, ""), []
+    cur_list, buf, waiting = (None, ""), [], False
     for body in bodies:
         if align == "bottom":
             for it in body:
                 if it[0] == "list":
                     cur_list = it[1]
-                else:
-                    buf.append(it)
-                    if is_anchor(it, edges):
+                    continue
+                # a serial number may sit above the ID line: wait until the row has an ID
+                if is_anchor(it, edges) and waiting:
+                    yield cur_list, buf  # previous row never got a full ID; make_entry will warn or repair it
+                    buf, waiting = [], False
+                buf.append(it)
+                if is_anchor(it, edges) or waiting:
+                    waiting = not has_id(buf, edges)
+                    if not waiting:
                         yield cur_list, buf
                         buf = []
             continue
