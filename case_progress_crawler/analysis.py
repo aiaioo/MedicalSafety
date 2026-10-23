@@ -15,7 +15,7 @@ Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
 Outputs (in analysis/, rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
-         parties.csv      - one row per party: enquiry, party, role (complainant/respondent)
+         parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution/unknown), role (complainant/respondent)
          timeline.csv     - one row per enquiry per hearing date
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
@@ -85,6 +85,25 @@ def case_key(eid):
                 return f"{g[0]}_{int(g[1])}_{year}"
             return f"{series}_{int(g[0])}{g[1] or ''}_{year}"
     raise ValueError(f"unrecognised enquiry id: {eid}")
+
+
+PERSON_PREFIXES = r"(?:mr|mrs|ms|miss|sri|shri|shree|sh|smt|kum|kumari|capt|lt|col|sgt)"
+INSTITUTION_WORDS = r"hospital|clinic|centre|center|institute|instt|medical college|nursing home|laborator|diagnostic|health care|healthcare|trust|association"
+
+
+def party_type(name):
+    """Classify a party from its prefix: Dr. -> doctor, Mr./Smt./Sri. etc. -> non_doctor, M/s. -> institution.
+    Names with no recognised prefix are institutions only if they contain a hospital/institution word, else unknown."""
+    if not name:
+        return ""
+    name = re.sub(r"^\W*(?:\d+:\d+\s*[ap]\.?m\.?\s*)?(?:\(\d+\)\W*)?", "", name, flags=re.I)  # stray "3:00 p.m. (1)" before the name
+    if re.match(r"m\s*/\s*s\b", name, re.I):
+        return "institution"
+    if re.match(r"dr\b", name, re.I):  # "Dr.Agarwals Eye Hospital" (at most two words, then the institution word) is an institution
+        return "institution" if re.match(r"dr\W*\w+(?:\s+\w+)?\s+(?:%s)" % INSTITUTION_WORDS, name, re.I) else "doctor"
+    if re.match(PERSON_PREFIXES + r"\b", name, re.I):  # "Sri Jayadeva Institute..." is an institution; "Mr.X, M/s.Y Hospital" a person
+        return "institution" if re.match(r"[^,]*?(?:%s)" % INSTITUTION_WORDS, name.split("M/s")[0].split("C/o")[0], re.I) else "non_doctor"
+    return "institution" if re.search(INSTITUTION_WORDS, name, re.I) else "unknown"
 
 
 def squash(s):
@@ -639,11 +658,11 @@ def write_outputs(result, outdir):
         json.dump(result, f, indent=2, ensure_ascii=False)
     with open(os.path.join(outdir, "parties.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["enquiry_id", "status", "party", "role", "parties_as_of", "case_key"])
+        w.writerow(["enquiry_id", "status", "party", "party_type", "role", "party_as_of", "case_key"])
         for eid, r in result.items():
             rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
             for name, role in rows or [("", "")]:  # keep enquiries with no parties recorded
-                w.writerow([eid, r["status"], name, role, r["as_of"] or "", case_key(eid)])
+                w.writerow([eid, r["status"], name, party_type(name), role, r["as_of"] or "", case_key(eid)])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
