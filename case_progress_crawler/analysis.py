@@ -71,6 +71,22 @@ def norm_id(s):
     return re.sub(r"/(\d+(?:\([A-Z]\))?)/EXP/", r"/\1EXP/", s)  # KMC/76/EXP/DOCT/2023 == KMC/76Exp/Doct/2023
 
 
+def case_key(eid):
+    """Unique key: SERIES_serial[suffix]_year, e.g. KMC/ENQ/12/2024 -> ENQ_12_2024, KMC/98(A)EXP/DOCT/2021 -> EXP_98A_2021."""
+    parts = eid.split("/")
+    mid = "/".join(parts[1:-1])
+    year = int(parts[-1])
+    for pat, series in ((r"(ENQ|INQ)/(\d+)()", None), (r"(\d+)(?:\(([A-Z])\))?EXP/DOCT", "EXP"),
+                        (r"MEIC/COMP-(\d+)()/INSP-\d+", "MEIC"), (r"(\d+)()", "PLAIN")):
+        m = re.fullmatch(pat, mid)
+        if m:
+            g = m.groups()
+            if series is None:
+                return f"{g[0]}_{int(g[1])}_{year}"
+            return f"{series}_{int(g[0])}{g[1] or ''}_{year}"
+    raise ValueError(f"unrecognised enquiry id: {eid}")
+
+
 def squash(s):
     return re.sub(r"\s+", " ", s).strip()
 
@@ -623,20 +639,21 @@ def write_outputs(result, outdir):
         json.dump(result, f, indent=2, ensure_ascii=False)
     with open(os.path.join(outdir, "parties.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["enquiry_id", "status", "complainants", "respondents", "parties_as_of"])
+        w.writerow(["enquiry_id", "status", "complainants", "respondents", "parties_as_of", "case_key"])
         for eid, r in result.items():
-            w.writerow([eid, r["status"], " | ".join(r["complainants"]), " | ".join(r["respondents"]), r["as_of"] or ""])
+            w.writerow([eid, r["status"], " | ".join(r["complainants"]), " | ".join(r["respondents"]), r["as_of"] or "", case_key(eid)])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                    "outcome_text", "next_date", "next_stage_tags", "cross_examination_of"])
+                    "outcome_text", "next_date", "next_stage_tags", "cross_examination_of", "case_key"])
         for eid, r in result.items():
             for h in r["hearings"]:
                 p = h["purpose"] or {}
                 w.writerow([eid, h["date"], h["time"] or "", h["time_source"] or "", h["list"] or "", "yes" if h["held"] else "no",
                             ", ".join(p.get("tags", [])), p.get("text", ""),
                             h["outcome"], h["next_date"] or "", ", ".join(h["next_stage_tags"]),
-                            "; ".join(h["next_stage_details"].get("cross_examination_of", []))])
+                            "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
+                            case_key(eid)])
 
 
 def main():
