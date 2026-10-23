@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ c.enquiry_id }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('home', year=c.year) }}">&larr; {{ c.year }} cases</a></p>
+<h1>{{ c.enquiry_id }} <span class="badge {{ c.status }}">{{ c.status }}</span></h1>
+{% if c.status_since %}<p class="muted">Status since {{ c.status_since }}</p>{% endif %}
+<p><b>Complainant(s):</b> {{ c.complainants|join('; ') or '—' }}<br>
+   <b>Respondent(s):</b> {{ c.respondents|join('; ') or '—' }}</p>
+
+<h2>Hearings</h2>
+<ul class="timeline">
+  {% for h in c.hearings %}
+  <li class="{{ 'notheld' if h.held == 'no' }}">
+    <h3>{{ h.hearing_date }}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
+      {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
+      {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
+    {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
+    {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
+    {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
+    {% if h.next_date %}<p><b>Next date:</b> {{ h.next_date }}</p>
+    {% elif h.next_sitting %}<p><b>Next date:</b> {{ h.next_sitting }} <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
+    {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}
+    {% for t in h.next_stage_tags.split(', ') if t %}<span class="tag">{{ t }}</span>{% endfor %}
+  </li>
+  {% else %}
+  <li>No hearings recorded.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

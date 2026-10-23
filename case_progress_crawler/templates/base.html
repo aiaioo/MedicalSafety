@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Case progress{% endblock %}</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 1rem; color: #222; }
+  a { color: #0b5cad; }
+  header a { text-decoration: none; color: inherit; font-weight: 600; font-size: 1.2rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  .badge { padding: .1rem .5rem; border-radius: 1rem; font-size: .85em; background: #eee; }
+  .badge.open { background: #fff3cd; } .badge.dismissed { background: #f8d7da; } .badge.disposed { background: #d1e7dd; }
+  .muted { color: #666; font-size: .9em; }
+  .timeline { list-style: none; padding: 0; border-left: 3px solid #ccc; margin-left: .5rem; }
+  .timeline li { position: relative; padding: 0 0 1.2rem 1.2rem; }
+  .timeline li::before { content: ""; position: absolute; left: -.55rem; top: .35rem; width: .8rem; height: .8rem; border-radius: 50%; background: #0b5cad; }
+  .timeline li.notheld::before { background: #bbb; }
+  .timeline h3 { margin: 0; font-size: 1rem; }
+  .timeline p { margin: .2rem 0; }
+  pre { white-space: pre-wrap; background: #f6f6f6; padding: .5rem; border-radius: .3rem; font-size: .85em; }
+  .tag { font-size: .8em; background: #e7eefa; padding: 0 .4rem; border-radius: .3rem; margin-right: .2rem; }
+</style>
+</head>
+<body>
+<header><a href="{{ url_for('home') }}">Case progress</a></header>
+{% block body %}{% endblock %}
+</body>
+</html>

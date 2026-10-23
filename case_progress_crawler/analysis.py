@@ -17,7 +17,8 @@ the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
          status.csv       - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
          parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution), role (complainant/respondent)
-         timeline.csv     - one row per enquiry per hearing date
+         timeline.csv     - one row per enquiry per hearing date, including next_date (extracted from the outcome
+                            text) and raw_text (what the list PDFs printed for the case, source file by source file)
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
 are parsed from word coordinates (`-bbox`), older ones from `-layout` text.
@@ -387,7 +388,8 @@ def make_entry(lines, keys, edges, cur_list, is_past, name):
         return None
     return {"ids": ids, "list": cur_list[0], "list_title": cur_list[1],
             "complainant": by.get("complainant", ""), "respondent": by.get("respondent", ""),
-            "outcome": by.get("outcome", "")}
+            "outcome": by.get("outcome", ""),
+            "raw": "\n".join(f"{k}: {v}" for k, v in by.items() if v)}
 
 
 # --------------------------------------------------------------------------
@@ -411,7 +413,7 @@ def parse_vs_style(text):
             continue
         im = re.match(r"^\s*\(?\d+\)\s*(" + ID_RE.pattern + r")(.*)$", ln, re.I)
         if im:
-            cur = {"ids": [norm_id(im.group(1))], "list": cur_list[0], "list_title": cur_list[1], "lines": []}
+            cur = {"ids": [norm_id(im.group(1))], "list": cur_list[0], "list_title": cur_list[1], "lines": [], "head": ln.strip()}
             entries.append(cur)
             if im.group(2).strip(" .,"):
                 cur["lines"].append(im.group(2))
@@ -439,7 +441,8 @@ def parse_vs_style(text):
                 comp.append(l[:max(vs_col - 2, 0)].strip())
                 resp.append(l[max(vs_col - 2, 0):].strip())
         out.append({"ids": e["ids"], "list": e["list"], "list_title": e["list_title"],
-                    "complainant": squash(" ".join(comp)), "respondent": squash(" ".join(resp)), "outcome": ""})
+                    "complainant": squash(" ".join(comp)), "respondent": squash(" ".join(resp)), "outcome": "",
+                    "raw": "\n".join([f"LIST {e['list']}: {e['list_title']}", e["head"]] + [l.rstrip() for l in e["lines"]])})
     return out
 
 
@@ -476,7 +479,8 @@ def parse_past_text_style(text):
     for k, a in enumerate(anchors):
         end = starts[k + 1] if k + 1 < len(anchors) else len(items)
         entries.append({"ids": [items[a][1]], "list": None, "list_title": "", "complainant": "", "respondent": "",
-                        "outcome": squash(" ".join(it[0] for it in items[starts[k]:end]))})
+                        "outcome": squash(" ".join(it[0] for it in items[starts[k]:end])),
+                        "raw": "\n".join(it[0] for it in items[starts[k]:end])})
     return entries
 
 
@@ -570,9 +574,34 @@ def classify(text):
     return tags, details
 
 
-def first_date(text):
-    m = DATE_RE.search(text)
-    return make_date(*m.groups()) if m else None
+MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+# dates glued to neighbouring words ("Postedon28-02-2026fororders") still count, so no \b here
+NUM_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{4})(?!\d)")
+TEXT_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:of\s+)?(" + "|".join(m + r"[a-z]*" for m in MONTHS) + r")\.?,?\s*(\d{4})(?!\d)", re.I)
+# a date introduced like this is a past event (the complaint, an earlier order), not the next date
+PAST_DATE_CUE_RE = re.compile(r"(?:dated|dt\.?|dtd\.?|vide|since|filed\s+on|received\s+on)\W*$", re.I)
+
+# "Posted on 08-08-2026", "Call on...", "next date of hearing ..." name the next listing outright
+LISTING_CUE_RE = re.compile(r"(?:posted|call(?:ed)?|listed|adjourned|next\s+date(?:\s+of\s+hearing)?)\s*(?:on|to|for|is)?\W*$", re.I)
+
+
+def next_date(text, after=None):
+    """The date the case is next listed for, from an outcome text; ISO string or None.
+
+    Prefers a date introduced by 'Posted on' / 'Call on' and otherwise takes the first one;
+    skips dates introduced as earlier events ('order dated ...') and, when `after`
+    (ISO date of this hearing) is given, any on or before it.
+    """
+    cands = []
+    for rx, to_date in ((NUM_DATE_RE, lambda d, m, y: make_date(d, m, y)),
+                        (TEXT_DATE_RE, lambda d, m, y: make_date(d, MONTHS[m[:3].lower()], y))):
+        for m in rx.finditer(text or ""):
+            if PAST_DATE_CUE_RE.search(text[:m.start()]):
+                continue
+            d = to_date(*m.groups())
+            if d and (after is None or d > after):
+                cands.append((not LISTING_CUE_RE.search(text[:m.start()]), m.start(), d))
+    return min(cands)[2] if cands else None
 
 
 # --------------------------------------------------------------------------
@@ -609,9 +638,11 @@ def build(files):
             for eid in e["ids"]:
                 rec = enq[eid]
                 h = rec["hearings"].setdefault(hd, {"date": hd, "list": None, "list_title": "", "time": None, "time_source": None, "sources": [],
-                                                    "outcome": "", "next_date": None, "next_stage": "",
+                                                    "outcome": "", "next_date": None, "next_stage": "", "raw": [],
                                                     "next_stage_tags": [], "next_stage_details": {}})
                 h["sources"].append(f"{kind}_hearings/{fn}")
+                if e.get("raw"):
+                    h["raw"].append(f"[{kind}_hearings/{fn}]\n{e['raw']}")
                 if e["time"] and (h["time"] is None or (h["time_source"] != "list heading" and e["time_source"] == "list heading")):
                     h["time"], h["time_source"] = e["time"], e["time_source"]
                 if kind == "future":
@@ -627,7 +658,7 @@ def build(files):
                         rec["party_candidates"].append((hd, e["complainant"], e["respondent"]))
                     text = e["outcome"]
                     h["outcome"] = text
-                    h["next_date"] = first_date(text)
+                    h["next_date"] = next_date(text, hd)
                     h["next_stage"] = text
                     h["next_stage_tags"], h["next_stage_details"] = classify(text)
 
@@ -689,7 +720,7 @@ def write_outputs(result, outdir):
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                    "outcome_text", "next_date", "next_stage_tags", "cross_examination_of", "case_key"])
+                    "outcome_text", "next_date", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"])
         for eid, r in result.items():
             for h in r["hearings"]:
                 p = h["purpose"] or {}
@@ -697,7 +728,7 @@ def write_outputs(result, outdir):
                             ", ".join(p.get("tags", [])), p.get("text", ""),
                             h["outcome"], h["next_date"] or "", ", ".join(h["next_stage_tags"]),
                             "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
-                            case_key(eid)])
+                            "\n\n".join(h["raw"]), case_key(eid)])
 
 
 def main():

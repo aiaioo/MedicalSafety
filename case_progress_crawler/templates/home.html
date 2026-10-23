@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block body %}
+<form method="get" style="margin:1rem 0">
+  <label>Year
+    <select name="year" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button>Filter</button></noscript>
+  <span class="muted">{{ cases|length }} cases</span>
+</form>
+<table>
+  <tr><th>Case</th><th>Parties</th><th>Status</th><th>Last hearing</th></tr>
+  {% for c in cases %}
+  <tr>
+    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a></td>
+    <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</td>
+    <td><span class="badge {{ c.status }}">{{ c.status }}</span>{% if c.status_since %}<div class="muted">since {{ c.status_since }}</div>{% endif %}</td>
+    <td>{{ c.last_hearing }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">No cases.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
