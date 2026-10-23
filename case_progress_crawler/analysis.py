@@ -15,7 +15,7 @@ Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
 Outputs (in analysis/, rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
-         parties.csv      - enquiry, complainants, respondents
+         parties.csv      - one row per party: enquiry, party, role (complainant/respondent)
          timeline.csv     - one row per enquiry per hearing date
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
@@ -639,9 +639,11 @@ def write_outputs(result, outdir):
         json.dump(result, f, indent=2, ensure_ascii=False)
     with open(os.path.join(outdir, "parties.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["enquiry_id", "status", "complainants", "respondents", "parties_as_of", "case_key"])
+        w.writerow(["enquiry_id", "status", "party", "role", "parties_as_of", "case_key"])
         for eid, r in result.items():
-            w.writerow([eid, r["status"], " | ".join(r["complainants"]), " | ".join(r["respondents"]), r["as_of"] or "", case_key(eid)])
+            rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
+            for name, role in rows or [("", "")]:  # keep enquiries with no parties recorded
+                w.writerow([eid, r["status"], name, role, r["as_of"] or "", case_key(eid)])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
