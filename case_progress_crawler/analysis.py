@@ -15,7 +15,8 @@ Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
 Outputs (in analysis/, rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
-         parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution/unknown), role (complainant/respondent)
+         status.csv       - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
+         parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution), role (complainant/respondent)
          timeline.csv     - one row per enquiry per hearing date
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
@@ -651,16 +652,17 @@ def build(files):
             best = max(cands, key=lambda c: (len(c[1]) + len(c[2]), c[0]))
             parties = {"complainants": split_parties(best[1]), "respondents": split_parties(best[2]), "as_of": best[0]}
         last = hearings[-1] if hearings else None
-        status = "open"
+        status, status_since = "open", hearings[0]["date"] if hearings else None
         for h in reversed(hearings):
             for t in ("complaint_dismissed", "complaint_disposed"):
                 if t in h["next_stage_tags"]:
                     status = t.replace("complaint_", "")
+                    status_since = next(x["date"] for x in hearings if t in x["next_stage_tags"])  # first hearing recording it
                     break
             else:
                 continue
             break
-        result[eid] = {"enquiry_id": eid, **parties, "status": status,
+        result[eid] = {"enquiry_id": eid, **parties, "status": status, "status_since": status_since,
                        "first_seen": hearings[0]["date"] if hearings else None,
                        "last_seen": last["date"] if last else None,
                        "hearings": hearings}
@@ -673,12 +675,17 @@ def write_outputs(result, outdir):
         json.dump(result, f, indent=2, ensure_ascii=False)
     with open(os.path.join(outdir, "parties.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["enquiry_id", "status", "party", "party_type", "role", "party_as_of", "case_key"])
+        w.writerow(["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"])
         for eid, r in result.items():
             rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
             rows = [(n, ro) for n, ro in rows if not is_noise(n)]
-            for name, role in rows or [("", "")]:  # keep enquiries with no parties recorded
-                w.writerow([eid, r["status"], name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
+            for name, role in rows:  # keep enquiries with no parties recorded
+                w.writerow([eid, name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
+    with open(os.path.join(outdir, "status.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["case_key", "enquiry_id", "status", "status_since"])
+        for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0])):
+            w.writerow([case_key(eid), eid, r["status"], r["status_since"] or ""])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
