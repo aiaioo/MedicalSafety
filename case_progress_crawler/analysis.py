@@ -89,21 +89,36 @@ def case_key(eid):
 
 PERSON_PREFIXES = r"(?:mr|mrs|ms|miss|sri|shri|shree|sh|smt|kum|kumari|capt|lt|col|sgt)"
 INSTITUTION_WORDS = r"hospital|clinic|centre|center|institute|instt|medical college|nursing home|laborator|diagnostic|health care|healthcare|trust|association"
+OFFICE_WORDS = (r"administ|director|superintendent|manager|ceo|head of|secretary|president|commissioner|officer|police|"
+                r"department|samithi|prathishtana|forum|foundation|society|committee|council|bbmp|nmc|headquaters|headquarters|"
+                r"services|enterprises|pvt|ltd|su-moto|health")
+LEADING_JUNK = r"^\W*(?:IS CLUBBED WITH KMC/\S+|\[KMC/\S*|PRONOUNCEMENT OF THE FINAL ORDERS|\d+:\d+\s*[ap]\.?m\.?)?\W*(?:\(\d+\)\W*)?"
 
 
-def party_type(name):
+def is_noise(name):
+    """Fragments of the PDF layout (headings, times, dates, wrapped text) that were parsed as a party."""
+    return bool(re.fullmatch(r"[\W\d]*(?:respondents?|to|[ap]\.?m\.?)?[\W\d]*", name, re.I)
+                or re.match(r"\d+\s+clubbed with", name, re.I))
+
+
+def party_type(name, role=""):
     """Classify a party from its prefix: Dr. -> doctor, Mr./Smt./Sri. etc. -> non_doctor, M/s. -> institution.
-    Names with no recognised prefix are institutions only if they contain a hospital/institution word, else unknown."""
+    Without a prefix: office-holders and bodies ("The Administrator", "District Health Officer") and names with a
+    hospital/institution word are institutions, a mention of doctors is doctor, and anything else is a doctor if a respondent, a non_doctor if a complainant."""
     if not name:
         return ""
-    name = re.sub(r"^\W*(?:\d+:\d+\s*[ap]\.?m\.?\s*)?(?:\(\d+\)\W*)?", "", name, flags=re.I)  # stray "3:00 p.m. (1)" before the name
+    name = re.sub(LEADING_JUNK, "", name, flags=re.I)  # "IS CLUBBED WITH KMC/.. Dr.X", "[KMC/..] Mr.X", "3:00 p.m. (1)Ms.X"
     if re.match(r"m\s*/\s*s\b", name, re.I):
         return "institution"
     if re.match(r"dr\b", name, re.I):  # "Dr.Agarwals Eye Hospital" (at most two words, then the institution word) is an institution
         return "institution" if re.match(r"dr\W*\w+(?:\s+\w+)?\s+(?:%s)" % INSTITUTION_WORDS, name, re.I) else "doctor"
     if re.match(PERSON_PREFIXES + r"\b", name, re.I):  # "Sri Jayadeva Institute..." is an institution; "Mr.X, M/s.Y Hospital" a person
         return "institution" if re.match(r"[^,]*?(?:%s)" % INSTITUTION_WORDS, name.split("M/s")[0].split("C/o")[0], re.I) else "non_doctor"
-    return "institution" if re.search(INSTITUTION_WORDS, name, re.I) else "unknown"
+    if re.search(r"m/s\.", name, re.I) or re.search(INSTITUTION_WORDS + "|" + OFFICE_WORDS, name, re.I):
+        return "institution"
+    if re.search(r"doctor", name, re.I):
+        return "doctor"
+    return "non_doctor" if role == "complainant" else "doctor"  # medical councils only enquire into doctors and medical institutions
 
 
 def squash(s):
@@ -661,8 +676,9 @@ def write_outputs(result, outdir):
         w.writerow(["enquiry_id", "status", "party", "party_type", "role", "party_as_of", "case_key"])
         for eid, r in result.items():
             rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
+            rows = [(n, ro) for n, ro in rows if not is_noise(n)]
             for name, role in rows or [("", "")]:  # keep enquiries with no parties recorded
-                w.writerow([eid, r["status"], name, party_type(name), role, r["as_of"] or "", case_key(eid)])
+                w.writerow([eid, r["status"], name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
