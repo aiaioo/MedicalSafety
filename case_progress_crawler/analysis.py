@@ -12,13 +12,15 @@ Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
          (list A/B/..., complainant, respondent). Older ones are laid out as
          "Complainant  V/s  Respondents", newer ones as a table.
          pdfs/past_hearings/*.pdf    - outcome of a hearing and the next date/stage.
+         Circulars announcing that a sitting is postponed to another date may sit
+         in either folder; a next date that falls on a postponed sitting is moved to the new date.
 Outputs (in analysis/, rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
          status.csv       - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
          parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution), role (complainant/respondent)
          timeline.csv     - one row per enquiry per hearing date, including next_date (extracted from the outcome
-                            text) and raw_text (what the list PDFs printed for the case, source file by source file)
+                            text, after applying postponement circulars; postponed_from holds the original date) and raw_text (what the list PDFs printed for the case, source file by source file)
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
 are parsed from word coordinates (`-bbox`), older ones from `-layout` text.
@@ -608,9 +610,34 @@ def next_date(text, after=None):
 # Assemble
 # --------------------------------------------------------------------------
 
+# Circulars are scanned and badly OCR'd: "L9-O9-2O25", "25,-10-\n20.25."
+OCR_DATE_RE = re.compile(r"(?<![A-Za-z0-9])([0-9OLl]{1,2})[-.,]+([0-9OLl]{1,2})[-.,]+([0-9OLl]{2}[.,]?[0-9OLl]{2})(?![0-9OLl])")
+CIRCULAR_HEADER_DATE_RE = re.compile(r"Date\s*[:;]?\s*\S+", re.I)
+
+
+def parse_circular(text):
+    """(from_date, to_date) ISO strings if the text announces that sittings are postponed, else None."""
+    flat = squash(text)
+    if not re.search(r"postpone", flat, re.I):
+        return None
+    flat = re.sub(r"(?<=[-.,])\s+(?=[0-9OLl])", "", flat)  # a date wrapped over lines
+    flat = CIRCULAR_HEADER_DATE_RE.sub(" ", flat)  # the date the circular was issued
+    fix = str.maketrans("OLl", "011")
+    dates = []
+    for m in OCR_DATE_RE.finditer(flat):
+        d, mo, y = (g.translate(fix) for g in m.groups())
+        iso = make_date(d, mo, re.sub(r"\D", "", y))
+        if iso and iso not in dates:
+            dates.append(iso)
+    return (dates[0], dates[1]) if len(dates) >= 2 and dates[0] < dates[1] else None
+
+
 def collect():
-    """Yield (kind, filename, hearing date, entries) for each PDF."""
-    out = []
+    """Return ([(kind, filename, hearing date, entries)], [(from_date, to_date, source)]) for the PDFs.
+
+    The second list holds the circulars that postpone a sitting.
+    """
+    out, circulars = [], []
     for kind in ("future", "past"):
         d = os.path.join(PDF_DIR, f"{kind}_hearings")
         if not os.path.isdir(d):
@@ -620,25 +647,26 @@ def collect():
                 continue
             path = os.path.join(d, fn)
             hd, entries = parse_file(path, kind)
-            if hd is None:
-                if entries or True:
-                    warn(f"{kind}_hearings/{fn}: hearing date not found; skipped")
-                continue
-            if not entries:
-                warn(f"{kind}_hearings/{fn}: no enquiries found (circular?); skipped")
+            if hd is None or not entries:
+                c = parse_circular(extract_text(path))
+                if c:
+                    circulars.append((*c, f"{kind}_hearings/{fn}"))
+                else:
+                    warn(f"{kind}_hearings/{fn}: " + ("hearing date not found" if hd is None else "no enquiries found") + "; skipped")
                 continue
             out.append((kind, fn, hd, entries))
-    return out
+    return out, circulars
 
 
-def build(files):
+def build(files, circulars=()):
+    moved = {frm: to for frm, to, _ in circulars}  # a sitting postponed by circular
     enq = defaultdict(lambda: {"hearings": {}, "party_candidates": []})
     for kind, fn, hd, entries in files:
         for e in entries:
             for eid in e["ids"]:
                 rec = enq[eid]
                 h = rec["hearings"].setdefault(hd, {"date": hd, "list": None, "list_title": "", "time": None, "time_source": None, "sources": [],
-                                                    "outcome": "", "next_date": None, "next_stage": "", "raw": [],
+                                                    "outcome": "", "next_date": None, "postponed_from": None, "next_stage": "", "raw": [],
                                                     "next_stage_tags": [], "next_stage_details": {}})
                 h["sources"].append(f"{kind}_hearings/{fn}")
                 if e.get("raw"):
@@ -659,6 +687,10 @@ def build(files):
                     text = e["outcome"]
                     h["outcome"] = text
                     h["next_date"] = next_date(text, hd)
+                    h["postponed_from"] = None
+                    while h["next_date"] in moved:
+                        h["postponed_from"] = h["postponed_from"] or h["next_date"]
+                        h["next_date"] = moved[h["next_date"]]
                     h["next_stage"] = text
                     h["next_stage_tags"], h["next_stage_details"] = classify(text)
 
@@ -720,13 +752,13 @@ def write_outputs(result, outdir):
     with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                    "outcome_text", "next_date", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"])
+                    "outcome_text", "next_date", "postponed_from", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"])
         for eid, r in result.items():
             for h in r["hearings"]:
                 p = h["purpose"] or {}
                 w.writerow([eid, h["date"], h["time"] or "", h["time_source"] or "", h["list"] or "", "yes" if h["held"] else "no",
                             ", ".join(p.get("tags", [])), p.get("text", ""),
-                            h["outcome"], h["next_date"] or "", ", ".join(h["next_stage_tags"]),
+                            h["outcome"], h["next_date"] or "", h["postponed_from"] or "", ", ".join(h["next_stage_tags"]),
                             "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
                             "\n\n".join(h["raw"]), case_key(eid)])
 
@@ -735,10 +767,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--outdir", default=OUT_DIR)
     args = ap.parse_args()
-    files = collect()
-    result = build(files)
+    files, circulars = collect()
+    result = build(files, circulars)
     write_outputs(result, args.outdir)
-    print(f"{len(files)} PDFs, {len(result)} enquiries -> {os.path.relpath(args.outdir, os.getcwd())}/")
+    print(f"{len(files)} PDFs, {len(circulars)} postponement circulars, {len(result)} enquiries -> {os.path.relpath(args.outdir, os.getcwd())}/")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
 
