@@ -14,7 +14,15 @@
   <tr><th>Case</th><th>Parties</th><th>Status</th><th>Last hearing</th></tr>
   {% for c in cases %}
   <tr>
-    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a></td>
+    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>
+      {% set cl = links.get(c.case_key, []) %}
+      {% if cl %}<details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
+        <ul class="links">
+          {% for l in cl %}
+          <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
+            {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span></li>
+          {% endfor %}
+        </ul></details>{% endif %}</td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</td>
     <td><span class="badge {{ c.status }}">{{ c.status }}</span>{% if c.status_since %}<div class="muted">since {{ c.status_since }}</div>{% endif %}</td>
     <td>{{ c.last_hearing }}</td>

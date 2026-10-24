@@ -2,7 +2,7 @@
 """Web UI over the CSVs written by analysis.py (read through storage.py).
 
   /                  all cases, newest year / highest sequence number first,
-                     with status; ?year=YYYY filters by year
+                     with status and collapsible links; ?year=YYYY filters by year
   /case/<case_key>   parties and a timeline of hearings, latest first, plus
                      user-added links (related cases, party identities, ...)
 
@@ -67,7 +67,7 @@ def home():
     data = load()
     year = request.args.get("year", type=int)
     cases = [c for c in data["ordered"] if year is None or c["year"] == year]
-    return render_template("home.html", cases=cases, years=data["years"], year=year)
+    return render_template("home.html", cases=cases, years=data["years"], year=year, links=storage.load_links())
 
 
 @app.route("/case/<case_key>")
