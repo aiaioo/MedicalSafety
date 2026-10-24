@@ -4,7 +4,7 @@
 <p><a href="{{ url_for('hearings', year=date[:4]) }}">&larr; {{ date[:4] }} hearings</a></p>
 <h1>{{ date }} <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h1>
 {% if pdfs %}
-<p><b>Pre- and post-hearing PDFs:</b>
+<p><b>Original PDFs:</b>
 {% for label, kind, names in pdfs %}{% for n in names %}
   <a href="{{ url_for('pdf_view', kind=kind, name=n) }}">{{ label }}{% if names|length > 1 %} (version {{ loop.index }}){% endif %}</a>{% if not loop.last %} · {% endif %}
 {% endfor %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
