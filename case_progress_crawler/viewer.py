@@ -38,7 +38,7 @@ PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF
 PAGE_IMAGE_DPI = 150
 _cache = {"mtimes": None, "data": None}
 HOSPITAL_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
-HOSPITAL_SPLIT = re.compile(r"[,;–—]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
+HOSPITAL_SPLIT = re.compile(r"[,;–—/]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
 HOSPITAL_TITLE = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|executive)?\s*"
                             r"(?:administrator|administartor|superintendent|directors?|owners?|head|management|ceo|md)\b|[\s/.,&-])+", re.I)
 
@@ -57,12 +57,46 @@ def hospital_names(party):
     return names
 
 
+# Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name
+HOSPITAL_ALIASES = {
+    "bhagwan-mahaveer-jain-hospital": "bhagawan-mahaveer-jain-hospital",
+    "bhagavanmahaveer-jain-hospital": "bhagawan-mahaveer-jain-hospital",
+    "rajarajeswari-medical-college-hospital": "rajarajeshwari-medical-college-hospital",
+    "cloudenine-fertility-clodnine-hospital": "cloudnine-hospital",
+    "clodnine-hospital": "cloudnine-hospital",
+    "poornima-m-gowda-cloudnine-hospital": "cloudnine-hospital",
+    "motherhood-women-children-s-hospital": "motherhood-hospital",
+    "narayananethralaya-eye-hospital": "narayana-nethralaya-eye-hospital",
+    "bgs-gleneagles-global-hospital": "gleneagles-global-hospital",
+    "bowring-lady-curzon-hospital": "lady-curzon-hospital",
+    "child-hospital": "children-hospital",
+    "ramaiah-leena-hospital": "leena-ramaiah-hospital",
+    "ms-ramaiah-memorial-hospital": "ramaiah-memorial-hospital",
+    "sumeet-jaiswal-arka-hospital": "arka-hospital",
+    "sudhamani-jayanagar-general-hospital": "jayanagar-general-hospital",
+    "sowmya-dinesh-hr-ssm-hospital": "ssm-hospital",
+    "satish-l-sparsh-super-speciality-hospital": "sparsh-hospital",
+    "sinam-inaoton-singha-st-martha-s-hospital": "st-martha-s-hospital",
+}
+
+
+# Display names for aliased groups where no member is spelled cleanly
+HOSPITAL_DISPLAY = {"arka-hospital": "Arka Hospital", "ssm-hospital": "SSM Hospital",
+                    "children-hospital": "Children Hospital", "jayanagar-general-hospital": "Jayanagar General Hospital",
+                    "st-martha-s-hospital": "St. Martha’s Hospital"}
+
+
 def hospital_key(name):
     """Slug that merges spelling variants: 'Manipal Hospital' and 'M/s. Manipal Hospitals' share one."""
-    s = re.sub(r"[^a-z0-9]+", " ", name.lower())
+    s = re.sub(r"^belongs to\W*", "", name.lower())
+    s = re.sub(r"\bms/\.", "", s)  # a mangled "M/s."
+    s = re.sub(r"\b(?:[a-z]\.\s*){2,}", lambda m: re.sub(r"\W", "", m.group()) + " ", s)  # "K.I.M.S." -> "kims"
+    s = re.sub(r"[^a-z0-9]+", " ", s)
     s = re.sub(r"\bhospitals\b", "hospital", s)
     s = re.sub(r"\b(?:limited|ltd|pvt|private)\b", "", s)
-    return "-".join(s.split())
+    s = re.sub(r"\bmedical college\s+(?:and\s+)?hospital\b", "medical college hospital", s)
+    slug = "-".join(s.split())
+    return HOSPITAL_ALIASES.get(slug, slug)
 
 
 def squash(s):
@@ -121,7 +155,7 @@ def load():
         for slug, n in c["hospitals"].items():
             hospitals[slug]["names"][n] += 1
             hospitals[slug]["cases"].append(c)
-    hospitals = {s: {"slug": s, "name": max(h["names"], key=h["names"].get), "cases": h["cases"]}
+    hospitals = {s: {"slug": s, "name": HOSPITAL_DISPLAY.get(s) or max(h["names"], key=lambda n: (hospital_key(n) == s, h["names"][n], -len(n))), "cases": h["cases"]}
                  for s, h in hospitals.items() if s}
     data = {"cases": cases, "hospitals": hospitals, "ordered": ordered, "by_date": by_date,
             "years": sorted({c["year"] for c in ordered}, reverse=True),
