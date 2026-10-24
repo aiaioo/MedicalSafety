@@ -8,10 +8,10 @@ For every enquiry (e.g. KMC/ENQ/25/2025) it builds
      filing evidence by affidavit, order on ..., arguments, disposed, dismissed ...)
      and what happened / what was scheduled next.
 
-Inputs:  pdfs/future_hearings/*.pdf  - pre-hearing PDFs: lists of cases for an upcoming hearing
+Inputs:  pdfs/pre_hearing/*.pdf      - pre-hearing PDFs: lists of cases for an upcoming hearing
          (list A/B/..., complainant, respondent). Older ones are laid out as
          "Complainant  V/s  Respondents", newer ones as a table.
-         pdfs/past_hearings/*.pdf    - post-hearing PDFs: outcome of a hearing and the next date/stage.
+         pdfs/post_hearing/*.pdf    - post-hearing PDFs: outcome of a hearing and the next date/stage.
          Circulars announcing that a sitting is postponed to another date may sit
          in either folder; a next date that falls on a postponed sitting is moved to the new date.
 Outputs (in storage/, via storage.py; rebuilt from scratch on every run, so re-running after
@@ -43,6 +43,7 @@ import storage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PDF_DIR = os.path.join(BASE_DIR, "pdfs")
+FOLDERS = {"future": "pre_hearing", "past": "post_hearing"}  # pdfs/ sub-folders, by kind
 
 # KMC/ENQ/25/2025, KMC/INQ/89/2026, KMC/84Exp/Doct/2019 (tolerating stray spaces)
 ID_RE = re.compile(
@@ -507,7 +508,7 @@ def parse_file(path, kind):
         return None, []
     d = hearing_date(path, text)
     if re.search(r"Inquiry\s+Number", text, re.I):
-        entries = parse_table(path, kind == "past", f"{kind}_hearings/{os.path.basename(path)}")
+        entries = parse_table(path, kind == "past", f"{FOLDERS[kind]}/{os.path.basename(path)}")
     elif kind == "past":
         entries = parse_past_text_style(text)
     else:
@@ -637,7 +638,7 @@ def collect():
     """
     out, circulars = [], []
     for kind in ("future", "past"):
-        d = os.path.join(PDF_DIR, f"{kind}_hearings")
+        d = os.path.join(PDF_DIR, FOLDERS[kind])
         if not os.path.isdir(d):
             continue
         for fn in sorted(os.listdir(d)):
@@ -648,9 +649,9 @@ def collect():
             if hd is None or not entries:
                 c = parse_circular(extract_text(path))
                 if c:
-                    circulars.append((*c, f"{kind}_hearings/{fn}"))
+                    circulars.append((*c, f"{FOLDERS[kind]}/{fn}"))
                 else:
-                    warn(f"{kind}_hearings/{fn}: " + ("hearing date not found" if hd is None else "no enquiries found") + "; skipped")
+                    warn(f"{FOLDERS[kind]}/{fn}: " + ("hearing date not found" if hd is None else "no enquiries found") + "; skipped")
                 continue
             out.append((kind, fn, hd, entries))
     return out, circulars
@@ -666,9 +667,9 @@ def build(files, circulars=()):
                 h = rec["hearings"].setdefault(hd, {"date": hd, "list": None, "list_title": "", "time": None, "time_source": None, "sources": [],
                                                     "outcome": "", "next_date": None, "postponed_from": None, "next_stage": "", "raw": [],
                                                     "next_stage_tags": [], "next_stage_details": {}})
-                h["sources"].append(f"{kind}_hearings/{fn}")
+                h["sources"].append(f"{FOLDERS[kind]}/{fn}")
                 if e.get("raw"):
-                    h["raw"].append(f"[{kind}_hearings/{fn}]\n{e['raw']}")
+                    h["raw"].append(f"[{FOLDERS[kind]}/{fn}]\n{e['raw']}")
                 if e["time"] and (h["time"] is None or (h["time_source"] != "list heading" and e["time_source"] == "list heading")):
                     h["time"], h["time_source"] = e["time"], e["time_source"]
                 if kind == "future":
@@ -705,7 +706,7 @@ def build(files, circulars=()):
                 tgt["purpose"] = {"scheduled_on": prev["date"], "text": prev["next_stage"],
                                   "tags": prev["next_stage_tags"], "details": prev["next_stage_details"]}
         for h in hearings:
-            h["held"] = any(s.startswith("past_") for s in h["sources"])
+            h["held"] = any(s.startswith("post_hearing/") for s in h["sources"])
         cands = [c for c in rec["party_candidates"] if c[1] or c[2]]
         parties = {"complainants": [], "respondents": [], "as_of": None}
         if cands:

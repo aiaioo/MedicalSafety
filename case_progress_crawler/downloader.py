@@ -4,13 +4,13 @@
 The page https://www.karnatakamedicalcouncil.com/Enquiry.aspx links to PDFs
 listing the cases before the Council. Two kinds exist:
 
-  * future_hearings (pre-hearing PDF) - cases listed for the next hearing. No "Next Date and
+  * pre_hearing   - cases listed for the next hearing. No "Next Date and
     Stage" column.
-  * past_hearings (post-hearing PDF) - what happened at the last hearing. These carry a
+  * post_hearing  - what happened at the last hearing. These carry a
     "Next Date and Stage" column.
 
 Each run fetches the page, finds pre- and post-hearing PDFs not seen before, downloads
-them into pdfs/future_hearings or pdfs/past_hearings, and records them in
+them into pdfs/pre_hearing or pdfs/post_hearing, and records them in
 state.json so they are never downloaded twice. A PDF that fails to download is
 not recorded, so the next run retries it.
 
@@ -45,8 +45,8 @@ HEARING_PATH_PREFIX = "/Upload/MarqueeFiles/"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PDF_DIR = os.path.join(BASE_DIR, "pdfs")
-FUTURE_DIR = os.path.join(PDF_DIR, "future_hearings")
-PAST_DIR = os.path.join(PDF_DIR, "past_hearings")
+FUTURE_DIR = os.path.join(PDF_DIR, "pre_hearing")
+PAST_DIR = os.path.join(PDF_DIR, "post_hearing")
 UNCLASSIFIED_DIR = os.path.join(PDF_DIR, "unclassified")
 MANUAL_DIR = os.path.join(BASE_DIR, "manually_downloaded")
 
@@ -230,8 +230,8 @@ def sync_manual(dry_run):
                 continue
             # The folder you put it in decides past/future.
             folder = os.path.basename(root)
-            if folder in ("past_hearings", "future_hearings"):
-                dest_dir = PAST_DIR if folder == "past_hearings" else FUTURE_DIR
+            if folder in ("post_hearing", "pre_hearing"):
+                dest_dir = PAST_DIR if folder == "post_hearing" else FUTURE_DIR
             else:
                 dest_dir = UNCLASSIFIED_DIR
             os.makedirs(dest_dir, exist_ok=True)

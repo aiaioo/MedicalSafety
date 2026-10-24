@@ -31,7 +31,7 @@ import storage
 
 app = Flask(__name__)
 PDF_DIR = Path(__file__).parent / "pdfs"
-PDF_KINDS = {"future_hearings": "Pre-hearing PDF", "past_hearings": "Post-hearing PDF"}
+PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
 _cache = {"mtimes": None, "data": None}
 
