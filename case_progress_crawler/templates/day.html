@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ date }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('hearings', year=date[:4]) }}">&larr; {{ date[:4] }} hearings</a></p>
+<h1>{{ date }} <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h1>
+{% for c, h in entries %}
+<div class="{{ 'notheld' if h.held == 'no' }}" style="margin-bottom:1.2rem">
+  <h3 style="margin:0"><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>
+    <span class="badge {{ c.status }}">{{ c.status }}</span>
+    {% if h.hearing_time %}<span class="muted">· {{ h.hearing_time }}</span>{% endif %}
+    {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
+    {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
+  <p class="muted" style="margin:.1rem 0">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</p>
+  {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
+  {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
+  {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
+  {% if h.next_date %}<p><b>Next date:</b> {{ h.next_date }}{% if h.postponed_from %} <span class="muted">(postponed by circular from {{ h.postponed_from }})</span>{% endif %}</p>
+  {% elif h.next_sitting %}<p><b>Next date:</b> {{ h.next_sitting }} <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
+  {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}
+  {% for t in h.next_stage_tags.split(', ') if t %}<span class="tag">{{ t }}</span>{% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Hearings{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('home') }}">&larr; Cases</a></p>
+<h1>Hearings by date</h1>
+<form method="get" style="margin:1rem 0">
+  <label>Year
+    <select name="year" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button>Filter</button></noscript>
+  <span class="muted">{{ days|length }} hearing dates</span>
+</form>
+{% for date, entries in days %}
+<h2 id="{{ date }}"><a href="{{ url_for('day', date=date) }}">{{ date }}</a> <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h2>
+<table>
+  <tr><th>Case</th><th>Stage</th><th>Outcome</th><th>Next date</th></tr>
+  {% for c, h in entries %}
+  <tr class="{{ 'notheld' if h.held == 'no' }}">
+    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a></td>
+    <td class="muted">{{ h.purpose_tags.replace('_', ' ') }}</td>
+    <td>{% if h.held == 'no' %}<span class="muted">not held</span>
+      {% elif h.outcome_text %}{{ h.outcome_text|truncate(100) }}
+      {% else %}<span class="muted">—</span>{% endif %}</td>
+    <td>{{ h.next_date or h.next_sitting }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted"><a href="{{ url_for('day', date=date) }}">Full details for {{ date }} &rarr;</a></p>
+{% endfor %}
+{% endblock %}

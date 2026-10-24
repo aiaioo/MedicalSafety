@@ -9,6 +9,7 @@
   </label>
   <noscript><button>Filter</button></noscript>
   <span class="muted">{{ cases|length }} cases</span>
+  · <a href="{{ url_for('hearings', year=year) }}">Hearings by date</a>
 </form>
 <table>
   <tr><th>Case</th><th>Parties</th><th>Status</th><th>Last hearing</th></tr>

@@ -3,6 +3,9 @@
 
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
+  /hearings/         days of hearings, latest first, with a short summary of each
+                     case; ?year=YYYY filters
+  /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
   /case/<case_key>   parties and a timeline of hearings, latest first, plus
                      user-added links (related cases, party identities, ...)
 
@@ -56,8 +59,13 @@ def load():
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
-    data = {"cases": cases, "ordered": ordered,
-            "years": sorted({c["year"] for c in ordered}, reverse=True)}
+    by_date = defaultdict(list)  # hearing date -> [(case, hearing)], cases in list order
+    for c in ordered:
+        for h in c["hearings"]:
+            by_date[h["hearing_date"]].append((c, h))
+    data = {"cases": cases, "ordered": ordered, "by_date": by_date,
+            "years": sorted({c["year"] for c in ordered}, reverse=True),
+            "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
     _cache.update(mtimes=mtimes, data=data)
     return data
 
@@ -68,6 +76,22 @@ def home():
     year = request.args.get("year", type=int)
     cases = [c for c in data["ordered"] if year is None or c["year"] == year]
     return render_template("home.html", cases=cases, years=data["years"], year=year, links=storage.load_links())
+
+
+@app.route("/hearings/")
+def hearings():
+    data = load()
+    year = request.args.get("year")
+    days = [(d, data["by_date"][d]) for d in sorted(data["by_date"], reverse=True) if not year or d.startswith(year)]
+    return render_template("hearings.html", days=days, years=data["hearing_years"], year=year)
+
+
+@app.route("/day/<date>")
+def day(date):
+    entries = load()["by_date"].get(date)
+    if entries is None:
+        abort(404)
+    return render_template("day.html", date=date, entries=entries)
 
 
 @app.route("/case/<case_key>")

@@ -36,7 +36,7 @@
 <ul class="timeline">
   {% for h in c.hearings %}
   <li class="{{ 'notheld' if h.held == 'no' }}">
-    <h3>{{ h.hearing_date }}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
+    <h3><a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
       {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
       {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
     {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
