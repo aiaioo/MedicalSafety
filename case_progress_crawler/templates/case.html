@@ -7,6 +7,24 @@
 <p><b>Complainant(s):</b> {{ c.complainants|join('; ') or '—' }}<br>
    <b>Respondent(s):</b> {{ c.respondents|join('; ') or '—' }}</p>
 
+<h2 id="links">Links</h2>
+<ul>
+  {% for l in links %}
+  <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.label }}</a>
+    {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span>
+    <form method="post" action="{{ url_for('delete_link', case_key=c.case_key, i=loop.index0) }}" style="display:inline"
+          onsubmit="return confirm('Remove this link?')"><button type="submit">remove</button></form></li>
+  {% else %}
+  <li class="muted">No links yet.</li>
+  {% endfor %}
+</ul>
+<form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}">
+  <input name="url" placeholder="https://…" required size="40">
+  <input name="label" placeholder="Label (e.g. related case, party identity)" size="30">
+  <input name="note" placeholder="Note, shown as a pop-up on hover (optional)" size="30">
+  <button type="submit">Add link</button>
+</form>
+
 <h2>Hearings</h2>
 <ul class="timeline">
   {% for h in c.hearings %}

@@ -23,7 +23,6 @@ Usage:  python downloader.py [--dry-run]
 
 import argparse
 import hashlib
-import json
 import os
 import re
 import shutil
@@ -38,6 +37,8 @@ import urllib3
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
+from storage import load_state, save_state
+
 PAGE_URL = "https://www.karnatakamedicalcouncil.com/Enquiry.aspx"
 # Hearing lists live here; the rest of /Upload/ holds general notices and forms.
 HEARING_PATH_PREFIX = "/Upload/MarqueeFiles/"
@@ -48,7 +49,6 @@ FUTURE_DIR = os.path.join(PDF_DIR, "future_hearings")
 PAST_DIR = os.path.join(PDF_DIR, "past_hearings")
 UNCLASSIFIED_DIR = os.path.join(PDF_DIR, "unclassified")
 MANUAL_DIR = os.path.join(BASE_DIR, "manually_downloaded")
-STATE_FILE = os.path.join(BASE_DIR, "state.json")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; kmc-case-progress-crawler)"}
 TIMEOUT = 60
@@ -69,20 +69,6 @@ def make_session():
     session.verify = False
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     return session
-
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"seen": {}}
-
-
-def save_state(state):
-    tmp = STATE_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-    os.replace(tmp, STATE_FILE)
 
 
 def find_hearing_links(html):

@@ -14,7 +14,7 @@ Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
          pdfs/past_hearings/*.pdf    - outcome of a hearing and the next date/stage.
          Circulars announcing that a sitting is postponed to another date may sit
          in either folder; a next date that falls on a postponed sitting is moved to the new date.
-Outputs (in analysis/, rebuilt from scratch on every run, so re-running after
+Outputs (in storage/, via storage.py; rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries.json   - everything, one object per enquiry
          status.csv       - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
@@ -27,13 +27,10 @@ are parsed from word coordinates (`-bbox`), older ones from `-layout` text.
 The layouts are free-form, so parsing is heuristic: lists or rows that could
 not be parsed are reported as warnings at the end of the run.
 
-Usage:  python analysis.py [--outdir DIR]
+Usage:  python analysis.py
 """
 
-import argparse
-import csv
 import html
-import json
 import os
 import re
 import shutil
@@ -42,9 +39,10 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date
 
+import storage
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PDF_DIR = os.path.join(BASE_DIR, "pdfs")
-OUT_DIR = os.path.join(BASE_DIR, "analysis")
 
 # KMC/ENQ/25/2025, KMC/INQ/89/2026, KMC/84Exp/Doct/2019 (tolerating stray spaces)
 ID_RE = re.compile(
@@ -732,45 +730,38 @@ def build(files, circulars=()):
     return result
 
 
-def write_outputs(result, outdir):
-    os.makedirs(outdir, exist_ok=True)
-    with open(os.path.join(outdir, "enquiries.json"), "w") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
-    with open(os.path.join(outdir, "parties.csv"), "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"])
-        for eid, r in result.items():
-            rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
-            rows = [(n, ro) for n, ro in rows if not is_noise(n)]
-            for name, role in rows:  # keep enquiries with no parties recorded
-                w.writerow([eid, name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
-    with open(os.path.join(outdir, "status.csv"), "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["case_key", "enquiry_id", "status", "status_since"])
-        for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0])):
-            w.writerow([case_key(eid), eid, r["status"], r["status_since"] or ""])
-    with open(os.path.join(outdir, "timeline.csv"), "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                    "outcome_text", "next_date", "postponed_from", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"])
-        for eid, r in result.items():
-            for h in r["hearings"]:
-                p = h["purpose"] or {}
-                w.writerow([eid, h["date"], h["time"] or "", h["time_source"] or "", h["list"] or "", "yes" if h["held"] else "no",
-                            ", ".join(p.get("tags", [])), p.get("text", ""),
-                            h["outcome"], h["next_date"] or "", h["postponed_from"] or "", ", ".join(h["next_stage_tags"]),
-                            "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
-                            "\n\n".join(h["raw"]), case_key(eid)])
+def write_outputs(result):
+    storage.write_json("enquiries.json", result)
+    party_rows = []
+    for eid, r in result.items():
+        rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
+        rows = [(n, ro) for n, ro in rows if not is_noise(n)]
+        for name, role in rows:  # keep enquiries with no parties recorded
+            party_rows.append([eid, name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
+    storage.write_csv("parties.csv", ["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"], party_rows)
+    storage.write_csv("status.csv", ["case_key", "enquiry_id", "status", "status_since"],
+                      [[case_key(eid), eid, r["status"], r["status_since"] or ""]
+                       for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0]))])
+    timeline_rows = []
+    for eid, r in result.items():
+        for h in r["hearings"]:
+            p = h["purpose"] or {}
+            timeline_rows.append([eid, h["date"], h["time"] or "", h["time_source"] or "", h["list"] or "", "yes" if h["held"] else "no",
+                                  ", ".join(p.get("tags", [])), p.get("text", ""),
+                                  h["outcome"], h["next_date"] or "", h["postponed_from"] or "", ", ".join(h["next_stage_tags"]),
+                                  "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
+                                  "\n\n".join(h["raw"]), case_key(eid)])
+    storage.write_csv("timeline.csv",
+                      ["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
+                       "outcome_text", "next_date", "postponed_from", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"],
+                      timeline_rows)
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--outdir", default=OUT_DIR)
-    args = ap.parse_args()
     files, circulars = collect()
     result = build(files, circulars)
-    write_outputs(result, args.outdir)
-    print(f"{len(files)} PDFs, {len(circulars)} postponement circulars, {len(result)} enquiries -> {os.path.relpath(args.outdir, os.getcwd())}/")
+    write_outputs(result)
+    print(f"{len(files)} PDFs, {len(circulars)} postponement circulars, {len(result)} enquiries -> {os.path.relpath(storage.STORAGE_DIR, os.getcwd())}/")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
 

@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
-"""Web UI over the CSVs written by analysis.py.
+"""Web UI over the CSVs written by analysis.py (read through storage.py).
 
   /                  all cases, newest year / highest sequence number first,
                      with status; ?year=YYYY filters by year
-  /case/<case_key>   parties and a timeline of hearings, latest first
+  /case/<case_key>   parties and a timeline of hearings, latest first, plus
+                     user-added links (related cases, party identities, ...)
 
 The CSVs are re-read whenever their modification time changes, so re-running
 analysis.py is picked up without restarting.
 
-Usage:  python viewer.py [--host H] [--port P] [--analysis-dir DIR]
+Usage:  python viewer.py [--host H] [--port P]
 """
 
 import argparse
-import csv
 import re
 from collections import defaultdict
-from pathlib import Path
+from urllib.parse import urlparse
 
-from flask import Flask, abort, render_template, request
+from flask import Flask, abort, redirect, render_template, request, url_for
+
+import storage
 
 app = Flask(__name__)
-app.config["ANALYSIS_DIR"] = Path(__file__).parent / "analysis"
-
 _cache = {"mtimes": None, "data": None}
-
-
-def _read(path):
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
 
 
 def _split_key(key):
@@ -38,21 +33,19 @@ def _split_key(key):
 
 
 def load():
-    d = app.config["ANALYSIS_DIR"]
-    files = [d / n for n in ("status.csv", "timeline.csv", "parties.csv")]
-    mtimes = tuple(p.stat().st_mtime for p in files)
+    mtimes = storage.mtimes("status.csv", "timeline.csv", "parties.csv")
     if _cache["mtimes"] == mtimes:
         return _cache["data"]
 
     parties = defaultdict(list)
-    for r in _read(files[2]):
+    for r in storage.read_csv("parties.csv"):
         parties[r["case_key"]].append(r)
     hearings = defaultdict(list)
-    for r in _read(files[1]):
+    for r in storage.read_csv("timeline.csv"):
         hearings[r["case_key"]].append(r)
 
     cases = {}
-    for r in _read(files[0]):
+    for r in storage.read_csv("status.csv"):
         key = r["case_key"]
         kind, seq, year = _split_key(key)
         names = lambda role: [p["party"] for p in parties[key] if p["role"] == role]
@@ -82,14 +75,41 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    return render_template("case.html", c=c)
+    return render_template("case.html", c=c, links=storage.load_links().get(case_key, []))
+
+
+@app.post("/case/<case_key>/links")
+def add_link(case_key):
+    if case_key not in load()["cases"]:
+        abort(404)
+    url = request.form.get("url", "").strip()
+    if "://" not in url:
+        url = "https://" + url
+    if urlparse(url).scheme not in ("http", "https") or not urlparse(url).netloc:
+        abort(400, "Link must be an http(s) URL")
+    links = storage.load_links()
+    links.setdefault(case_key, []).append(
+        {"url": url, "label": request.form.get("label", "").strip() or url,
+         "note": request.form.get("note", "").strip()})
+    storage.save_links(links)
+    return redirect(url_for("case", case_key=case_key) + "#links")
+
+
+@app.post("/case/<case_key>/links/<int:i>/delete")
+def delete_link(case_key, i):
+    links = storage.load_links()
+    if i >= len(links.get(case_key, [])):
+        abort(404)
+    del links[case_key][i]
+    if not links[case_key]:
+        del links[case_key]
+    storage.save_links(links)
+    return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
-    ap.add_argument("--analysis-dir", type=Path, default=app.config["ANALYSIS_DIR"])
     args = ap.parse_args()
-    app.config["ANALYSIS_DIR"] = args.analysis_dir
     app.run(host=args.host, port=args.port)
