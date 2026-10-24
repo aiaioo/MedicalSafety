@@ -16,6 +16,7 @@ Usage:  python viewer.py [--host H] [--port P]
 """
 
 import argparse
+import datetime
 import re
 from collections import defaultdict
 from urllib.parse import urlparse
@@ -88,9 +89,11 @@ def hearings():
 
 @app.route("/day/<date>")
 def day(date):
-    entries = load()["by_date"].get(date)
-    if entries is None:
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
         abort(404)
+    entries = load()["by_date"].get(date, [])  # a future next date has no hearings yet
     return render_template("day.html", date=date, entries=entries)
 
 

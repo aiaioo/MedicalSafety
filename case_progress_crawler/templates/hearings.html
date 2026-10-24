@@ -24,7 +24,7 @@
     <td>{% if h.held == 'no' %}<span class="muted">not held</span>
       {% elif h.outcome_text %}{{ h.outcome_text|truncate(100) }}
       {% else %}<span class="muted">—</span>{% endif %}</td>
-    <td>{{ h.next_date or h.next_sitting }}</td>
+    <td>{% set nd = h.next_date or h.next_sitting %}{% if nd %}<a href="{{ url_for('day', date=nd) }}">{{ nd }}</a>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

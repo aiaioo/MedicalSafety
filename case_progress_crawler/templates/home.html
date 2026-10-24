@@ -26,7 +26,7 @@
         </ul></details>{% endif %}</td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</td>
     <td><span class="badge {{ c.status }}">{{ c.status }}</span>{% if c.status_since %}<div class="muted">since {{ c.status_since }}</div>{% endif %}</td>
-    <td>{{ c.last_hearing }}</td>
+    <td>{% if c.last_hearing %}<a href="{{ url_for('day', date=c.last_hearing) }}">{{ c.last_hearing }}</a>{% endif %}</td>
   </tr>
   {% else %}
   <tr><td colspan="4">No cases.</td></tr>
