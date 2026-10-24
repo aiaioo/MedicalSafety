@@ -3,6 +3,12 @@
 {% block body %}
 <p><a href="{{ url_for('hearings', year=date[:4]) }}">&larr; {{ date[:4] }} hearings</a></p>
 <h1>{{ date }} <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h1>
+{% if pdfs %}
+<p><b>Hearing-list PDFs:</b>
+{% for label, kind, names in pdfs %}{% for n in names %}
+  <a href="{{ url_for('pdf_view', kind=kind, name=n) }}">{{ label }}{% if names|length > 1 %} (version {{ loop.index }}){% endif %}</a>{% if not loop.last %} · {% endif %}
+{% endfor %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
 {% for c, h in entries %}
 <div class="{{ 'notheld' if h.held == 'no' }}" style="margin-bottom:1.2rem">
   <h3 style="margin:0"><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>

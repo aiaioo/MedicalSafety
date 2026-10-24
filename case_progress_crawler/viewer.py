@@ -6,6 +6,8 @@
   /hearings/         days of hearings, latest first, with a short summary of each
                      case; ?year=YYYY filters
   /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
+  /pdf/<kind>/<file> a hearing-list PDF in a continuous page viewer, with a download link
+                     (/pdf/<kind>/<file>/download, pages as /pdf/<kind>/<file>/page/<n>.png)
   /case/<case_key>   parties and a timeline of hearings, latest first, plus
                      user-added links (related cases, party identities, ...)
 
@@ -18,14 +20,19 @@ Usage:  python viewer.py [--host H] [--port P]
 import argparse
 import datetime
 import re
+from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlparse
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+import fitz  # PyMuPDF
+from flask import Flask, Response, abort, redirect, render_template, request, send_from_directory, url_for
 
 import storage
 
 app = Flask(__name__)
+PDF_DIR = Path(__file__).parent / "pdfs"
+PDF_KINDS = {"future_hearings": "Future hearings list", "past_hearings": "Past hearings list"}
+PAGE_IMAGE_DPI = 150
 _cache = {"mtimes": None, "data": None}
 
 
@@ -96,7 +103,53 @@ def day(date):
     except ValueError:
         abort(404)
     entries = load()["by_date"].get(date, [])  # a future next date has no hearings yet
-    return render_template("day.html", date=date, entries=entries)
+    return render_template("day.html", date=date, entries=entries, pdfs=pdfs_for_date(date))
+
+
+def pdfs_for_date(date):
+    """[(kind label, kind, [file names])] for KMC_Enquiry_<date>.pdf and its _2, _3... versions."""
+    stamp = date.replace("-", "")
+    pat = re.compile(rf"KMC_Enquiry_{stamp}(?:_(\d+))?\.pdf")
+    found = []
+    for kind, label in PDF_KINDS.items():
+        names = sorted((f.name for f in (PDF_DIR / kind).glob("KMC_Enquiry_*.pdf") if pat.fullmatch(f.name)),
+                       key=lambda n: int(pat.fullmatch(n).group(1) or 1))
+        if names:
+            found.append((label, kind, names))
+    return found
+
+
+def _pdf_path(kind, name):
+    if kind not in PDF_KINDS or not re.fullmatch(r"KMC_Enquiry_\d{8}(_\d+)?\.pdf", name):
+        abort(404)
+    path = PDF_DIR / kind / name
+    if not path.is_file():
+        abort(404)
+    return path
+
+
+@app.route("/pdf/<kind>/<name>")
+def pdf_view(kind, name):
+    path = _pdf_path(kind, name)
+    with fitz.open(path) as d:
+        pages = d.page_count
+    return render_template("pdf.html", kind=kind, label=PDF_KINDS[kind], name=name, pages=pages)
+
+
+@app.route("/pdf/<kind>/<name>/download")
+def pdf_download(kind, name):
+    _pdf_path(kind, name)
+    return send_from_directory(PDF_DIR / kind, name, as_attachment=True)
+
+
+@app.route("/pdf/<kind>/<name>/page/<int:n>.png")
+def pdf_page(kind, name, n):
+    path = _pdf_path(kind, name)
+    with fitz.open(path) as d:
+        if not 1 <= n <= d.page_count:
+            abort(404)
+        png = d[n - 1].get_pixmap(matrix=fitz.Matrix(PAGE_IMAGE_DPI / 72, PAGE_IMAGE_DPI / 72)).tobytes("png")
+    return Response(png, mimetype="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.route("/case/<case_key>")

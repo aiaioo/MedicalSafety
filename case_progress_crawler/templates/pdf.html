@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block body %}
+<p><a href="javascript:history.back()">&larr; Back</a></p>
+<h1 style="margin-bottom:.2rem">{{ label }} <span class="muted">· {{ name }} · {{ pages }} page{{ 's' if pages != 1 }}</span></h1>
+<p><a href="{{ url_for('pdf_download', kind=kind, name=name) }}" download>Download PDF</a></p>
+<div style="background:#888;padding:.5rem">
+{% for n in range(1, pages + 1) %}
+  <img src="{{ url_for('pdf_page', kind=kind, name=name, n=n) }}" alt="Page {{ n }}" loading="lazy"
+       style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto .5rem;background:#fff">
+{% endfor %}
+</div>
+{% endblock %}
