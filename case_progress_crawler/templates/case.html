@@ -27,7 +27,7 @@
 </ul>
 <form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}">
   <input name="url" placeholder="https://…" required size="40">
-  <input name="text" placeholder="Link text (the text that should carry the link)" size="30">
+  <input name="text" placeholder="Link text" size="30">
   <input name="note" placeholder="Note, shown as a pop-up on hover (optional)" size="30">
   <button type="submit">Add link</button>
 </form>
