@@ -78,19 +78,33 @@ def case(case_key):
     return render_template("case.html", c=c, links=storage.load_links().get(case_key, []))
 
 
-@app.post("/case/<case_key>/links")
-def add_link(case_key):
-    if case_key not in load()["cases"]:
-        abort(404)
+def _link_from_form():
     url = request.form.get("url", "").strip()
     if "://" not in url:
         url = "https://" + url
     if urlparse(url).scheme not in ("http", "https") or not urlparse(url).netloc:
         abort(400, "Link must be an http(s) URL")
+    return {"url": url, "text": request.form.get("text", "").strip() or url,
+            "note": request.form.get("note", "").strip()}
+
+
+@app.post("/case/<case_key>/links")
+def add_link(case_key):
+    if case_key not in load()["cases"]:
+        abort(404)
+    link = _link_from_form()
     links = storage.load_links()
-    links.setdefault(case_key, []).append(
-        {"url": url, "label": request.form.get("label", "").strip() or url,
-         "note": request.form.get("note", "").strip()})
+    links.setdefault(case_key, []).append(link)
+    storage.save_links(links)
+    return redirect(url_for("case", case_key=case_key) + "#links")
+
+
+@app.post("/case/<case_key>/links/<int:i>/edit")
+def edit_link(case_key, i):
+    links = storage.load_links()
+    if i >= len(links.get(case_key, [])):
+        abort(404)
+    links[case_key][i] = _link_from_form()
     storage.save_links(links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 

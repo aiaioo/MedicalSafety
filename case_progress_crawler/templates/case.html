@@ -10,17 +10,24 @@
 <h2 id="links">Links</h2>
 <ul>
   {% for l in links %}
-  <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.label }}</a>
+  <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
     {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span>
     <form method="post" action="{{ url_for('delete_link', case_key=c.case_key, i=loop.index0) }}" style="display:inline"
-          onsubmit="return confirm('Remove this link?')"><button type="submit">remove</button></form></li>
+          onsubmit="return confirm('Remove this link?')"><button type="submit" class="icon" title="Remove link" aria-label="Remove link">🗑</button></form>
+    <details style="display:inline"><summary class="muted" style="display:inline;cursor:pointer">edit</summary>
+      <form method="post" action="{{ url_for('edit_link', case_key=c.case_key, i=loop.index0) }}">
+        <input name="url" value="{{ l.url }}" required size="40">
+        <input name="text" value="{{ l.text }}" placeholder="Link text" size="30">
+        <input name="note" value="{{ l.note }}" placeholder="Note (optional)" size="30">
+        <button type="submit">Save</button>
+      </form></details></li>
   {% else %}
   <li class="muted">No links yet.</li>
   {% endfor %}
 </ul>
 <form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}">
   <input name="url" placeholder="https://…" required size="40">
-  <input name="label" placeholder="Label (e.g. related case, party identity)" size="30">
+  <input name="text" placeholder="Link text (the text that should carry the link)" size="30">
   <input name="note" placeholder="Note, shown as a pop-up on hover (optional)" size="30">
   <button type="submit">Add link</button>
 </form>
