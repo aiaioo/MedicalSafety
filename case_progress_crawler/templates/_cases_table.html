@@ -1,20 +1,22 @@
 <table>
   <tr><th>Case</th><th>Parties</th><th>Status</th><th>Last hearing</th></tr>
   {% for c in cases %}
-  <tr>
-    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>
-      {% set cl = links.get(c.case_key, []) %}
-      {% if cl %}<details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
-        <ul class="links">
-          {% for l in cl %}
-          <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
-            {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span></li>
-          {% endfor %}
-        </ul></details>{% endif %}</td>
+  {% set cl = links.get(c.case_key, []) %}
+  <tr{% if cl %} style="border-bottom:0"{% endif %}>
+    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a></td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</td>
     <td><span class="badge {{ c.status }}">{{ c.status }}</span>{% if c.status_since %}<div class="muted">since {{ c.status_since }}</div>{% endif %}</td>
     <td>{% if c.last_hearing %}<a href="{{ url_for('day', date=c.last_hearing) }}">{{ c.last_hearing }}</a>{% endif %}</td>
   </tr>
+  {% if cl %}
+  <tr><td colspan="4" style="padding-top:0"><details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
+    <ul class="links">
+      {% for l in cl %}
+      <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
+        {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span></li>
+      {% endfor %}
+    </ul></details></td></tr>
+  {% endif %}
   {% else %}
   <tr><td colspan="4">No cases.</td></tr>
   {% endfor %}
