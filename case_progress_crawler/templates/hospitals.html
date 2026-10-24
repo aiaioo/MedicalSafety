@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Hospitals{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('home') }}">&larr; All cases</a></p>
+<h1>Hospitals</h1>
+<p class="muted">{{ hospitals|length }} hospitals, clinics and nursing homes named among the respondents.</p>
+<table>
+  <tr><th>Hospital</th><th>Cases</th></tr>
+  {% for h in hospitals %}
+  <tr><td><a href="{{ url_for('hospital', slug=h.slug) }}">{{ h.name }}</a></td><td>{{ h.cases|length }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

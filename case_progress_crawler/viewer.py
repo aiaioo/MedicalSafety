@@ -3,6 +3,9 @@
 
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
+                     ?q= searches by party, case number or hospital (with autocomplete from /suggest)
+  /hospitals/        hospitals named among the respondents, with case counts
+  /hospital/<slug>   the cases against one hospital
   /hearings/         days of hearings, latest first, with a short summary of each
                      case; ?year=YYYY filters
   /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
@@ -25,7 +28,7 @@ from collections import defaultdict
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
-from flask import Flask, Response, abort, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
 
@@ -34,6 +37,41 @@ PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
 _cache = {"mtimes": None, "data": None}
+HOSPITAL_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
+HOSPITAL_SPLIT = re.compile(r"[,;–—]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
+HOSPITAL_TITLE = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|executive)?\s*"
+                            r"(?:administrator|administartor|superintendent|directors?|owners?|head|management|ceo|md)\b|[\s/.,&-])+", re.I)
+
+
+def hospital_names(party):
+    """Hospital/clinic/nursing-home names mentioned in a party string, e.g.
+    'Dr.Tarun Patil, C/o Manipal Hospitals, Bangalore.' -> ['Manipal Hospitals']"""
+    names = []
+    for seg in HOSPITAL_SPLIT.split(party):
+        m = HOSPITAL_WORD.search(seg)
+        if not m:
+            continue
+        name = HOSPITAL_TITLE.sub("", seg[:m.end()]).strip(" .-")
+        if len(name.split()) > 1:  # a bare "Hospital" names nothing
+            names.append(squash(name))
+    return names
+
+
+def hospital_key(name):
+    """Slug that merges spelling variants: 'Manipal Hospital' and 'M/s. Manipal Hospitals' share one."""
+    s = re.sub(r"[^a-z0-9]+", " ", name.lower())
+    s = re.sub(r"\bhospitals\b", "hospital", s)
+    s = re.sub(r"\b(?:limited|ltd|pvt|private)\b", "", s)
+    return "-".join(s.split())
+
+
+def squash(s):
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def id_tokens(s):
+    """'KMC/ENQ/01/2017' -> ['kmc', 'enq', '1', '2017']"""
+    return [t.lstrip("0") or "0" if t.isdigit() else t for t in re.findall(r"[a-z]+|\d+", s.lower())]
 
 
 def _split_key(key):
@@ -65,7 +103,12 @@ def load():
             h["next_sitting"] = newer["hearing_date"] if newer and newer["hearing_date"] > h["hearing_date"] else ""
         for h, older in zip(hs, hs[1:] + [None]):  # the sitting before this one, if on a different day
             h["prev_sitting"] = older["hearing_date"] if older and older["hearing_date"] < h["hearing_date"] else ""
-        cases[key] = {**r, "kind": kind, "seq": seq, "year": year,
+        hospitals = {}
+        for pr in parties[key]:
+            if pr["role"] == "respondent":
+                for n in hospital_names(pr["party"]):
+                    hospitals.setdefault(hospital_key(n), n)
+        cases[key] = {**r, "hospitals": hospitals, "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
@@ -73,19 +116,65 @@ def load():
     for c in ordered:
         for h in c["hearings"]:
             by_date[h["hearing_date"]].append((c, h))
-    data = {"cases": cases, "ordered": ordered, "by_date": by_date,
+    hospitals = defaultdict(lambda: {"names": defaultdict(int), "cases": []})
+    for c in ordered:
+        for slug, n in c["hospitals"].items():
+            hospitals[slug]["names"][n] += 1
+            hospitals[slug]["cases"].append(c)
+    hospitals = {s: {"slug": s, "name": max(h["names"], key=h["names"].get), "cases": h["cases"]}
+                 for s, h in hospitals.items() if s}
+    data = {"cases": cases, "hospitals": hospitals, "ordered": ordered, "by_date": by_date,
             "years": sorted({c["year"] for c in ordered}, reverse=True),
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
     _cache.update(mtimes=mtimes, data=data)
     return data
 
 
+def matches(c, q):
+    """Does a case match a search by party, case number or hospital?"""
+    words = q.lower().split()
+    haystack = " ".join(c["complainants"] + c["respondents"] + list(c["hospitals"].values())).lower()
+    if all(w in haystack for w in words):
+        return True
+    ids = id_tokens(c["enquiry_id"]) + id_tokens(c["case_key"])
+    return all(any(t.startswith(w) for t in ids) for w in id_tokens(q))
+
+
 @app.route("/")
 def home():
     data = load()
     year = request.args.get("year", type=int)
-    cases = [c for c in data["ordered"] if year is None or c["year"] == year]
-    return render_template("home.html", cases=cases, years=data["years"], year=year, links=storage.load_links())
+    q = request.args.get("q", "").strip()
+    cases = [c for c in data["ordered"] if (year is None or c["year"] == year) and (not q or matches(c, q))]
+    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=storage.load_links())
+
+
+@app.route("/suggest")
+def suggest():
+    """Autocomplete: up to 12 party names, hospital names and case numbers containing the query."""
+    q = request.args.get("q", "").strip().lower()
+    if len(q) < 2:
+        return jsonify([])
+    data = load()
+    pool = {c["enquiry_id"] for c in data["ordered"]}
+    pool |= {p for c in data["ordered"] for p in c["complainants"] + c["respondents"]}
+    pool |= {h["name"] for h in data["hospitals"].values()}
+    hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
+    return jsonify(hits[:12])
+
+
+@app.route("/hospitals/")
+def hospitals():
+    hs = sorted(load()["hospitals"].values(), key=lambda h: (-len(h["cases"]), h["name"].lower()))
+    return render_template("hospitals.html", hospitals=hs)
+
+
+@app.route("/hospital/<slug>")
+def hospital(slug):
+    h = load()["hospitals"].get(slug)
+    if h is None:
+        abort(404)
+    return render_template("hospital.html", h=h, links=storage.load_links())
 
 
 @app.route("/hearings/")
