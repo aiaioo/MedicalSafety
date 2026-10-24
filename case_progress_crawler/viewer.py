@@ -56,6 +56,8 @@ def load():
         hs = sorted(hearings[key], key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
         for newer, h in zip([None] + hs, hs):  # no date in the outcome text: fall back to the sitting that followed
             h["next_sitting"] = newer["hearing_date"] if newer and newer["hearing_date"] > h["hearing_date"] else ""
+        for h, older in zip(hs, hs[1:] + [None]):  # the sitting before this one, if on a different day
+            h["prev_sitting"] = older["hearing_date"] if older and older["hearing_date"] < h["hearing_date"] else ""
         cases[key] = {**r, "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}

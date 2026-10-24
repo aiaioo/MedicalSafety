@@ -11,6 +11,7 @@
     {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
     {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
   <p class="muted" style="margin:.1rem 0">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}</p>
+  {% if h.prev_sitting %}<p><b>Previous date:</b> <a href="{{ url_for('day', date=h.prev_sitting) }}">{{ h.prev_sitting }}</a></p>{% endif %}
   {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
   {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
   {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
