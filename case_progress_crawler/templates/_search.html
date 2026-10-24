@@ -1,0 +1,18 @@
+<form method="get" class="search">
+  {% if year %}<input type="hidden" name="year" value="{{ year }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" list="suggestions" autocomplete="off" autofocus
+         placeholder="Search by party, case number or hospital" aria-label="Search cases">
+  <datalist id="suggestions"></datalist>
+  <button type="submit">Search</button>
+</form>
+<script>
+  const box = document.querySelector('input[name=q]'), list = document.getElementById('suggestions');
+  let timer;
+  box.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const r = await fetch('{{ url_for("suggest") }}?q=' + encodeURIComponent(box.value));
+      list.replaceChildren(...(await r.json()).map(s => Object.assign(document.createElement('option'), {value: s})));
+    }, 150);
+  });
+</script>

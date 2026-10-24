@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Hearings{% endblock %}
+{% block top %}{% include "_search.html" %}{% endblock %}
 {% block body %}
 <p><a href="{{ url_for('home') }}">&larr; Cases</a></p>
 <h1>Hearings by date</h1>
 <form method="get" style="margin:1rem 0">
+  {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
   <label>Year
     <select name="year" onchange="this.form.submit()">
       <option value="">All</option>

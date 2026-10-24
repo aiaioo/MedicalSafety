@@ -4,6 +4,7 @@
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
                      ?q= searches by party, case number or hospital (with autocomplete from /suggest)
+                     ; on /hearings/ the results are the matching hearing dates
   /hospitals/        hospitals named among the respondents, with case counts
   /hospital/<slug>   the cases against one hospital
   /hearings/         days of hearings, latest first, with a short summary of each
@@ -215,8 +216,15 @@ def hospital(slug):
 def hearings():
     data = load()
     year = request.args.get("year")
-    days = [(d, data["by_date"][d]) for d in sorted(data["by_date"], reverse=True) if not year or d.startswith(year)]
-    return render_template("hearings.html", days=days, years=data["hearing_years"], year=year)
+    q = request.args.get("q", "").strip()
+    days = []
+    for d in sorted(data["by_date"], reverse=True):
+        if year and not d.startswith(year):
+            continue
+        entries = [(c, h) for c, h in data["by_date"][d] if not q or matches(c, q)]
+        if entries:
+            days.append((d, entries))
+    return render_template("hearings.html", days=days, years=data["hearing_years"], year=year, q=q)
 
 
 @app.route("/day/<date>")
