@@ -1,6 +1,6 @@
 """Single access point for the crawler's stored JSON and CSV data (all in ./storage).
 
-  state.json       downloader.py: which hearing-list PDFs have been seen
+  state.json       downloader.py: which pre- and post-hearing PDFs have been seen
   enquiries.json   analysis.py:   everything, one object per enquiry
   status.csv       analysis.py:   one row per enquiry
   parties.csv      analysis.py:   one row per party

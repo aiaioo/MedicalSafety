@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Download new hearing-list PDFs from the Karnataka Medical Council enquiry page.
+"""Download new pre- and post-hearing PDFs from the Karnataka Medical Council enquiry page.
 
 The page https://www.karnatakamedicalcouncil.com/Enquiry.aspx links to PDFs
 listing the cases before the Council. Two kinds exist:
 
-  * future_hearings - cases listed for the next hearing. No "Next Date and
+  * future_hearings (pre-hearing PDF) - cases listed for the next hearing. No "Next Date and
     Stage" column.
-  * past_hearings   - what happened at the last hearing. These carry a
+  * past_hearings (post-hearing PDF) - what happened at the last hearing. These carry a
     "Next Date and Stage" column.
 
-Each run fetches the page, finds hearing-list PDFs not seen before, downloads
+Each run fetches the page, finds pre- and post-hearing PDFs not seen before, downloads
 them into pdfs/future_hearings or pdfs/past_hearings, and records them in
 state.json so they are never downloaded twice. A PDF that fails to download is
 not recorded, so the next run retries it.
@@ -40,7 +40,7 @@ from pypdf import PdfReader
 from storage import load_state, save_state
 
 PAGE_URL = "https://www.karnatakamedicalcouncil.com/Enquiry.aspx"
-# Hearing lists live here; the rest of /Upload/ holds general notices and forms.
+# Pre- and post-hearing PDFs live here; the rest of /Upload/ holds general notices and forms.
 HEARING_PATH_PREFIX = "/Upload/MarqueeFiles/"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -72,7 +72,7 @@ def make_session():
 
 
 def find_hearing_links(html):
-    """Return {absolute_url: link_text} for hearing-list PDFs on the page."""
+    """Return {absolute_url: link_text} for pre- and post-hearing PDFs on the page."""
     soup = BeautifulSoup(html, "html.parser")
     links = {}
     for a in soup.find_all("a", href=True):

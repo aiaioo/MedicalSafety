@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyse the hearing-list PDFs downloaded by downloader.py.
+"""Analyse the pre- and post-hearing PDFs downloaded by downloader.py.
 
 For every enquiry (e.g. KMC/ENQ/25/2025) it builds
   a) the complainant(s) and respondent(s), and
@@ -8,10 +8,10 @@ For every enquiry (e.g. KMC/ENQ/25/2025) it builds
      filing evidence by affidavit, order on ..., arguments, disposed, dismissed ...)
      and what happened / what was scheduled next.
 
-Inputs:  pdfs/future_hearings/*.pdf  - lists of cases for an upcoming hearing
+Inputs:  pdfs/future_hearings/*.pdf  - pre-hearing PDFs: lists of cases for an upcoming hearing
          (list A/B/..., complainant, respondent). Older ones are laid out as
          "Complainant  V/s  Respondents", newer ones as a table.
-         pdfs/past_hearings/*.pdf    - outcome of a hearing and the next date/stage.
+         pdfs/past_hearings/*.pdf    - post-hearing PDFs: outcome of a hearing and the next date/stage.
          Circulars announcing that a sitting is postponed to another date may sit
          in either folder; a next date that falls on a postponed sitting is moved to the new date.
 Outputs (in storage/, via storage.py; rebuilt from scratch on every run, so re-running after

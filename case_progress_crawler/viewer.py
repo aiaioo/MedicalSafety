@@ -6,7 +6,7 @@
   /hearings/         days of hearings, latest first, with a short summary of each
                      case; ?year=YYYY filters
   /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
-  /pdf/<kind>/<file> a hearing-list PDF in a continuous page viewer, with a download link
+  /pdf/<kind>/<file> a pre- or post-hearing PDF in a continuous page viewer, with a download link
                      (/pdf/<kind>/<file>/download, pages as /pdf/<kind>/<file>/page/<n>.png)
   /case/<case_key>   parties and a timeline of hearings, latest first, plus
                      user-added links (related cases, party identities, ...)
@@ -31,7 +31,7 @@ import storage
 
 app = Flask(__name__)
 PDF_DIR = Path(__file__).parent / "pdfs"
-PDF_KINDS = {"future_hearings": "Future hearings list", "past_hearings": "Past hearings list"}
+PDF_KINDS = {"future_hearings": "Pre-hearing PDF", "past_hearings": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
 _cache = {"mtimes": None, "data": None}
 
