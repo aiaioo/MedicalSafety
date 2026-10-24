@@ -1,10 +1,16 @@
 {% extends "base.html" %}
-{% block body %}
-<form method="get" style="margin:1rem 0">
-  <input type="search" name="q" value="{{ q }}" list="suggestions" autocomplete="off" size="40"
-         placeholder="Search party, case number or hospital" aria-label="Search cases">
+{% block top %}
+<form method="get" class="search">
+  {% if year %}<input type="hidden" name="year" value="{{ year }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" list="suggestions" autocomplete="off" autofocus
+         placeholder="Search by party, case number or hospital" aria-label="Search cases">
   <datalist id="suggestions"></datalist>
   <button type="submit">Search</button>
+</form>
+{% endblock %}
+{% block body %}
+<form method="get" style="margin:1rem 0">
+  {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
   <label>Year
     <select name="year" onchange="this.form.submit()">
       <option value="">All</option>
