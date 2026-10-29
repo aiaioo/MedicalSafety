@@ -18,9 +18,11 @@
 The CSVs are re-read whenever their modification time changes, so re-running
 analysis.py is picked up without restarting.
 
-Shows one court per run: kmc (from analysis.py) or consumer (from analysis_consumer.py).
+Shows KMC cases (from analysis.py), CPA -- Consumer Protection Act -- cases from all the consumer courts
+(from analysis_consumer.py), or both together; choose with the links at the top of every page (remembered
+in a cookie). --court sets the choice for visitors who have not made one.
 
-Usage:  python viewer.py [--court kmc|consumer] [--host H] [--port P]
+Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
 """
 
 import argparse
@@ -34,14 +36,17 @@ import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
-from courts import all_courts
 
 app = Flask(__name__)
-COURT = "kmc"  # which court's data to show; set by --court
+COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
+SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
+DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
+LOAD_FILES = ("status.csv", "timeline.csv", "parties.csv")
+PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
-_cache = {"mtimes": None, "data": None}
+_cache = {}  # selection -> {"mtimes", "data"}
 HOSPITAL_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
 HOSPITAL_SPLIT = re.compile(r"[,;–—/]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
 HOSPITAL_TITLE = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|executive)?\s*"
@@ -120,20 +125,36 @@ def _split_key(key):
     return kind, (int(num), suffix), int(year)
 
 
-def load():
-    mtimes = storage.mtimes(COURT, "status.csv", "timeline.csv", "parties.csv")
-    if _cache["mtimes"] == mtimes:
-        return _cache["data"]
+def selection():
+    sel = request.cookies.get("court")
+    return sel if sel in SELECTIONS else DEFAULT_SELECTION
+
+
+def court_ids(sel):
+    """The courts a selection covers that have been analysed (a court with no data yet is skipped)."""
+    ids = list(COURTS) if sel == "all" else [sel]
+    return [c for c in ids if all(storage.path(c, n).exists() for n in LOAD_FILES)]
+
+
+def load(sel=None):
+    sel = sel or selection()
+    ids = court_ids(sel)
+    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids)
+    if sel in _cache and _cache[sel]["mtimes"] == mtimes:
+        return _cache[sel]["data"]
 
     parties = defaultdict(list)
-    for r in storage.read_csv(COURT, "parties.csv"):
-        parties[r["case_key"]].append(r)
     hearings = defaultdict(list)
-    for r in storage.read_csv(COURT, "timeline.csv"):
-        hearings[r["case_key"]].append(r)
+    status_rows = []  # case keys are distinct across courts
+    for c in ids:
+        for r in storage.read_csv(c, "parties.csv"):
+            parties[r["case_key"]].append(r)
+        for r in storage.read_csv(c, "timeline.csv"):
+            hearings[r["case_key"]].append(r)
+        status_rows += [{**r, "court": c, "court_label": COURTS[c]} for r in storage.read_csv(c, "status.csv")]
 
     cases = {}
-    for r in storage.read_csv(COURT, "status.csv"):
+    for r in status_rows:
         key = r["case_key"]
         kind, seq, year = _split_key(key)
         names = lambda role: [p["party"] for p in parties[key] if p["role"] == role]
@@ -165,8 +186,41 @@ def load():
     data = {"cases": cases, "hospitals": hospitals, "ordered": ordered, "by_date": by_date,
             "years": sorted({c["year"] for c in ordered}, reverse=True),
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
-    _cache.update(mtimes=mtimes, data=data)
+    _cache[sel] = {"mtimes": mtimes, "data": data}
     return data
+
+
+def court_links(sel=None):
+    """Hand-entered links of the selected courts, by case key."""
+    links = {}
+    for c in court_ids(sel or selection()):
+        links.update(storage.load_links(c))
+    return links
+
+
+def court_of(case_key):
+    """Which court a case belongs to, or 404."""
+    c = load("all")["cases"].get(case_key)
+    if c is None:
+        abort(404)
+    return c["court"]
+
+
+@app.context_processor
+def selector():
+    return {"selections": SELECTIONS, "selected": selection()}
+
+
+@app.route("/court/<sel>")
+def select_court(sel):
+    if sel not in SELECTIONS:
+        abort(404)
+    ref = urlparse(request.referrer or "")
+    # back to the list the visitor was on; a case or hospital page may not exist under the new choice
+    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/") else url_for("home")
+    resp = redirect(back)
+    resp.set_cookie("court", sel, max_age=365 * 86400, samesite="Lax")
+    return resp
 
 
 def matches(c, q):
@@ -185,7 +239,7 @@ def home():
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
     cases = [c for c in data["ordered"] if (year is None or c["year"] == year) and (not q or matches(c, q))]
-    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=storage.load_links(COURT))
+    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links())
 
 
 @app.route("/suggest")
@@ -213,7 +267,7 @@ def hospital(slug):
     h = load()["hospitals"].get(slug)
     if h is None:
         abort(404)
-    return render_template("hospital.html", h=h, links=storage.load_links(COURT))
+    return render_template("hospital.html", h=h, links=court_links())
 
 
 @app.route("/hearings/")
@@ -238,7 +292,8 @@ def day(date):
     except ValueError:
         abort(404)
     entries = load()["by_date"].get(date, [])  # a future next date has no hearings yet
-    return render_template("day.html", date=date, entries=entries, pdfs=pdfs_for_date(date))
+    return render_template("day.html", date=date, entries=entries,
+                           pdfs=pdfs_for_date(date) if PDF_COURT in court_ids(selection()) else [])
 
 
 def pdfs_for_date(date):
@@ -247,7 +302,7 @@ def pdfs_for_date(date):
     pat = re.compile(rf"KMC_Enquiry_{stamp}(?:_(\d+))?\.pdf")
     found = []
     for kind, label in PDF_KINDS.items():
-        names = sorted((f.name for f in (PDF_DIR / COURT / kind).glob("KMC_Enquiry_*.pdf") if pat.fullmatch(f.name)),
+        names = sorted((f.name for f in (PDF_DIR / PDF_COURT / kind).glob("KMC_Enquiry_*.pdf") if pat.fullmatch(f.name)),
                        key=lambda n: int(pat.fullmatch(n).group(1) or 1))
         if names:
             found.append((label, kind, names))
@@ -257,7 +312,7 @@ def pdfs_for_date(date):
 def _pdf_path(kind, name):
     if kind not in PDF_KINDS or not re.fullmatch(r"KMC_Enquiry_\d{8}(_\d+)?\.pdf", name):
         abort(404)
-    path = PDF_DIR / COURT / kind / name
+    path = PDF_DIR / PDF_COURT / kind / name
     if not path.is_file():
         abort(404)
     return path
@@ -274,7 +329,7 @@ def pdf_view(kind, name):
 @app.route("/pdf/<kind>/<name>/download")
 def pdf_download(kind, name):
     _pdf_path(kind, name)
-    return send_from_directory(PDF_DIR / COURT / kind, name, as_attachment=True)
+    return send_from_directory(PDF_DIR / PDF_COURT / kind, name, as_attachment=True)
 
 
 @app.route("/pdf/<kind>/<name>/page/<int:n>.png")
@@ -292,7 +347,7 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    return render_template("case.html", c=c, links=storage.load_links(COURT).get(case_key, []))
+    return render_template("case.html", c=c, links=court_links().get(case_key, []))
 
 
 def _link_from_form():
@@ -310,39 +365,42 @@ def add_link(case_key):
     if case_key not in load()["cases"]:
         abort(404)
     link = _link_from_form()
-    links = storage.load_links(COURT)
+    court = court_of(case_key)
+    links = storage.load_links(court)
     links.setdefault(case_key, []).append(link)
-    storage.save_links(COURT, links)
+    storage.save_links(court, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/edit")
 def edit_link(case_key, i):
-    links = storage.load_links(COURT)
+    court = court_of(case_key)
+    links = storage.load_links(court)
     if i >= len(links.get(case_key, [])):
         abort(404)
     links[case_key][i] = _link_from_form()
-    storage.save_links(COURT, links)
+    storage.save_links(court, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/delete")
 def delete_link(case_key, i):
-    links = storage.load_links(COURT)
+    court = court_of(case_key)
+    links = storage.load_links(court)
     if i >= len(links.get(case_key, [])):
         abort(404)
     del links[case_key][i]
     if not links[case_key]:
         del links[case_key]
-    storage.save_links(COURT, links)
+    storage.save_links(court, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--court", default=COURT, choices=sorted(all_courts()))
+    ap.add_argument("--court", default=DEFAULT_SELECTION, choices=sorted(SELECTIONS))
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     args = ap.parse_args()
-    COURT = args.court
+    DEFAULT_SELECTION = args.court
     app.run(host=args.host, port=args.port)

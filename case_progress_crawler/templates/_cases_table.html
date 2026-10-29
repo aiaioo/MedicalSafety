@@ -3,7 +3,7 @@
   {% for c in cases %}
   {% set cl = links.get(c.case_key, []) %}
   <tr>
-    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a></td>
+    <td><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %}</td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}
       {% if cl %}<details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
     <ul class="links">

@@ -11,7 +11,7 @@
 {% endif %}
 {% for c, h in entries %}
 <div class="{{ 'notheld' if h.held == 'no' }}" style="margin-bottom:1.2rem">
-  <h3 style="margin:0"><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>
+  <h3 style="margin:0"><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %}
     <span class="badge {{ c.status }}">{{ c.status }}</span>
     {% if h.hearing_time %}<span class="muted">· {{ h.hearing_time }}</span>{% endif %}
     {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}

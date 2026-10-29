@@ -29,6 +29,9 @@
            background: #fffbe6; border: 1px solid #d9c96b; border-radius: 4px; padding: .5rem .75rem;
            box-shadow: 0 2px 8px rgba(0,0,0,.2); white-space: pre-wrap; font-size: .9em; }
   .hasnote:hover .popup, .hasnote:focus-within .popup { display: block; }
+  nav.courts { margin: .4rem 0 .8rem; }
+  nav.courts a { padding: .25rem .8rem; border: 1px solid #0b5cad; border-radius: 1rem; text-decoration: none; margin-right: .3rem; font-size: .9em; }
+  nav.courts a.on { background: #0b5cad; color: #fff; }
   form.search { display: flex; gap: .5rem; margin: .5rem 0 1.2rem; }
   form.search input { flex: 1; font-size: 1.2rem; padding: .7rem 1rem; border: 2px solid #0b5cad; border-radius: .5rem; }
   form.search input:focus { outline: 3px solid #b6d4f5; }
@@ -39,6 +42,7 @@
 <body>
 {% block top %}{% endblock %}
 <header><a href="{{ url_for('home') }}">Case progress</a></header>
+<nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</nav>
 {% block body %}{% endblock %}
 </body>
 </html>
