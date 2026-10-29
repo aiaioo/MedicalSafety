@@ -18,7 +18,7 @@ TIMEOUT = 60
 STATE_COMMISSION = 2  # commissionTypeId; district commissions are 3
 
 KARNATAKA = {"state": "Karnataka", "state_id": 29}
-BANGALORE_RE = re.compile(r"\bbangalore\b", re.IGNORECASE)
+BANGALORE_RE = re.compile(r"\b(?:bangalore|bengaluru)\b", re.IGNORECASE)  # two spellings of the same name
 
 
 def fetch_commissions(state_id):
@@ -34,7 +34,7 @@ def fetch_commissions(state_id):
 
 def bangalore_courts():
     """Consumer courts in Bangalore: the Karnataka State Commission and every commission
-    with "Bangalore" in its name (Bangalore Urban and its additional benches)."""
+    with "Bangalore" or "Bengaluru" in its name (Bangalore Urban, Bengaluru Rural, Bengaluru South and the additional benches)."""
     courts = []
     for c in fetch_commissions(KARNATAKA["state_id"]):
         is_state = c["commissionTypeId"] == STATE_COMMISSION and not c["circuitAdditionBenchStatus"]
