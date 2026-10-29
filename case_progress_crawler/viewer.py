@@ -18,9 +18,9 @@
 The CSVs are re-read whenever their modification time changes, so re-running
 analysis.py is picked up without restarting.
 
-Shows one court (KMC, whose list layouts the analysis parses) per run.
+Shows one court per run: kmc (from analysis.py) or consumer (from analysis_consumer.py).
 
-Usage:  python viewer.py [--court kmc] [--host H] [--port P]
+Usage:  python viewer.py [--court kmc|consumer] [--host H] [--port P]
 """
 
 import argparse
