@@ -5,3 +5,4 @@ __pycache__/
 pdfs/
 causelists/
 .playwright-mcp/
+case_details/
