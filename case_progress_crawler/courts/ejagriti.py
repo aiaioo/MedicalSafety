@@ -59,8 +59,13 @@ def bangalore_courts():
 API_BASE = "https://e-jagriti.gov.in/services"
 
 
+NO_CAUSELIST_MESSAGE = "CL Data not found"  # the portal's HTTP 400 for a day with no list published
+
+
 def _get(session, path, **params):
     resp = session.get(f"{API_BASE}/{path}", params=params, timeout=TIMEOUT)
+    if resp.status_code == 400 and NO_CAUSELIST_MESSAGE in resp.text:
+        return {"data": None}
     resp.raise_for_status()
     return resp.json()
 
