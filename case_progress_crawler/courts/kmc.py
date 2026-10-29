@@ -129,6 +129,8 @@ SAME_TEXT_RATIO = 0.98
 class KMC(Court):
     id = "kmc"
     name = "Karnataka Medical Council"
+    city = "Bangalore"
+    state = "Karnataka"
 
     def _sub(self, name):
         return os.path.join(self.pdf_dir, name)

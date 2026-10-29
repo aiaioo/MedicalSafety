@@ -9,6 +9,9 @@ Each court (see courts/) has its own folder, storage/<court>/, e.g. for "kmc":
   timeline.csv     analysis.py:   one row per enquiry per hearing date
   links.json       viewer.py:     hand-entered links per case
 
+courts.json (court_list.py: every known court, by city) is shared, so it lives directly in
+storage/ (court id "", see load_courts).
+
 Every function below takes the court id first. Writes are atomic (temp file + rename). Running this file lists what is stored.
 """
 
@@ -72,6 +75,14 @@ def load_state(court):
 
 def save_state(court, state):
     write_json(court, "state.json", state, sort_keys=True)
+
+
+def load_courts():
+    return read_json("", "courts.json", {})
+
+
+def save_courts(courts):
+    write_json("", "courts.json", courts)
 
 
 def load_links(court):

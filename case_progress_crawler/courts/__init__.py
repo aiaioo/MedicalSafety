@@ -32,6 +32,8 @@ def make_session(user_agent):
 class Court(ABC):
     id: str    # folder name under pdfs/, storage/ and manually_downloaded/; also the --court value
     name: str  # for display
+    city: str  # where the court sits, e.g. "Bangalore"
+    state: str
 
     @property
     def pdf_dir(self):
