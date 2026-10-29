@@ -65,19 +65,13 @@ def _get(session, path, **params):
     return resp.json()
 
 
-def fetch_court_numbers(session):
-    """[(court_id, name)] of the active court numbers ("1", "2", ..., "BEFORE REGISTRAR")
-    that the portal offers under "Court Number"."""
-    data = _get(session, "master/master/v2/getAllCourts")["data"]
-    return [(c["courtId"], c["courtNameEn"]) for c in data if c["activeStatus"] == "true"]
-
-
-def fetch_causelist(session, commission_id, court_id, day):
-    """The cause list of one court number of one commission for `day` (a date), or None
-    when none has been published. Returns the portal's rows with each row's "clData" (a JSON
-    string holding the listed cases) decoded into a "cases" list."""
+def fetch_causelist(session, commission_id, day):
+    """The cause lists of all the court numbers of one commission for `day` (a date) -- the
+    portal's "All" choice, which leaves courtId out of the request -- or None when none has
+    been published. Returns the portal's rows (one per court number, with a "courtId") with
+    each row's "clData" (a JSON string holding the listed cases) decoded into a "cases" list."""
     body = _get(session, "courtmaster/courtRoom/v1/getAllEjclData",
-                commissionId=commission_id, courtId=court_id, clDate=day.isoformat())
+                commissionId=commission_id, clDate=day.isoformat())
     rows = body.get("data") or []
     out = []
     for row in rows:
