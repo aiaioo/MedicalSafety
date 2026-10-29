@@ -4,7 +4,9 @@ A cause list gives only the parties and the kind of case (complaint, execution, 
 the complaint is about. So a case is kept when one of its respondents -- the party complained
 against -- is a medical provider by name: a hospital, clinic or nursing home, pharmacy or chemist,
 diagnostic centre or lab, pharma firm, or an individual doctor. Complainants are not checked
-(a doctor can be a complainant against a builder or an insurer).
+(a doctor can be a complainant against a builder or an insurer). In an appeal or revision the
+appellant is listed as the complainant, and a hospital or doctor who lost below appeals, so for those
+the complainants are checked too (which also lets in some doctors appealing non-medical disputes).
 
 The match is deliberately by provider nouns, not "health", which would also catch health insurers
 and gyms ("Care Health Insurance", "Cult Fit Health Care"). A name the patterns miss means a missed case, so
@@ -13,6 +15,9 @@ an insurer alone is not medical negligence and stays out.
 """
 
 import re
+
+FILTER_VERSION = 2  # bump when the rules change; courts/consumer.py then filters saved lists again
+APPEAL_RE = re.compile(r"appeal|revision", re.IGNORECASE)  # case types where the appellant is listed as complainant
 
 PROVIDER_PATTERNS = [
     # hospitals, clinics, nursing homes, medical colleges and centres
@@ -37,8 +42,15 @@ def respondents(case):
     return [r.get("respondant_name") or "" for r in case.get("respondantList") or []]
 
 
+def complainants(case):
+    return [r.get("complainant_name") or "" for r in case.get("complainantList") or []]
+
+
 def is_medical_case(case):
-    return any(PROVIDER_RE.search(name) for name in respondents(case))
+    names = respondents(case)
+    if APPEAL_RE.search(case.get("caseTypeName") or ""):
+        names += complainants(case)
+    return any(PROVIDER_RE.search(name) for name in names)
 
 
 def keep_medical(rows):

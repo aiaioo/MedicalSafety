@@ -227,7 +227,7 @@ class KMC(Court):
                 added += 1
         log(f"{added} manually downloaded PDFs {'would be ' if dry_run else ''}added to pdfs/")
 
-    def download(self, dry_run=False):
+    def download(self, dry_run=False, back_days=None):
         try:
             self.sync_manual(dry_run)
         except Exception as e:

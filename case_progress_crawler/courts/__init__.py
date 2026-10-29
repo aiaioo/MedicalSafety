@@ -45,9 +45,10 @@ class Court(ABC):
         return os.path.join(BASE_DIR, "manually_downloaded", self.id)
 
     @abstractmethod
-    def download(self, dry_run=False):
+    def download(self, dry_run=False, back_days=None):
         """Fetch whatever is new from the court into pdfs/<id>/, remembering what has been
-        fetched (storage.load_state / save_state) so nothing is downloaded twice.
+        fetched (storage.load_state / save_state) so nothing is downloaded twice. back_days asks a
+        court that publishes by date to go back that far; the others ignore it.
         Return the number of failures (0 = success)."""
 
 

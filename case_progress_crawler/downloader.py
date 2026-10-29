@@ -5,7 +5,7 @@ Every court (see courts/) has its own Court subclass that knows how that court
 publishes its lists; this script just runs them. Downloads go into pdfs/<court>/ and
 what has been fetched is remembered in storage/<court>/state.json.
 
-Usage:  python downloader.py [--court ID ...] [--dry-run]
+Usage:  python downloader.py [--court ID ...] [--dry-run] [--back DAYS]
         (no --court: every court)
 """
 
@@ -21,6 +21,8 @@ def main():
     parser.add_argument("--court", action="append", choices=sorted(courts),
                         help="court to download (repeatable); default: all")
     parser.add_argument("--dry-run", action="store_true", help="list new PDFs without downloading")
+    parser.add_argument("--back", type=int, metavar="DAYS",
+                        help="also fetch cause lists from this many days back (consumer courts; default 1)")
     args = parser.parse_args()
 
     failures = 0
@@ -28,7 +30,7 @@ def main():
         court = courts[court_id]
         log(f"== {court.name} ({court.id})")
         try:
-            failures += court.download(args.dry_run)
+            failures += court.download(args.dry_run, back_days=args.back)
         except Exception as e:
             failures += 1
             log(f"ERROR {court.id}: {e}")
