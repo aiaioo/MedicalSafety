@@ -6,6 +6,10 @@ court numbers (the portal's "All") are fetched from the e-Jagriti API (courts/ej
 for each working day from yesterday to LOOKAHEAD_DAYS ahead, and saved as one JSON file per
 commission per day in causelists/consumer/<commission id>/.
 
+Only medical cases are kept (courts/medical.py: a respondent that is a hospital, clinic,
+pharmacy, diagnostic centre or lab, pharma firm or doctor); the rest of each list is dropped and
+a list with no medical case is not saved at all.
+
 Unlike the KMC's PDFs these are structured: each file holds the cases listed (case number,
 parties, advocates, bench, stage, previous hearing date). Cause lists are revised during
 the day, so a list whose update time has changed since it was saved is saved again as
@@ -23,6 +27,7 @@ import storage
 
 from . import BASE_DIR, Court, log, make_session
 from . import ejagriti
+from .medical import keep_medical
 
 LOOKBACK_DAYS = 1   # yesterday's list may have been revised after the last run
 LOOKAHEAD_DAYS = 7
@@ -57,7 +62,10 @@ class EJagritiConsumer(Court):
         return courts
 
     def save(self, commission, day, rows, state, dry_run):
-        """Save the list if its update time is new. Returns True when it was (or would be) saved."""
+        """Save the medical cases of the list if its update time is new. Returns True when it was (or would be) saved."""
+        rows, listed = keep_medical(rows)
+        if not rows:
+            return False
         key = f"{commission['ejagriti_commission_id']}/{day.isoformat()}"
         updated_at = max(r.get("updatedAt") or "" for r in rows)
         prev = state["seen"].get(key)
@@ -68,7 +76,7 @@ class EJagritiConsumer(Court):
         dest = os.path.join(self.data_dir, str(commission["ejagriti_commission_id"]),
                             f"{day.isoformat()}{suffix}.json")
         cases = sum(len(r["cases"]) for r in rows)
-        log(f"New: {commission['name']}, {day}: {cases} cases in {len(rows)} courts"
+        log(f"New: {commission['name']}, {day}: {cases} medical cases of {listed} listed"
             f"{'' if version == 1 else f' (revision {version})'}")
         if dry_run:
             return True
@@ -76,7 +84,7 @@ class EJagritiConsumer(Court):
         tmp = dest + ".part"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"commission": commission["name"], "ejagriti_commission_id": commission["ejagriti_commission_id"],
-                       "date": day.isoformat(),
+                       "date": day.isoformat(), "cases_listed": listed,
                        "fetched_at": datetime.now().isoformat(timespec="seconds"), "causelists": rows},
                       f, indent=1, ensure_ascii=False)
         os.replace(tmp, dest)
