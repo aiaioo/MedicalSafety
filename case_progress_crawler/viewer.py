@@ -18,7 +18,9 @@
 The CSVs are re-read whenever their modification time changes, so re-running
 analysis.py is picked up without restarting.
 
-Usage:  python viewer.py [--host H] [--port P]
+Shows one court (KMC, whose list layouts the analysis parses) per run.
+
+Usage:  python viewer.py [--court kmc] [--host H] [--port P]
 """
 
 import argparse
@@ -32,8 +34,10 @@ import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
+from courts import all_courts
 
 app = Flask(__name__)
+COURT = "kmc"  # which court's data to show; set by --court
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
@@ -117,19 +121,19 @@ def _split_key(key):
 
 
 def load():
-    mtimes = storage.mtimes("status.csv", "timeline.csv", "parties.csv")
+    mtimes = storage.mtimes(COURT, "status.csv", "timeline.csv", "parties.csv")
     if _cache["mtimes"] == mtimes:
         return _cache["data"]
 
     parties = defaultdict(list)
-    for r in storage.read_csv("parties.csv"):
+    for r in storage.read_csv(COURT, "parties.csv"):
         parties[r["case_key"]].append(r)
     hearings = defaultdict(list)
-    for r in storage.read_csv("timeline.csv"):
+    for r in storage.read_csv(COURT, "timeline.csv"):
         hearings[r["case_key"]].append(r)
 
     cases = {}
-    for r in storage.read_csv("status.csv"):
+    for r in storage.read_csv(COURT, "status.csv"):
         key = r["case_key"]
         kind, seq, year = _split_key(key)
         names = lambda role: [p["party"] for p in parties[key] if p["role"] == role]
@@ -181,7 +185,7 @@ def home():
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
     cases = [c for c in data["ordered"] if (year is None or c["year"] == year) and (not q or matches(c, q))]
-    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=storage.load_links())
+    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=storage.load_links(COURT))
 
 
 @app.route("/suggest")
@@ -209,7 +213,7 @@ def hospital(slug):
     h = load()["hospitals"].get(slug)
     if h is None:
         abort(404)
-    return render_template("hospital.html", h=h, links=storage.load_links())
+    return render_template("hospital.html", h=h, links=storage.load_links(COURT))
 
 
 @app.route("/hearings/")
@@ -243,7 +247,7 @@ def pdfs_for_date(date):
     pat = re.compile(rf"KMC_Enquiry_{stamp}(?:_(\d+))?\.pdf")
     found = []
     for kind, label in PDF_KINDS.items():
-        names = sorted((f.name for f in (PDF_DIR / kind).glob("KMC_Enquiry_*.pdf") if pat.fullmatch(f.name)),
+        names = sorted((f.name for f in (PDF_DIR / COURT / kind).glob("KMC_Enquiry_*.pdf") if pat.fullmatch(f.name)),
                        key=lambda n: int(pat.fullmatch(n).group(1) or 1))
         if names:
             found.append((label, kind, names))
@@ -253,7 +257,7 @@ def pdfs_for_date(date):
 def _pdf_path(kind, name):
     if kind not in PDF_KINDS or not re.fullmatch(r"KMC_Enquiry_\d{8}(_\d+)?\.pdf", name):
         abort(404)
-    path = PDF_DIR / kind / name
+    path = PDF_DIR / COURT / kind / name
     if not path.is_file():
         abort(404)
     return path
@@ -270,7 +274,7 @@ def pdf_view(kind, name):
 @app.route("/pdf/<kind>/<name>/download")
 def pdf_download(kind, name):
     _pdf_path(kind, name)
-    return send_from_directory(PDF_DIR / kind, name, as_attachment=True)
+    return send_from_directory(PDF_DIR / COURT / kind, name, as_attachment=True)
 
 
 @app.route("/pdf/<kind>/<name>/page/<int:n>.png")
@@ -288,7 +292,7 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    return render_template("case.html", c=c, links=storage.load_links().get(case_key, []))
+    return render_template("case.html", c=c, links=storage.load_links(COURT).get(case_key, []))
 
 
 def _link_from_form():
@@ -306,37 +310,39 @@ def add_link(case_key):
     if case_key not in load()["cases"]:
         abort(404)
     link = _link_from_form()
-    links = storage.load_links()
+    links = storage.load_links(COURT)
     links.setdefault(case_key, []).append(link)
-    storage.save_links(links)
+    storage.save_links(COURT, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/edit")
 def edit_link(case_key, i):
-    links = storage.load_links()
+    links = storage.load_links(COURT)
     if i >= len(links.get(case_key, [])):
         abort(404)
     links[case_key][i] = _link_from_form()
-    storage.save_links(links)
+    storage.save_links(COURT, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/delete")
 def delete_link(case_key, i):
-    links = storage.load_links()
+    links = storage.load_links(COURT)
     if i >= len(links.get(case_key, [])):
         abort(404)
     del links[case_key][i]
     if not links[case_key]:
         del links[case_key]
-    storage.save_links(links)
+    storage.save_links(COURT, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--court", default=COURT, choices=sorted(all_courts()))
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5000)
     args = ap.parse_args()
+    COURT = args.court
     app.run(host=args.host, port=args.port)
