@@ -3,4 +3,5 @@ cron.log
 cron.log.tmp
 __pycache__/
 pdfs/
-
+causelists/
+.playwright-mcp/

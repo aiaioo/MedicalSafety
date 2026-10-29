@@ -18,7 +18,7 @@ from courts import all_courts, ejagriti, log
 
 def local_courts():
     return [{"id": c.id, "name": c.name, "kind": "medical council", "city": c.city, "state": c.state,
-             "source": "courts/"} for c in all_courts().values()]
+             "source": "courts/"} for c in all_courts().values() if c.in_court_list]
 
 
 def merge(old, current, today):

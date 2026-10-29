@@ -7,6 +7,7 @@ benches and district commissions (one per district, plus numbered "additional" b
 e.g. "Bangalore 2nd Additional"). The date of hearing on the page is not needed for this.
 """
 
+import json
 import re
 
 from . import log, make_session
@@ -53,3 +54,34 @@ def bangalore_courts():
     if not courts:
         log("ERROR: no Bangalore consumer courts found; has the API changed?")
     return courts
+
+
+API_BASE = "https://e-jagriti.gov.in/services"
+
+
+def _get(session, path, **params):
+    resp = session.get(f"{API_BASE}/{path}", params=params, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_court_numbers(session):
+    """[(court_id, name)] of the active court numbers ("1", "2", ..., "BEFORE REGISTRAR")
+    that the portal offers under "Court Number"."""
+    data = _get(session, "master/master/v2/getAllCourts")["data"]
+    return [(c["courtId"], c["courtNameEn"]) for c in data if c["activeStatus"] == "true"]
+
+
+def fetch_causelist(session, commission_id, court_id, day):
+    """The cause list of one court number of one commission for `day` (a date), or None
+    when none has been published. Returns the portal's rows with each row's "clData" (a JSON
+    string holding the listed cases) decoded into a "cases" list."""
+    body = _get(session, "courtmaster/courtRoom/v1/getAllEjclData",
+                commissionId=commission_id, courtId=court_id, clDate=day.isoformat())
+    rows = body.get("data") or []
+    out = []
+    for row in rows:
+        row = dict(row)
+        row["cases"] = json.loads(row.pop("clData") or "[]")
+        out.append(row)
+    return out or None

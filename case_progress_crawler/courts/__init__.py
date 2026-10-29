@@ -34,6 +34,7 @@ class Court(ABC):
     name: str  # for display
     city: str  # where the court sits, e.g. "Bangalore"
     state: str
+    in_court_list = True  # False for a crawler that covers many courts, which court_list.py lists itself
 
     @property
     def pdf_dir(self):
@@ -51,8 +52,9 @@ class Court(ABC):
 
 
 def all_courts():
+    from .consumer import EJagritiConsumer
     from .kmc import KMC
-    return {c.id: c for c in (KMC(),)}  # register new courts here
+    return {c.id: c for c in (KMC(), EJagritiConsumer())}  # register new courts here
 
 
 def get_court(court_id):
