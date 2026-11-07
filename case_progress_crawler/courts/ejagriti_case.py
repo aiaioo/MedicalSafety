@@ -8,20 +8,44 @@ ConsumerCaseDownloader calls the portal's APIs directly (they need no login or c
 
 If the portal starts demanding a captcha, these requests will fail with an HTTP error.
 
+Downloads are incremental (see ConsumerCaseDownloader.sync): a case seen for the first time is fetched in
+full; after that only what is new is saved -- orders of new hearings, and a new version of an order that the
+portal has changed (earlier versions are kept, as <date>_<kind>_v2.pdf ...). Changed status and history are
+likewise kept: the old copy moves to versions/.
+
 What is saved, and where, is up to a CaseDetailsPersister, so the downloader knows nothing about folders:
 DiskPersister files them under case_details/consumer/<case key>/.
 """
 
 import base64
+import glob
+import json
 import os
 import time
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
 
 from . import BASE_DIR, log, make_session
 from .ejagriti import API_BASE, TIMEOUT, USER_AGENT
 
-REQUEST_DELAY = 0.5     # seconds between PDF requests
+REQUEST_DELAY = 0.5     # seconds between requests, to go easy on the portal
 ORDER_KINDS = {1: "daily_order", 2: "judgement"}  # orderTypeId -> file name part
+RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?) is looked at this often
+ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
+
+
+def tracked_case_numbers():
+    """Every consumer case that has appeared on a saved cause list (causelists/consumer/), sorted."""
+    from analysis_consumer import latest_files  # a top-level module; imported late as it imports this package
+    numbers = set()
+    for path in latest_files().values():
+        with open(path, encoding="utf-8") as f:
+            for row in json.load(f)["causelists"]:
+                for c in row["cases"]:
+                    number = " ".join((c.get("caseNumber") or "").split())
+                    if number:
+                        numbers.add(number)
+    return sorted(numbers)
 
 
 class CaseDetailsPersister(ABC):
@@ -30,6 +54,10 @@ class CaseDetailsPersister(ABC):
     @abstractmethod
     def exists(self, case_number, name):
         """Has this file already been saved?"""
+
+    @abstractmethod
+    def read(self, case_number, name):
+        """The bytes of a saved file, or None if there is none."""
 
     @abstractmethod
     def save_json(self, case_number, name, data):
@@ -41,7 +69,8 @@ class CaseDetailsPersister(ABC):
 
 
 class DiskPersister(CaseDetailsPersister):
-    """case_details/consumer/<case key>/status.json, history.json and orders/<date>_<kind>.pdf or .html (written atomically)."""
+    """case_details/consumer/<case key>/status.json, history.json, meta.json, orders/<date>_<kind>.pdf or .html
+    and versions/ (written atomically)."""
 
     def __init__(self, root=None):
         self.root = root or os.path.join(BASE_DIR, "case_details", "consumer")
@@ -53,6 +82,13 @@ class DiskPersister(CaseDetailsPersister):
     def exists(self, case_number, name):
         return os.path.exists(self._path(case_number, name))
 
+    def read(self, case_number, name):
+        try:
+            with open(self._path(case_number, name), "rb") as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
+
     def _write(self, case_number, name, write, mode):
         dest = self._path(case_number, name)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -63,7 +99,6 @@ class DiskPersister(CaseDetailsPersister):
         return dest
 
     def save_json(self, case_number, name, data):
-        import json
         return self._write(case_number, name, lambda f: json.dump(data, f, indent=1, ensure_ascii=False), "w")
 
     def save_file(self, case_number, name, content):
@@ -100,32 +135,119 @@ class ConsumerCaseDownloader:
             raise ValueError("order is neither a PDF nor HTML")
         return pdf, "pdf"
 
-    def download(self, case_number):
-        """Get one case's details and orders and hand them to the persister.
+    def _json(self, case_number, name):
+        raw = self.persister.read(case_number, name)
+        return json.loads(raw) if raw else None
+
+    def _versions(self, case_number, base):
+        """File names of the saved versions of an order, oldest first: <base>.pdf, <base>_v2.pdf ..."""
+        found, n = [], 1
+        while True:
+            stem = base if n == 1 else f"{base}_v{n}"
+            name = next((f"{stem}.{e}" for e in ORDER_EXTENSIONS if self.persister.exists(case_number, f"{stem}.{e}")), None)
+            if not name:
+                return found
+            found.append(name)
+            n += 1
+
+    def _save_json_versioned(self, case_number, name, data, stamp, out):
+        """Save data as `name`; if that changes what was there, the old copy goes to versions/<stem>_<stamp>.json."""
+        old = self.persister.read(case_number, name)
+        if old is not None:
+            if json.loads(old) == data:
+                return
+            self.persister.save_file(case_number, f"versions/{name[:-5]}_{stamp}.json", old)
+        self.persister.save_json(case_number, name, data)
+        out["saved"].append(name)
+
+    def due(self, case_number, now=None):
+        """Is it time to ask the portal about this case? Always, unless it has no next hearing date (a
+        finished case), which is only rechecked weekly for a late judgement."""
+        meta = self._json(case_number, "meta.json")
+        if not meta:
+            return True
+        if meta.get("next_hearing"):
+            return True
+        return (now or datetime.now()) - datetime.fromisoformat(meta["fetched_at"]) >= RECHECK_AFTER
+
+    def sync(self, case_number, now=None):
+        """Bring one case up to date. A case not seen before is fetched in full. For one already held: the status
+        and history are fetched again (two requests); an order is fetched only if it is not saved yet, or if its
+        hearing entry in the status has changed since last time (the court re-issued the order or moved the next
+        date), in which case it is saved as a new version if it really differs. Nothing is overwritten.
         Returns {"saved": [...], "skipped": [...], "failed": [...]} of file names."""
+        now = now or datetime.now()
+        stamp = f"{now:%Y%m%dT%H%M%S}"
         out = {"saved": [], "skipped": [], "failed": []}
+        previous = self._json(case_number, "status.json")
+        old_entries = {h.get("courtRoomHearingId"): h for h in (previous or {}).get("caseHearingDetails") or []}
         status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=case_number)
         history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=case_number)
-        for name, data in (("status.json", status), ("history.json", history)):
-            self.persister.save_json(case_number, name, data)  # always: they change as the case moves
-            out["saved"].append(name)
+        recheck_failed = False
         for h in status.get("caseHearingDetails") or []:
             kind = ORDER_KINDS.get(h.get("orderTypeId"))
             if not (h.get("dailyOrderStatus") and h.get("dateOfHearing") and kind):
                 continue
             base = f"orders/{h['dateOfHearing']}_{kind}"
-            have = next((n for n in (f"{base}.pdf", f"{base}.html") if self.persister.exists(case_number, n)), None)
-            if have:
-                out["skipped"].append(have)  # an order does not change once issued
+            versions = self._versions(case_number, base)
+            old = old_entries.get(h.get("courtRoomHearingId"))
+            recheck = bool(versions) and old is not None and old != h
+            if versions and not recheck:
+                out["skipped"].append(versions[-1])
                 continue
             try:
                 content, ext = self.fetch_order(status["fillingReferenceNumber"], h["dateOfHearing"], h["orderTypeId"])
-                name = f"{base}.{ext}"
+                if not versions:
+                    name = f"{base}.{ext}"
+                elif self.persister.read(case_number, versions[-1]) != content:
+                    name = f"{base}_v{len(versions) + 1}.{ext}"
+                    log(f"  new version of {base}")
+                else:
+                    out["skipped"].append(versions[-1])
+                    continue
                 self.persister.save_file(case_number, name, content)
                 out["saved"].append(name)
             except Exception as e:
                 log(f"  FAILED {base}: {e}")
                 out["failed"].append(base)
+                recheck_failed = recheck_failed or recheck
             time.sleep(REQUEST_DELAY)
+        # A failed re-check keeps the old status, so that the change is noticed again next time.
+        if previous is None or not recheck_failed:
+            self._save_json_versioned(case_number, "status.json", status, stamp, out)
+            self._save_json_versioned(case_number, "history.json", history, stamp, out)
+        next_hearing = (status.get("dateOfNextearing") or "")[:10] or None
+        self.persister.save_json(case_number, "meta.json",
+                                 {"fetched_at": now.isoformat(timespec="seconds"), "next_hearing": next_hearing})
         return out
 
+    def sync_all(self, case_numbers, dry_run=False):
+        """sync() each case that is due; one case failing does not stop the rest. Returns the number of
+        cases that had a failure."""
+        failures = new = changed = idle = 0
+        for number in case_numbers:
+            if not self.due(number):
+                idle += 1
+                continue
+            if dry_run:
+                log(f"  would check {number}")
+                continue
+            try:
+                had = self.persister.exists(number, "meta.json")
+                result = self.sync(number)
+            except Exception as e:
+                failures += 1
+                log(f"  FAILED {number}: {e}")
+                time.sleep(REQUEST_DELAY)
+                continue
+            if result["failed"]:
+                failures += 1
+            if result["saved"]:
+                if had:
+                    changed += 1
+                else:
+                    new += 1
+                log(f"  {number}: saved {', '.join(result['saved'])}")
+            time.sleep(REQUEST_DELAY)
+        log(f"case details: {len(case_numbers)} cases, {new} new, {changed} updated, {idle} not due, {failures} failed")
+        return failures
