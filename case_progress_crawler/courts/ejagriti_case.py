@@ -36,12 +36,12 @@ class CaseDetailsPersister(ABC):
         """Save a JSON-able value; return where it was saved."""
 
     @abstractmethod
-    def save_pdf(self, case_number, name, content):
-        """Save the bytes of a PDF; return where it was saved."""
+    def save_file(self, case_number, name, content):
+        """Save the bytes of an order (PDF or HTML); return where it was saved."""
 
 
 class DiskPersister(CaseDetailsPersister):
-    """case_details/consumer/<case key>/status.json, history.json and orders/<date>_<kind>.pdf (written atomically)."""
+    """case_details/consumer/<case key>/status.json, history.json and orders/<date>_<kind>.pdf or .html (written atomically)."""
 
     def __init__(self, root=None):
         self.root = root or os.path.join(BASE_DIR, "case_details", "consumer")
@@ -66,7 +66,7 @@ class DiskPersister(CaseDetailsPersister):
         import json
         return self._write(case_number, name, lambda f: json.dump(data, f, indent=1, ensure_ascii=False), "w")
 
-    def save_pdf(self, case_number, name, content):
+    def save_file(self, case_number, name, content):
         return self._write(case_number, name, lambda f: f.write(content), "wb")
 
 
@@ -87,15 +87,18 @@ class ConsumerCaseDownloader:
         return body["data"]
 
     def fetch_order(self, filing_reference_number, date_of_hearing, order_type_id):
-        """The PDF of one order, as bytes. The portal returns it base64-encoded inside JSON; the path keeps the
-        double slash the portal's own page uses."""
+        """One order as (bytes, extension). Recent orders come back as a base64-encoded PDF inside the JSON;
+        older ones are an HTML page in the same field. The path keeps the double slash the portal's own page uses."""
         data = self._get_data("//courtmaster/courtRoom/judgement/v1/getDailyOrderJudgementPdf",
                               filingReferenceNumber=filing_reference_number, dateOfHearing=date_of_hearing,
                               orderTypeId=order_type_id)
-        pdf = base64.b64decode(data["dailyOrderPdf"])
+        text = data.get("dailyOrderPdf") or ""
+        if text.lstrip().lower().startswith(("<html", "<!doctype")):
+            return text.encode("utf-8"), "html"
+        pdf = base64.b64decode(text)
         if not pdf.startswith(b"%PDF"):
-            raise ValueError("order is not a PDF")
-        return pdf
+            raise ValueError("order is neither a PDF nor HTML")
+        return pdf, "pdf"
 
     def download(self, case_number):
         """Get one case's details and orders and hand them to the persister.
@@ -110,17 +113,19 @@ class ConsumerCaseDownloader:
             kind = ORDER_KINDS.get(h.get("orderTypeId"))
             if not (h.get("dailyOrderStatus") and h.get("dateOfHearing") and kind):
                 continue
-            name = f"orders/{h['dateOfHearing']}_{kind}.pdf"
-            if self.persister.exists(case_number, name):
-                out["skipped"].append(name)  # an order does not change once issued
+            base = f"orders/{h['dateOfHearing']}_{kind}"
+            have = next((n for n in (f"{base}.pdf", f"{base}.html") if self.persister.exists(case_number, n)), None)
+            if have:
+                out["skipped"].append(have)  # an order does not change once issued
                 continue
             try:
-                pdf = self.fetch_order(status["fillingReferenceNumber"], h["dateOfHearing"], h["orderTypeId"])
-                self.persister.save_pdf(case_number, name, pdf)
+                content, ext = self.fetch_order(status["fillingReferenceNumber"], h["dateOfHearing"], h["orderTypeId"])
+                name = f"{base}.{ext}"
+                self.persister.save_file(case_number, name, content)
                 out["saved"].append(name)
             except Exception as e:
-                log(f"  FAILED {name}: {e}")
-                out["failed"].append(name)
+                log(f"  FAILED {base}: {e}")
+                out["failed"].append(base)
             time.sleep(REQUEST_DELAY)
         return out
 

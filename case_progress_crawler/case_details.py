@@ -2,7 +2,7 @@
 """Download the status, hearing history and order PDFs of consumer cases from e-Jagriti.
 
 Files go to case_details/consumer/<case key>/ (status.json, history.json, orders/<date>_daily_order.pdf or
-_judgement.pdf); orders already saved are not fetched again.
+_judgement.pdf, or .html for older orders); orders already saved are not fetched again.
 
 Usage:  python case_details.py DC/525/CC/763/2026 [CASE_NUMBER ...]
         python case_details.py --tracked          every case in storage/consumer/status.csv
