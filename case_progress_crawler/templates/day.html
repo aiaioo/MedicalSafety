@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ date }}{% endblock %}
+{% from '_macros.html' import label_badge %}
 {% block body %}
 <p><a href="{{ url_for('hearings', year=date[:4]) }}">&larr; {{ date[:4] }} hearings</a></p>
 <h1>{{ date }} <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h1>
@@ -12,7 +13,7 @@
 {% for c, h in entries %}
 <div class="{{ 'notheld' if h.held == 'no' }}" style="margin-bottom:1.2rem">
   <h3 style="margin:0"><a href="{{ url_for('case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %}
-    <span class="badge {{ c.status }}">{{ c.status }}</span>
+    <span class="badge {{ c.status }}">{{ c.status }}</span> {{ label_badge(c) }}
     {% if h.hearing_time %}<span class="muted">· {{ h.hearing_time }}</span>{% endif %}
     {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
     {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>

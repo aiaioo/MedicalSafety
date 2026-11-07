@@ -1,0 +1,1 @@
+{% macro label_badge(c) %}{% if c.label == 'not_medical' %}<span class="badge notmed" title="{{ c.label_reason }}">not medical</span>{% elif c.label == 'unclear' %}<span class="badge unclear" title="{{ c.label_reason }}">unclear</span>{% elif c.label == 'medical' %}<span class="badge med" title="{{ c.label_reason }}">medical</span>{% endif %}{% endmacro %}

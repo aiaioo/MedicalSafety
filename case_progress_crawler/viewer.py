@@ -22,6 +22,11 @@ Shows KMC cases (from analysis.py), CPA -- Consumer Protection Act -- cases from
 (from analysis_consumer.py), or both together; choose with the links at the top of every page (remembered
 in a cookie). --court sets the choice for visitors who have not made one.
 
+Consumer cases that case_details.py labelled not_medical (a property dispute, a bank v. a doctor ...; the label is
+in status.csv) are hidden from the lists, hospital counts and search, and shown with a "not medical" badge if the
+"show non-medical" link at the top is on (a cookie). A case page opened directly always shows. Cases labelled
+"unclear" are shown, with a badge.
+
 Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
 """
 
@@ -130,6 +135,15 @@ def selection():
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
 
+def show_non_medical():
+    return request.cookies.get("non_medical") == "show"
+
+
+def visible(c):
+    """Is this case listed? Cases labelled not_medical are hidden unless the visitor asked for them."""
+    return c.get("label") != "not_medical" or show_non_medical()
+
+
 def court_ids(sel):
     """The courts a selection covers that have been analysed (a court with no data yet is skipped)."""
     ids = list(COURTS) if sel == "all" else [sel]
@@ -208,7 +222,21 @@ def court_of(case_key):
 
 @app.context_processor
 def selector():
-    return {"selections": SELECTIONS, "selected": selection()}
+    data = load()
+    hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
+    return {"selections": SELECTIONS, "selected": selection(), "non_medical_count": hidden,
+            "show_non_medical": show_non_medical()}
+
+
+@app.route("/non-medical/<choice>")
+def non_medical(choice):
+    if choice not in ("show", "hide"):
+        abort(404)
+    ref = urlparse(request.referrer or "")
+    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/") or ref.path.startswith(("/day/", "/hospital/")) else url_for("home")
+    resp = redirect(back)
+    resp.set_cookie("non_medical", choice, max_age=365 * 86400, samesite="Lax")
+    return resp
 
 
 @app.route("/court/<sel>")
@@ -238,7 +266,7 @@ def home():
     data = load()
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
-    cases = [c for c in data["ordered"] if (year is None or c["year"] == year) and (not q or matches(c, q))]
+    cases = [c for c in data["ordered"] if visible(c) and (year is None or c["year"] == year) and (not q or matches(c, q))]
     return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links())
 
 
@@ -249,16 +277,27 @@ def suggest():
     if len(q) < 2:
         return jsonify([])
     data = load()
-    pool = {c["enquiry_id"] for c in data["ordered"]}
-    pool |= {p for c in data["ordered"] for p in c["complainants"] + c["respondents"]}
-    pool |= {h["name"] for h in data["hospitals"].values()}
+    shown = [c for c in data["ordered"] if visible(c)]
+    pool = {c["enquiry_id"] for c in shown}
+    pool |= {p for c in shown for p in c["complainants"] + c["respondents"]}
+    pool |= {h["name"] for h in visible_hospitals(data)}
     hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
     return jsonify(hits[:12])
 
 
+def visible_hospitals(data):
+    """The hospitals with their visible cases only (a hospital left with none is dropped)."""
+    out = []
+    for h in data["hospitals"].values():
+        cases = [c for c in h["cases"] if visible(c)]
+        if cases:
+            out.append({**h, "cases": cases})
+    return out
+
+
 @app.route("/hospitals/")
 def hospitals():
-    hs = sorted(load()["hospitals"].values(), key=lambda h: (-len(h["cases"]), h["name"].lower()))
+    hs = sorted(visible_hospitals(load()), key=lambda h: (-len(h["cases"]), h["name"].lower()))
     return render_template("hospitals.html", hospitals=hs)
 
 
@@ -267,7 +306,7 @@ def hospital(slug):
     h = load()["hospitals"].get(slug)
     if h is None:
         abort(404)
-    return render_template("hospital.html", h=h, links=court_links())
+    return render_template("hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
 
 
 @app.route("/hearings/")
@@ -279,7 +318,7 @@ def hearings():
     for d in sorted(data["by_date"], reverse=True):
         if year and not d.startswith(year):
             continue
-        entries = [(c, h) for c, h in data["by_date"][d] if not q or matches(c, q)]
+        entries = [(c, h) for c, h in data["by_date"][d] if visible(c) and (not q or matches(c, q))]
         if entries:
             days.append((d, entries))
     return render_template("hearings.html", days=days, years=data["hearing_years"], year=year, q=q)
@@ -291,7 +330,7 @@ def day(date):
         datetime.date.fromisoformat(date)
     except ValueError:
         abort(404)
-    entries = load()["by_date"].get(date, [])  # a future next date has no hearings yet
+    entries = [(c, h) for c, h in load()["by_date"].get(date, []) if visible(c)]  # a future next date has no hearings yet
     return render_template("day.html", date=date, entries=entries,
                            pdfs=pdfs_for_date(date) if PDF_COURT in court_ids(selection()) else [])
 

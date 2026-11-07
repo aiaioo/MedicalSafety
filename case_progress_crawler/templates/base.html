@@ -13,6 +13,7 @@
   th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
   .badge { padding: .1rem .5rem; border-radius: 1rem; font-size: .85em; background: #eee; }
   .badge.open { background: #fff3cd; } .badge.dismissed { background: #f8d7da; } .badge.disposed { background: #d1e7dd; }
+  .badge.med { background: #d1e7dd; } .badge.notmed { background: #e2e3e5; color: #555; } .badge.unclear { background: #fff3cd; }
   .muted { color: #666; font-size: .9em; }
   .timeline { list-style: none; padding: 0; border-left: 3px solid #ccc; margin-left: .5rem; }
   .timeline li { position: relative; padding: 0 0 1.2rem 1.2rem; }
@@ -42,7 +43,7 @@
 <body>
 {% block top %}{% endblock %}
 <header><a href="{{ url_for('home') }}">Case progress</a></header>
-<nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+<nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% if non_medical_count %}<a href="{{ url_for('non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
 {% block body %}{% endblock %}
 </body>
 </html>

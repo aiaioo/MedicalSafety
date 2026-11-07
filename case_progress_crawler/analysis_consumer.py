@@ -4,7 +4,9 @@
 Writes the same four files as analysis.py does for the KMC, in storage/consumer/ (via storage.py;
 rebuilt from scratch on every run), so viewer.py can show them with `--court consumer`:
   enquiries.json   - everything, one object per case
-  status.csv       - one row per case: case_key, enquiry_id (the case number), status, date the status first appeared
+  status.csv       - one row per case: case_key, enquiry_id (the case number), status, date the status first appeared,
+                     and the label (medical / not_medical / unclear, with the reason) that case_details.py gave the case
+                     once its details were downloaded -- empty if they have not been (the viewer hides not_medical)
   parties.csv      - one row per party: complainants and respondents (party_type as in analysis.py)
   timeline.csv     - one row per case per cause-list date
 
@@ -70,6 +72,17 @@ def latest_files():
         if key not in best or version > best[key][0]:
             best[key] = (version, path)
     return {k: p for k, (v, p) in sorted(best.items())}
+
+
+def read_label(case_key):
+    """(label, reason) from case_details/consumer/<case key>/classification.json, or ("", "") if not downloaded yet."""
+    path = os.path.join(BASE_DIR, "case_details", COURT, case_key, "classification.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        return doc["label"], doc["reason"]
+    except (FileNotFoundError, KeyError, ValueError):
+        return "", ""
 
 
 def list_time(stage):
@@ -165,8 +178,8 @@ def write_outputs(result):
             for name in listed:
                 party_rows.append([eid, name, party_type(name, role), role, r["as_of"], r["case_key"]])
     storage.write_csv(COURT, "parties.csv", ["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"], party_rows)
-    storage.write_csv(COURT, "status.csv", ["case_key", "enquiry_id", "status", "status_since"],
-                      [[r["case_key"], eid, r["status"], r["status_since"]] for eid, r in result.items()])
+    storage.write_csv(COURT, "status.csv", ["case_key", "enquiry_id", "status", "status_since", "label", "label_reason"],
+                      [[r["case_key"], eid, r["status"], r["status_since"], *read_label(r["case_key"])] for eid, r in result.items()])
     timeline_rows = []
     for eid, r in result.items():
         for h in r["hearings"]:
