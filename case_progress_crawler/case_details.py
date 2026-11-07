@@ -13,7 +13,7 @@ import argparse
 import sys
 
 from courts import log
-from courts.ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_case_numbers
+from courts.ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_cases
 
 
 def main():
@@ -21,7 +21,8 @@ def main():
     parser.add_argument("case_numbers", nargs="*", metavar="CASE_NUMBER", help="e.g. DC/525/CC/763/2026")
     parser.add_argument("--tracked", action="store_true", help="all cases seen on a saved cause list")
     args = parser.parse_args()
-    numbers = args.case_numbers + (tracked_case_numbers() if args.tracked else [])
+    known = tracked_cases()  # the parties of a case, for labelling it; a case not on any saved list is not labelled
+    numbers = args.case_numbers + (sorted(known) if args.tracked else [])
     if not numbers:
         parser.error("give case numbers or --tracked")
 
@@ -30,7 +31,7 @@ def main():
     for number in numbers:
         log(f"== {number}")
         try:
-            result = downloader.sync(number)
+            result = downloader.sync(number, parties=known.get(number))
         except Exception as e:
             failures += 1
             log(f"  FAILED: {e}")

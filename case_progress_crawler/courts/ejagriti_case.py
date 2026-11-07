@@ -18,15 +18,17 @@ DiskPersister files them under case_details/consumer/<case key>/.
 """
 
 import base64
-import glob
+import html
 import json
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
 from . import BASE_DIR, log, make_session
 from .ejagriti import API_BASE, TIMEOUT, USER_AGENT
+from .medical import CLASSIFIER_VERSION, classify
 
 REQUEST_DELAY = 0.5     # seconds between requests, to go easy on the portal
 ORDER_KINDS = {1: "daily_order", 2: "judgement"}  # orderTypeId -> file name part
@@ -34,18 +36,26 @@ RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
 
 
-def tracked_case_numbers():
-    """Every consumer case that has appeared on a saved cause list (causelists/consumer/), sorted."""
+def tracked_cases():
+    """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
+    that has appeared on a saved cause list (causelists/consumer/); a later list's parties replace an earlier one's."""
     from analysis_consumer import latest_files  # a top-level module; imported late as it imports this package
-    numbers = set()
+    cases = {}
     for path in latest_files().values():
         with open(path, encoding="utf-8") as f:
             for row in json.load(f)["causelists"]:
                 for c in row["cases"]:
                     number = " ".join((c.get("caseNumber") or "").split())
                     if number:
-                        numbers.add(number)
-    return sorted(numbers)
+                        cases[number] = {
+                            "respondents": [r.get("respondant_name") or "" for r in c.get("respondantList") or []],
+                            "complainants": [r.get("complainant_name") or "" for r in c.get("complainantList") or []],
+                            "case_type": c.get("caseTypeName") or ""}
+    return cases
+
+
+def tracked_case_numbers():
+    return sorted(tracked_cases())
 
 
 class CaseDetailsPersister(ABC):
@@ -160,21 +170,38 @@ class ConsumerCaseDownloader:
         self.persister.save_json(case_number, name, data)
         out["saved"].append(name)
 
+    def _classify(self, case_number, parties, status, now, out):
+        """Label the case from its parties and the order text, and save the label if it is new or has changed."""
+        texts = [re.sub(r"<[^>]+>", " ", html.unescape(h.get("proceedingText") or ""))
+                 for h in status.get("caseHearingDetails") or []]
+        result = classify(parties["respondents"], parties["complainants"], parties["case_type"], texts)
+        old = self._json(case_number, "classification.json")
+        if old and old.get("version") == CLASSIFIER_VERSION and (old["label"], old["reason"]) == (result["label"], result["reason"]):
+            return
+        self.persister.save_json(case_number, "classification.json",
+                                 {**result, "version": CLASSIFIER_VERSION, "classified_at": now.isoformat(timespec="seconds")})
+        out["saved"].append("classification.json")
+
     def due(self, case_number, now=None):
         """Is it time to ask the portal about this case? Always, unless it has no next hearing date (a
         finished case), which is only rechecked weekly for a late judgement."""
         meta = self._json(case_number, "meta.json")
         if not meta:
             return True
+        label = self._json(case_number, "classification.json")
+        if not label or label.get("version") != CLASSIFIER_VERSION:
+            return True  # labelled by older rules (or not at all)
         if meta.get("next_hearing"):
             return True
         return (now or datetime.now()) - datetime.fromisoformat(meta["fetched_at"]) >= RECHECK_AFTER
 
-    def sync(self, case_number, now=None):
+    def sync(self, case_number, now=None, parties=None):
         """Bring one case up to date. A case not seen before is fetched in full. For one already held: the status
         and history are fetched again (two requests); an order is fetched only if it is not saved yet, or if its
         hearing entry in the status has changed since last time (the court re-issued the order or moved the next
         date), in which case it is saved as a new version if it really differs. Nothing is overwritten.
+        With `parties` (an entry of tracked_cases()) the case is also labelled medical / not_medical / unclear
+        (courts/medical.py classify) in classification.json; it is kept either way.
         Returns {"saved": [...], "skipped": [...], "failed": [...]} of file names."""
         now = now or datetime.now()
         stamp = f"{now:%Y%m%dT%H%M%S}"
@@ -216,14 +243,17 @@ class ConsumerCaseDownloader:
         if previous is None or not recheck_failed:
             self._save_json_versioned(case_number, "status.json", status, stamp, out)
             self._save_json_versioned(case_number, "history.json", history, stamp, out)
+        if parties:
+            self._classify(case_number, parties, status, now, out)
         next_hearing = (status.get("dateOfNextearing") or "")[:10] or None
         self.persister.save_json(case_number, "meta.json",
                                  {"fetched_at": now.isoformat(timespec="seconds"), "next_hearing": next_hearing})
         return out
 
-    def sync_all(self, case_numbers, dry_run=False):
-        """sync() each case that is due; one case failing does not stop the rest. Returns the number of
-        cases that had a failure."""
+    def sync_all(self, cases, dry_run=False):
+        """sync() each case that is due; `cases` is tracked_cases(). One case failing does not stop the rest.
+        Returns the number of cases that had a failure."""
+        case_numbers = sorted(cases)
         failures = new = changed = idle = 0
         for number in case_numbers:
             if not self.due(number):
@@ -234,7 +264,7 @@ class ConsumerCaseDownloader:
                 continue
             try:
                 had = self.persister.exists(number, "meta.json")
-                result = self.sync(number)
+                result = self.sync(number, parties=cases[number])
             except Exception as e:
                 failures += 1
                 log(f"  FAILED {number}: {e}")

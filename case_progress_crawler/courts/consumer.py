@@ -27,7 +27,7 @@ import storage
 
 from . import BASE_DIR, Court, log, make_session
 from . import ejagriti
-from .ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_case_numbers
+from .ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_cases
 from .medical import FILTER_VERSION, keep_medical
 
 LOOKBACK_DAYS = 1   # yesterday's list may have been revised after the last run
@@ -128,7 +128,7 @@ class EJagritiConsumer(Court):
         """Bring the status, history and orders of every case seen on a cause list up to date -- a new case in
         full, a known case only by what is new (courts/ejagriti_case.py). Returns the number of cases that failed."""
         try:
-            cases = tracked_case_numbers()
+            cases = tracked_cases()
             log(f"== case details of {len(cases)} cases")
             return ConsumerCaseDownloader(DiskPersister()).sync_all(cases, dry_run)
         except Exception as e:
