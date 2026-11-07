@@ -1,16 +1,12 @@
 """Case details (status, hearing history and the order PDFs) of consumer cases, from e-Jagriti.
 
-The portal shows these on https://e-jagriti.gov.in/case-history-case-status only after a captcha, which
-a person has to read. ConsumerCaseDetailsDownloader therefore follows the same steps as the page, with the
-person in the loop: it fetches a captcha, hands the image to `prompt` for a human to read, verifies the
-answer with the portal and, only if the portal accepts it, fetches that one case's details. Every case needs
-its own captcha; a wrong answer gets a fresh captcha (up to MAX_ATTEMPTS), and an empty answer abandons the case.
-
-For a case it fetches
+ConsumerCaseDownloader calls the portal's APIs directly (they need no login or captcha):
   getCaseStatus                   stage, next date, parties, and one entry per hearing (with the text of the
                                   order and, when a PDF exists, its orderTypeId: 1 = daily order, 2 = final order)
   getCaseDetailForHistoryDashBoard  the history list (hearing, bench, court)
   getDailyOrderJudgementPdf       one PDF per entry that has an order, as the page's "View" buttons do
+
+If the portal starts demanding a captcha, these requests will fail with an HTTP error.
 
 What is saved, and where, is up to a CaseDetailsPersister, so the downloader knows nothing about folders:
 DiskPersister files them under case_details/consumer/<case key>/.
@@ -18,21 +14,14 @@ DiskPersister files them under case_details/consumer/<case key>/.
 
 import base64
 import os
-import subprocess
-import tempfile
 import time
 from abc import ABC, abstractmethod
 
 from . import BASE_DIR, log, make_session
 from .ejagriti import API_BASE, TIMEOUT, USER_AGENT
 
-MAX_ATTEMPTS = 3        # captchas offered per case before giving up
 REQUEST_DELAY = 0.5     # seconds between PDF requests
 ORDER_KINDS = {1: "daily_order", 2: "judgement"}  # orderTypeId -> file name part
-
-
-class CaptchaAbandoned(Exception):
-    """The person gave no answer, or every answer offered was rejected."""
 
 
 class CaseDetailsPersister(ABC):
@@ -81,48 +70,13 @@ class DiskPersister(CaseDetailsPersister):
         return self._write(case_number, name, lambda f: f.write(content), "wb")
 
 
-class ConsoleCaptchaPrompt:
-    """Shows the captcha to the person at the terminal: saves the image, opens it where it can (macOS `open`)
-    and asks for what it says. Returns "" if they just press Enter."""
-
-    def __call__(self, png):
-        path = os.path.join(tempfile.gettempdir(), "ejagriti-captcha.png")
-        with open(path, "wb") as f:
-            f.write(png)
-        try:
-            subprocess.run(["open", path], check=False, capture_output=True)
-        except OSError:
-            pass
-        print(f"Captcha image: {path}")
-        return input("Characters in the captcha (Enter to skip this case): ").strip()
-
-
-class ConsumerCaseDetailsDownloader:
-    def __init__(self, persister, prompt, session=None):
+class ConsumerCaseDownloader:
+    def __init__(self, persister, session=None):
         self.persister = persister
-        self.prompt = prompt  # callable(png bytes) -> the characters a person read; "" abandons
         self.session = session or make_session(USER_AGENT)
 
     def _request(self, method, path, **kwargs):
-        resp = self.session.request(method, f"{API_BASE}{path}", timeout=TIMEOUT, **kwargs)
-        return resp
-
-    def verify_captcha(self):
-        """Offer captchas until the portal accepts a person's answer. Raises CaptchaAbandoned."""
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            resp = self._request("GET", "/user/auth/v2/generateCaptcha")
-            resp.raise_for_status()
-            image = resp.json()["data"]["base64Image"]
-            png = base64.b64decode(image.split(",", 1)[-1])
-            answer = self.prompt(png)
-            if not answer:
-                raise CaptchaAbandoned("no answer given")
-            resp = self._request("POST", "/user/auth/v2/verifyCaptcha", json={"captcha": answer, "onlyVerifyCaptcha": False})
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.ok and body.get("status") == 200:
-                return
-            log(f"  captcha rejected ({body.get('message') or resp.status_code}); attempt {attempt} of {MAX_ATTEMPTS}")
-        raise CaptchaAbandoned(f"{MAX_ATTEMPTS} captchas rejected")
+        return self.session.request(method, f"{API_BASE}{path}", timeout=TIMEOUT, **kwargs)
 
     def _get_data(self, path, **params):
         resp = self._request("GET", path, params=params)
@@ -144,9 +98,8 @@ class ConsumerCaseDetailsDownloader:
         return pdf
 
     def download(self, case_number):
-        """Get one case's details and orders and hand them to the persister. Needs a person to read a captcha.
+        """Get one case's details and orders and hand them to the persister.
         Returns {"saved": [...], "skipped": [...], "failed": [...]} of file names."""
-        self.verify_captcha()
         out = {"saved": [], "skipped": [], "failed": []}
         status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=case_number)
         history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=case_number)
@@ -170,3 +123,4 @@ class ConsumerCaseDetailsDownloader:
                 out["failed"].append(name)
             time.sleep(REQUEST_DELAY)
         return out
+
