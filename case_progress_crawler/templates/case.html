@@ -18,7 +18,7 @@
 <p><b>Complainant(s):</b> {{ c.complainants|join('; ') or '—' }}<br>
    <b>Respondent(s):</b> {{ c.respondents|join('; ') or '—' }}</p>
 
-<h2 id="links">Links</h2>
+<h2 id="links">Links <button type="button" id="add-link-open" style="font-size:.8rem;vertical-align:middle">Add link</button></h2>
 <ul>
   {% for l in links %}
   <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
@@ -36,12 +36,23 @@
   <li class="muted">No links yet.</li>
   {% endfor %}
 </ul>
-<form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}">
-  <input name="url" placeholder="https://…" required size="40">
-  <input name="text" placeholder="Link text" size="30">
-  <input name="note" placeholder="Pop-up note" size="30">
-  <button type="submit">Add link</button>
-</form>
+<dialog id="add-link-dialog">
+  <form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}" class="addlink">
+    <h3>Add link</h3>
+    <label>URL<br><input name="url" placeholder="https://…" required size="50"></label>
+    <label>Link text<br><input name="text" placeholder="Link text" size="50"></label>
+    <label>Pop-up note<br><input name="note" placeholder="Pop-up note" size="50"></label>
+    <p><button type="submit">Save link</button> <button type="button" id="add-link-cancel">Cancel</button></p>
+  </form>
+</dialog>
+<script>
+  (function () {
+    var d = document.getElementById('add-link-dialog');
+    document.getElementById('add-link-open').addEventListener('click', function () { d.showModal(); d.querySelector('input').focus(); });
+    document.getElementById('add-link-cancel').addEventListener('click', function () { d.close(); });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });  // click on the backdrop
+  })();
+</script>
 
 <h2>Hearings</h2>
 <ul class="timeline">

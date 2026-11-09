@@ -9,6 +9,11 @@
   body { font: 15px/1.5 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 1rem; color: #222; }
   a { color: #0b5cad; }
   header a { text-decoration: none; color: inherit; font-weight: 600; font-size: 1.2rem; }
+  header svg.home { vertical-align: -.15em; }
+  dialog { border: 1px solid #999; border-radius: .5rem; padding: 1rem 1.5rem; max-width: 90vw; }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  form.addlink label { display: block; margin-bottom: .6rem; }
+  form.addlink h3 { margin-top: 0; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
   .badge { padding: .1rem .5rem; border-radius: 1rem; font-size: .85em; background: #eee; }
@@ -42,7 +47,7 @@
 </head>
 <body>
 {% block top %}{% endblock %}
-<header><a href="{{ url_for('home') }}">Case progress</a></header>
+<header><a href="{{ url_for('home') }}" title="Home" aria-label="Home"><svg class="home" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg> Case progress</a></header>
 <nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% if non_medical_count %}<a href="{{ url_for('non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
 {% block body %}{% endblock %}
 </body>
