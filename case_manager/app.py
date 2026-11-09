@@ -219,7 +219,7 @@ class InMemoryUploadRequest(Request):
 
 app = Flask(__name__)
 app.request_class = InMemoryUploadRequest
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB, generous for scanned case files
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB, matches nginx client_max_body_size
 # Behind a reverse proxy every request arrives from the proxy's address, so
 # take the client's from X-Forwarded-For -- but only as many proxies' worth as
 # TRUSTED_PROXY_HOPS says (0 = none, e.g. local development), since a client
