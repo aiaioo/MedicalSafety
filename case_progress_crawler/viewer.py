@@ -413,7 +413,7 @@ def order_text(path):
 
 def orders_of(case_key):
     """{hearing date: [order]} for a case's saved orders, oldest version first; an order is
-    {"name", "label", "ext", "text"}."""
+    {"date", "name", "label", "ext", "text"}."""
     found = defaultdict(list)
     folder = ORDER_DIR / case_key / "orders"
     for p in sorted(folder.glob("*")) if folder.is_dir() else []:
@@ -424,7 +424,7 @@ def orders_of(case_key):
                 text = order_text(p)
             except Exception:  # an unreadable file still gets its link
                 text = ""
-            found[_iso_date(m["date"])].append({"name": p.name, "label": label, "ext": m["ext"], "text": text})
+            found[_iso_date(m["date"])].append({"date": _iso_date(m["date"]), "name": p.name, "label": label, "ext": m["ext"], "text": text})
     for lst in found.values():
         lst.sort(key=lambda o: (o["label"].split()[0], int(re.search(r"\d+", o["label"]).group()) if "version" in o["label"] else 1))
     return found
@@ -446,11 +446,17 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
+    # The cause lists only show the days a case was listed; the orders show when it was actually heard. An order
+    # dated on a day with no hearing from the lists gets a hearing entry of its own (from_order), so the timeline
+    # is complete and each order sits under its own date.
     orders = orders_of(case_key)
-    hearing_dates = {h["hearing_date"] for h in c["hearings"]}
-    other_orders = [(d, o) for d, os_ in sorted(orders.items(), reverse=True) if d not in hearing_dates for o in os_]
-    return render_template("case.html", c=c, links=court_links().get(case_key, []),
-                           orders=orders, other_orders=other_orders)
+    known = {h["hearing_date"] for h in c["hearings"]}
+    blank = {"hearing_time": "", "list": "", "held": "", "purpose_text": "", "outcome_text": "", "next_date": "",
+             "next_sitting": "", "postponed_from": "", "raw_text": "", "next_stage_tags": "",
+             "cross_examination_of": "", "from_order": True}
+    hearings = sorted(c["hearings"] + [{**blank, "hearing_date": d} for d in orders if d not in known],
+                      key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
+    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
 
 
 def _link_from_form():

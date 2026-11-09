@@ -56,10 +56,11 @@
 
 <h2>Hearings</h2>
 <ul class="timeline">
-  {% for h in c.hearings %}
+  {% for h in hearings %}
   <li class="{{ 'notheld' if h.held == 'no' }}">
-    <h3><a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
+    <h3>{% if h.from_order %}{{ h.hearing_date }}{% else %}<a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% endif %}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
       {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
+      {% if h.from_order %}<span class="muted">· from the order (not on a cause list)</span>{% endif %}
       {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
     {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
     {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
@@ -75,13 +76,4 @@
   {% endfor %}
 </ul>
 
-{% if other_orders %}
-<h2>Other orders</h2>
-<p class="muted">Orders dated on days with no hearing recorded above.</p>
-<ul class="timeline">
-  {% for d, o in other_orders %}
-  <li><h3>{{ d }}</h3>{{ order_block([o]) }}</li>
-  {% endfor %}
-</ul>
-{% endif %}
 {% endblock %}
