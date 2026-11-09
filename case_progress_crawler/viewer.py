@@ -33,6 +33,7 @@ Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
 import argparse
 import datetime
 import re
+from html import unescape
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlparse
@@ -381,12 +382,75 @@ def pdf_page(kind, name, n):
     return Response(png, mimetype="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
+ORDER_DIR = Path(__file__).parent / "case_details" / "consumer"  # <case key>/orders/<date>_<kind>[_vN].pdf|html
+ORDER_RE = re.compile(r"(?P<date>[0-9-]+)_(?P<kind>daily_order|judgement)(?:_v(?P<v>\d+))?\.(?P<ext>pdf|html)")
+ORDER_KINDS = {"daily_order": "Daily order", "judgement": "Judgement"}
+_text_cache = {}  # (path, mtime) -> extracted text
+
+
+def _iso_date(s):
+    """The portal's date as YYYY-MM-DD (it may come as DD-MM-YYYY); unchanged if unrecognised."""
+    m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", s)
+    return f"{m[3]}-{m[2]}-{m[1]}" if m else s
+
+
+def order_text(path):
+    """The text of a saved order, PDF or HTML ('' if a scanned PDF has no text layer)."""
+    key = (str(path), path.stat().st_mtime)
+    if key not in _text_cache:
+        if path.suffix == ".pdf":
+            with fitz.open(path) as d:
+                text = "\n".join(p.get_text() for p in d)
+        else:
+            html = path.read_text(encoding="utf-8", errors="replace")
+            html = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", html)
+            html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", html)
+            text = unescape(re.sub(r"<[^>]+>", " ", html))
+            text = "\n".join(" ".join(line.split()) for line in text.splitlines())
+        _text_cache[key] = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return _text_cache[key]
+
+
+def orders_of(case_key):
+    """{hearing date: [order]} for a case's saved orders, oldest version first; an order is
+    {"name", "label", "ext", "text"}."""
+    found = defaultdict(list)
+    folder = ORDER_DIR / case_key / "orders"
+    for p in sorted(folder.glob("*")) if folder.is_dir() else []:
+        m = ORDER_RE.fullmatch(p.name)
+        if m:
+            label = ORDER_KINDS[m["kind"]] + (f" (version {m['v']})" if m["v"] else "")
+            try:
+                text = order_text(p)
+            except Exception:  # an unreadable file still gets its link
+                text = ""
+            found[_iso_date(m["date"])].append({"name": p.name, "label": label, "ext": m["ext"], "text": text})
+    for lst in found.values():
+        lst.sort(key=lambda o: (o["label"].split()[0], int(re.search(r"\d+", o["label"]).group()) if "version" in o["label"] else 1))
+    return found
+
+
+@app.route("/order/<case_key>/<name>")
+def order_file(case_key, name):
+    """A saved order; HTML orders come from the court's portal, so they are sandboxed (no scripts)."""
+    if not ORDER_RE.fullmatch(name) or not re.fullmatch(r"[\w-]+", case_key):
+        abort(404)
+    resp = send_from_directory(ORDER_DIR / case_key / "orders", name)
+    if name.endswith(".html"):  # not on PDFs: a sandbox stops the browser's PDF viewer
+        resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+    return resp
+
+
 @app.route("/case/<case_key>")
 def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    return render_template("case.html", c=c, links=court_links().get(case_key, []))
+    orders = orders_of(case_key)
+    hearing_dates = {h["hearing_date"] for h in c["hearings"]}
+    other_orders = [(d, o) for d, os_ in sorted(orders.items(), reverse=True) if d not in hearing_dates for o in os_]
+    return render_template("case.html", c=c, links=court_links().get(case_key, []),
+                           orders=orders, other_orders=other_orders)
 
 
 def _link_from_form():

@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ c.enquiry_id }}{% endblock %}
 {% from '_macros.html' import label_badge %}
+{% macro order_block(items) %}
+  {% for o in items %}
+  <p><b>Order:</b> <a href="{{ url_for('order_file', case_key=c.case_key, name=o.name) }}" target="_blank" rel="noopener noreferrer">{{ o.label }} ({{ o.ext|upper }})</a></p>
+  {% endfor %}
+  {% for o in items %}
+  <details><summary class="muted">Text of {{ o.label|lower }}</summary>
+    {% if o.text %}<pre>{{ o.text }}</pre>{% else %}<p class="muted">No text could be extracted (a scanned PDF?); use the link above.</p>{% endif %}</details>
+  {% endfor %}
+{% endmacro %}
 {% block body %}
 <p><a href="{{ url_for('home', year=c.year) }}">&larr; {{ c.year }} cases</a></p>
 <h1>{{ c.enquiry_id }} <span class="badge {{ c.status }}">{{ c.status }}</span> {{ label_badge(c) }}</h1>
@@ -46,6 +55,7 @@
     {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
     {% if h.next_date %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_date) }}">{{ h.next_date }}</a>{% if h.postponed_from %} <span class="muted">(postponed by circular from <a href="{{ url_for('day', date=h.postponed_from) }}">{{ h.postponed_from }}</a>)</span>{% endif %}</p>
     {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
+    {{ order_block(orders.get(h.hearing_date, [])) }}
     {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}
     {% for t in h.next_stage_tags.split(', ') if t %}<span class="tag">{{ t }}</span>{% endfor %}
   </li>
@@ -53,4 +63,14 @@
   <li>No hearings recorded.</li>
   {% endfor %}
 </ul>
+
+{% if other_orders %}
+<h2>Other orders</h2>
+<p class="muted">Orders dated on days with no hearing recorded above.</p>
+<ul class="timeline">
+  {% for d, o in other_orders %}
+  <li><h3>{{ d }}</h3>{{ order_block([o]) }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% endblock %}
