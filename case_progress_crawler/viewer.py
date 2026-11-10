@@ -445,6 +445,24 @@ def order_file(case_key, name):
     return resp
 
 
+def proceedings_of(case_key):
+    """{hearing date: text} of what the court recorded for each hearing (proceedingText in the portal's status),
+    as plain text; hearings with nothing recorded are left out."""
+    try:
+        status = json.loads((ORDER_DIR / case_key / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found = {}
+    for h in status.get("caseHearingDetails") or []:
+        html = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", h.get("proceedingText") or "")
+        html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", html)
+        text = unescape(re.sub(r"<[^>]+>", " ", html))
+        text = re.sub(r"\n{3,}", "\n\n", "\n".join(" ".join(line.split()) for line in text.splitlines())).strip()
+        if h.get("dateOfHearing") and text:
+            found[h["dateOfHearing"]] = text
+    return found
+
+
 @app.route("/case/<case_key>")
 def case(case_key):
     c = load()["cases"].get(case_key)
@@ -454,6 +472,7 @@ def case(case_key):
     # hearing. A hearing also on a cause list gets that entry's details; one that is not gets a bare entry
     # (from_history). An order dated on a day absent from both still gets an entry of its own (from_order).
     orders = orders_of(case_key)
+    proceedings = proceedings_of(case_key)
     blank = {"hearing_time": "", "list": "", "held": "", "purpose_text": "", "outcome_text": "", "next_date": "",
              "next_sitting": "", "postponed_from": "", "raw_text": "", "next_stage_tags": "",
              "cross_examination_of": ""}
@@ -473,9 +492,11 @@ def case(case_key):
     hearings += [{**blank, "hearing_date": d, "history": history.get(d), "from_history": True}
                  for d in history if d not in known]
     known |= set(history)
+    hearings += [{**blank, "hearing_date": d, "history": None, "from_order": True} for d in proceedings if d not in known and d not in orders]
+    known |= set(proceedings)
     hearings += [{**blank, "hearing_date": d, "history": None, "from_order": True} for d in orders if d not in known]
     hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
-    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
+    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders, proceedings=proceedings)
 
 
 def _link_from_form():

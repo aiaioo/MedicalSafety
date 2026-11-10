@@ -70,6 +70,7 @@
     {% if h.next_date %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_date) }}">{{ h.next_date }}</a>{% if h.postponed_from %} <span class="muted">(postponed by circular from <a href="{{ url_for('day', date=h.postponed_from) }}">{{ h.postponed_from }}</a>)</span>{% endif %}</p>
     {% elif h.history and h.history.next %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.history.next) }}">{{ h.history.next }}</a></p>
     {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
+    {% if proceedings.get(h.hearing_date) %}<p><b>Court's record:</b></p><div class="record">{{ proceedings[h.hearing_date] }}</div>{% endif %}
     {{ order_block(orders.get(h.hearing_date, [])) }}
     {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}
     {% for t in h.next_stage_tags.split(', ') if t %}<span class="tag">{{ t }}</span>{% endfor %}
