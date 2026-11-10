@@ -101,6 +101,15 @@ def names(items, field):
     return [i[field].strip() for i in items or [] if i.get(field) and i[field].strip()]
 
 
+def ist_date(value):
+    """YYYY-MM-DD of a portal date; a UTC timestamp like 2026-11-04T18:30:00.000Z is 5:30 ahead (2026-11-05, India)."""
+    value = value or ""
+    if "T" not in value:
+        return value
+    from datetime import datetime, timedelta
+    return (datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+
+
 def collect():
     """{case number: case} from every cause list file."""
     cases = {}
@@ -120,7 +129,7 @@ def collect():
                     "enquiry_id": number, "case_key": key, "case_type": c.get("caseTypeName") or "",
                     "commission": doc["commission"], "complainants": [], "respondents": [],
                     "advocates": {"complainant": [], "respondent": []}, "hearings": {}})
-                list_date = row.get("clDate") or doc["date"]
+                list_date = ist_date(row.get("clDate") or doc["date"])
                 # parties and advocates as of the latest list; the first-seen order is kept
                 for field, listed in (("complainants", names(c.get("complainantList"), "complainant_name")),
                                       ("respondents", names(c.get("respondantList"), "respondant_name"))):

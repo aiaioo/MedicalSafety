@@ -36,6 +36,13 @@ RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
 
 
+def history_hearing_dates(history):
+    """The dates (YYYY-MM-DD, India time) of the held hearings in a history list; the portal gives UTC
+    timestamps, 5:30 behind, e.g. 2026-11-04T18:30:00.000Z is the hearing of 2026-11-05."""
+    return [(datetime.strptime(h["dateOfAction"][:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+            for h in history or [] if h.get("dateOfAction") and (h.get("actionTaken") or "").startswith("Hearing")]
+
+
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
     that has appeared on a saved cause list (causelists/consumer/); a later list's parties replace an earlier one's."""
@@ -238,6 +245,20 @@ class ConsumerCaseDownloader:
                 log(f"  FAILED {base}: {e}")
                 out["failed"].append(base)
                 recheck_failed = recheck_failed or recheck
+            time.sleep(REQUEST_DELAY)
+        # Every hearing in the history should have its order too; the status lists most of them, so try the
+        # ones it does not (a daily order, as the portal's "View" button does) and quietly skip those without.
+        in_status = {h.get("dateOfHearing") for h in status.get("caseHearingDetails") or []}
+        for day in history_hearing_dates(history):
+            if day in in_status or self._versions(case_number, f"orders/{day}_daily_order"):
+                continue
+            try:
+                content, ext = self.fetch_order(status["fillingReferenceNumber"], day, 1)
+                name = f"orders/{day}_daily_order.{ext}"
+                self.persister.save_file(case_number, name, content)
+                out["saved"].append(name)
+            except Exception as e:
+                log(f"  no order for history hearing {day}: {e}")
             time.sleep(REQUEST_DELAY)
         # A failed re-check keeps the old status, so that the change is noticed again next time.
         if previous is None or not recheck_failed:

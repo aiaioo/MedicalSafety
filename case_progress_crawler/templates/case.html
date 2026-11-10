@@ -58,14 +58,17 @@
 <ul class="timeline">
   {% for h in hearings %}
   <li class="{{ 'notheld' if h.held == 'no' }}">
-    <h3>{% if h.from_order %}{{ h.hearing_date }}{% else %}<a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% endif %}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
+    <h3>{% if h.from_order or h.from_history %}{{ h.hearing_date }}{% else %}<a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% endif %}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
       {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
-      {% if h.from_order %}<span class="muted">· from the order (not on a cause list)</span>{% endif %}
+      {% if h.history %}<span class="muted">· {{ h.history.label }}</span>{% endif %}
+      {% if h.from_order %}<span class="muted">· from the order (not in the hearing history or a cause list)</span>{% elif h.from_history %}<span class="muted">· from the hearing history (not on a cause list)</span>{% endif %}
       {% if h.held == 'no' %}<span class="muted">· not held</span>{% endif %}</h3>
+    {% if h.history and h.history.judges %}<p><b>Bench:</b> {{ h.history.judges }}</p>{% endif %}
     {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
     {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
     {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
     {% if h.next_date %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_date) }}">{{ h.next_date }}</a>{% if h.postponed_from %} <span class="muted">(postponed by circular from <a href="{{ url_for('day', date=h.postponed_from) }}">{{ h.postponed_from }}</a>)</span>{% endif %}</p>
+    {% elif h.history and h.history.next %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.history.next) }}">{{ h.history.next }}</a></p>
     {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
     {{ order_block(orders.get(h.hearing_date, [])) }}
     {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}

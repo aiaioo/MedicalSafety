@@ -32,6 +32,7 @@ Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
 
 import argparse
 import datetime
+import json
 import re
 from html import unescape
 from pathlib import Path
@@ -42,6 +43,8 @@ import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
+from analysis_consumer import ist_date
+from courts.ejagriti_case import history_hearing_dates
 
 app = Flask(__name__)
 COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
@@ -165,6 +168,7 @@ def load(sel=None):
         for r in storage.read_csv(c, "parties.csv"):
             parties[r["case_key"]].append(r)
         for r in storage.read_csv(c, "timeline.csv"):
+            r["hearing_date"] = ist_date(r["hearing_date"])  # older files hold the portal's UTC timestamps
             hearings[r["case_key"]].append(r)
         status_rows += [{**r, "court": c, "court_label": COURTS[c]} for r in storage.read_csv(c, "status.csv")]
 
@@ -446,16 +450,31 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    # The cause lists only show the days a case was listed; the orders show when it was actually heard. An order
-    # dated on a day with no hearing from the lists gets a hearing entry of its own (from_order), so the timeline
-    # is complete and each order sits under its own date.
+    # The hearing history from the portal (history.json) is the backbone of the timeline: one entry per held
+    # hearing. A hearing also on a cause list gets that entry's details; one that is not gets a bare entry
+    # (from_history). An order dated on a day absent from both still gets an entry of its own (from_order).
     orders = orders_of(case_key)
-    known = {h["hearing_date"] for h in c["hearings"]}
     blank = {"hearing_time": "", "list": "", "held": "", "purpose_text": "", "outcome_text": "", "next_date": "",
              "next_sitting": "", "postponed_from": "", "raw_text": "", "next_stage_tags": "",
-             "cross_examination_of": "", "from_order": True}
-    hearings = sorted(c["hearings"] + [{**blank, "hearing_date": d} for d in orders if d not in known],
-                      key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
+             "cross_examination_of": ""}
+    history = {}
+    try:
+        raw = json.loads((ORDER_DIR / case_key / "history.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = []
+    for e in raw:
+        if e.get("dateOfAction") and (e.get("actionTaken") or "").startswith("Hearing"):
+            day = history_hearing_dates([e])[0]
+            nxt = (e.get("dateOfNextHearing") or "")
+            history[day] = {"label": e["actionTaken"], "judges": (e.get("judgesName") or "").replace(",", ", "),
+                            "next": history_hearing_dates([{"dateOfAction": nxt, "actionTaken": "Hearing"}])[0] if nxt else ""}
+    hearings = [{**h, "history": history.get(h["hearing_date"])} for h in c["hearings"]]
+    known = {h["hearing_date"] for h in hearings}
+    hearings += [{**blank, "hearing_date": d, "history": history.get(d), "from_history": True}
+                 for d in history if d not in known]
+    known |= set(history)
+    hearings += [{**blank, "hearing_date": d, "history": None, "from_order": True} for d in orders if d not in known]
+    hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
     return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
 
 
