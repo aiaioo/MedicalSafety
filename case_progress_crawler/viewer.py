@@ -45,6 +45,7 @@ import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
+from courts.providers import MATCHER
 from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
@@ -59,50 +60,6 @@ PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
 _cache = {}  # selection -> {"mtimes", "data"}
-HOSPITAL_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
-HOSPITAL_SPLIT = re.compile(r"[,;–—/]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
-HOSPITAL_TITLE = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|executive)?\s*"
-                            r"(?:administrator|administartor|superintendent|directors?|owners?|head|management|ceo|md)\b|[\s/.,&-])+", re.I)
-
-
-PROVIDER_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?|medical|health\s*care|diagnostics?|maternity|surgical|"
-                           r"polyclinic|dispensary|institute|labs?|laborator\w+|eye care|dental|fertility|ivf|scanning|scanner)\b", re.I)
-DOCTOR_WORD = re.compile(r"\bdr\b\.?|\bdoctor\b", re.I)
-NON_MEDICAL = re.compile(r"\b(?:insurance|insurer|assurance|bank|finance|financial|motors?|cars?|industries|builders|developers|"
-                         r"properties|lifts|impex|corporation|manager|commissioner|officer)\b", re.I)
-
-
-def provider_side(complainants, respondents):
-    """Which side of a case is the hospital/doctor: 'complainant', 'respondent', or '' when it cannot be told.
-    A hospital-like name (hospital, clinic, nursing home, medical ...) decides it; failing that a 'Dr.' against a
-    party that is not a company; if neither side shows either, the respondent is assumed (the usual case of a
-    patient complaining), unless the complainant is a company/insurer/bank, which is not a patient."""
-    sides = ([p for p in complainants if not NON_MEDICAL.search(p)], [p for p in respondents if not NON_MEDICAL.search(p)])
-    for word in (PROVIDER_WORD, DOCTOR_WORD):
-        c, r = (any(word.search(p) for p in side) for side in sides)
-        if c != r:
-            if word is DOCTOR_WORD and any(NON_MEDICAL.search(p) for p in (respondents if c else complainants)):
-                return ""  # a doctor in a dispute with a bank or a car dealer: not a medical case
-            return "complainant" if c else "respondent"
-        if c and r:
-            return ""
-    return "" if any(NON_MEDICAL.search(p) for p in complainants) else "respondent"
-
-
-def hospital_names(party):
-    """Hospital/clinic/nursing-home names mentioned in a party string, e.g.
-    'Dr.Tarun Patil, C/o Manipal Hospitals, Bangalore.' -> ['Manipal Hospitals']"""
-    names = []
-    for seg in HOSPITAL_SPLIT.split(party):
-        m = HOSPITAL_WORD.search(seg)
-        if not m:
-            continue
-        name = HOSPITAL_TITLE.sub("", seg[:m.end()]).strip(" .-")
-        if len(name.split()) > 1:  # a bare "Hospital" names nothing
-            names.append(squash(name))
-    return names
-
-
 # Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name
 HOSPITAL_ALIASES = {
     "bhagwan-mahaveer-jain-hospital": "bhagawan-mahaveer-jain-hospital",
@@ -271,9 +228,9 @@ def load(sel=None):
         hospitals = {}
         for pr in parties[key]:
             if pr["role"] == "respondent":
-                for n in hospital_names(pr["party"]):
+                for n in MATCHER.hospital_names(pr["party"]):
                     hospitals.setdefault(hospital_key(n), n)
-        provider = provider_side(names("complainant"), names("respondent"))
+        provider = MATCHER.provider_side(names("complainant"), names("respondent"))
         cases[key] = {**r, "hospitals": hospitals, "provider_side": provider, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}

@@ -10,32 +10,18 @@ the complainants are checked too (which also lets in some doctors appealing non-
 
 The match is deliberately by provider nouns, not "health", which would also catch health insurers
 and gyms ("Care Health Insurance", "Cult Fit Health Care"). A name the patterns miss means a missed case, so
-extend PROVIDER_PATTERNS when a real provider turns up unrecorded; a patient's complaint against
+extend INSTITUTION_PATTERNS (courts/providers.py) when a real provider turns up unrecorded; a patient's complaint against
 an insurer alone is not medical negligence and stays out.
 """
 
 import re
 
+from .providers import MATCHER
+
 FILTER_VERSION = 2  # bump when the rules change; courts/consumer.py then filters saved lists again
 APPEAL_RE = re.compile(r"appeal|revision", re.IGNORECASE)  # case types where the appellant is listed as complainant
 
-PROVIDER_PATTERNS = [
-    # hospitals, clinics, nursing homes, medical colleges and centres
-    r"hospitals?", r"\w*clinics?", r"nursing\s+homes?", r"nethralaya|netralaya",
-    r"medical\s+(?:college|cent(?:re|er)|institute|institutions?|trust|foundation|research|complex|mission)",
-    r"institutes?\s+of\s+medical", r"medical\s+sciences",
-    # pharmacies and chemists
-    r"pharmac(?:y|ies|ist|ists)", r"chemists?", r"druggists?", r"medicals?", r"medical\s+(?:stores?|shops?|halls?)",
-    # diagnostic centres and labs
-    r"diagnostics?", r"labs?", r"laborator(?:y|ies)", r"patholog\w*", r"radiolog\w*", r"scan\s+cent(?:re|er)s?",
-    # pharma firms
-    r"pharma\w*", r"drugs?", r"biotech\w*", r"lifesciences?|life\s+sciences?",
-    # specialist care
-    r"dental", r"dentists?", r"ivf", r"fertility", r"maternity", r"ayurved\w*", r"homoeo\w*|homeo\w*",
-    # individual doctors
-    r"dr", r"doctors?",
-]
-PROVIDER_RE = re.compile(r"\b(?:" + "|".join(PROVIDER_PATTERNS) + r")\b", re.IGNORECASE)
+M = MATCHER
 
 
 def respondents(case):
@@ -50,7 +36,7 @@ def is_medical_case(case):
     names = respondents(case)
     if APPEAL_RE.search(case.get("caseTypeName") or ""):
         names += complainants(case)
-    return any(PROVIDER_RE.search(name) for name in names)
+    return any(M.is_provider(name, clean=False) for name in names)
 
 
 def keep_medical(rows):
@@ -72,31 +58,11 @@ def keep_medical(rows):
 
 CLASSIFIER_VERSION = 1  # bump when the rules below change; cases are then labelled again
 
-# What follows these words is the person acting for a party ("through its managing director Dr. X"),
-# not the party itself, so it is cut off before the name is matched.
-REPRESENTATIVE_RE = re.compile(
-    r"\b(?:through|thro'?|represented|rep\.?\s*by|r/?\s*by|by\s+its|its\s+(?:managing|authori[sz]ed|proprietor|partner|"
-    r"director|chief|chairman|ceo|manager)|(?:the\s+)?(?:managing\s+director|authori[sz]ed\s+(?:signatory|officer)))\b.*$",
-    re.IGNORECASE)
-VETERINARY_RE = re.compile(r"\bveterinar\w*|\bvets?\b|\banimals?\b|\bpets?\b|\bcattle\b|\bkennel", re.IGNORECASE)
-# businesses that are not medical providers; a "Dr" or "hospital" beside them is incidental
-COMMERCIAL_RE = re.compile(
-    r"\b(?:developers?|builders?|properties|property|realty|realtors?|constructions?|infra\w*|housing|apartments?|"
-    r"engineering|lifts?|elevators?|motors?|automobiles?|bank|finance|financial|insurance|assurance|"
-    r"co-?operative|society|telecom|airlines?|electronics|jewell?ers?|jewellery)\b", re.IGNORECASE)
 NEGLIGENCE_RE = re.compile(
     r"negligen|\btreatment|\bsurger(?:y|ies)|\boperat(?:ed|ion)\b|\bpatients?\b|\bdelivery\b|\bdeceased\b|"
     r"\bmedical\s+(?:negligence|bills?|records?|expenses)|\bdiagnos|\bprescri|\bdoctor|\bdeficiency\s+in\s+(?:medical|service\s+by\s+(?:the\s+)?(?:hospital|doctor))",
     re.IGNORECASE)
-COMPANY_RE = re.compile(r"\b(?:ltd|limited|pvt|private|company|co|corporation|corp|industries|enterprises|associates|bank|"
-                        r"engineering|finance)\b", re.IGNORECASE)
-DOCTOR_WORD_RE = re.compile(r"^(?:\W*\d*\W*)?(?:dr|doctors?)\b", re.IGNORECASE)  # a name that is only "Dr. So-and-so"
 PROPERTY_LOAN_RE = re.compile(r"\b(?:flat|plot|site|villa|possession|sale\s+deed|builder|loan|emi|mortgage|rera)\b", re.IGNORECASE)
-
-
-def clean_party(name):
-    """The party's own name, without the person representing it."""
-    return REPRESENTATIVE_RE.sub("", name or "").strip(" ,.;")
 
 
 def classify(respondent_names, complainant_names, case_type="", texts=()):
@@ -112,30 +78,30 @@ def classify(respondent_names, complainant_names, case_type="", texts=()):
     text = " ".join(t for t in texts if t)
     text_hits = len(NEGLIGENCE_RE.findall(text))
 
-    if any(VETERINARY_RE.search(n) for n in respondent_names + complainant_names):
+    if any(M.is_veterinary(n) for n in respondent_names + complainant_names):
         return {"label": "not_medical", "reason": "veterinary party"}
 
-    cleaned = [clean_party(n) for n in respondent_names]
-    provider = next((n for n in cleaned if PROVIDER_RE.search(n)), None)
+    cleaned = [M.clean(n) for n in respondent_names]
+    provider = next((n for n in cleaned if M.is_provider(n, clean=False)), None)
     # a company or bank suing a lone "Dr. X" is a debt or business dispute, not a patient's complaint
     companies_only = bool(complainant_names) and all(
-        (COMPANY_RE.search(n) or COMMERCIAL_RE.search(n)) and not PROVIDER_RE.search(clean_party(n)) for n in complainant_names)
-    if provider and DOCTOR_WORD_RE.match(provider) and companies_only and not text_hits:
+        (M.company_re.search(n) or M.commercial_re.search(n)) and not M.is_provider(n) for n in complainant_names)
+    if provider and M.only_doctor_re.match(provider) and companies_only and not text_hits:
         return {"label": "not_medical", "reason": f"company complainant against {provider!r}, no treatment in the orders"}
-    if provider and not (COMMERCIAL_RE.search(provider) and not text_hits):
+    if provider and not (M.commercial_re.search(provider) and not text_hits):
         return {"label": "medical", "reason": f"respondent {provider!r}"}
 
     if appeal:
-        complainant = next((n for n in map(clean_party, complainant_names) if PROVIDER_RE.search(n)), None)
+        complainant = next((n for n in map(M.clean, complainant_names) if M.is_provider(n, clean=False)), None)
         if complainant:
-            if any(COMMERCIAL_RE.search(n) for n in cleaned) and not text_hits:
+            if any(M.commercial_re.search(n) for n in cleaned) and not text_hits:
                 return {"label": "not_medical", "reason": f"appeal by {complainant!r} against a commercial party"}
             return {"label": "medical", "reason": f"appellant {complainant!r}"}
 
-    if any(PROVIDER_RE.search(n) for n in respondent_names):  # matched only in the representative's clause
+    if any(M.is_provider(n, clean=False) for n in respondent_names):  # matched only in the representative's clause
         return {"label": "not_medical", "reason": "provider word only in a representative's title"}
     if text_hits >= 2:
         return {"label": "medical", "reason": f"order text mentions treatment ({text_hits} terms)"}
-    if PROPERTY_LOAN_RE.search(text) or any(COMMERCIAL_RE.search(n) for n in cleaned):
+    if PROPERTY_LOAN_RE.search(text) or any(M.commercial_re.search(n) for n in cleaned):
         return {"label": "not_medical", "reason": "commercial or property dispute"}
     return {"label": "unclear", "reason": "no provider among the parties"}
