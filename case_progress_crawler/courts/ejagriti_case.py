@@ -47,14 +47,14 @@ def history_hearing_dates(history):
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
     that has appeared on a saved cause list (causelists/consumer/); a later list's parties replace an earlier one's."""
-    from analysis_consumer import latest_files  # a top-level module; imported late as it imports this package
+    from analysis_consumer import CASE_NO_RE, latest_files  # a top-level module; imported late as it imports this package
     cases = {}
     for path in latest_files().values():
         with open(path, encoding="utf-8") as f:
             for row in json.load(f)["causelists"]:
                 for c in row["cases"]:
                     number = " ".join((c.get("caseNumber") or "").split())
-                    if number:
+                    if number and CASE_NO_RE.fullmatch(number):  # skips a mistyped number ("DC/525/RBT/CC/14/633"); the case is also listed under its right one
                         cases[number] = {
                             "respondents": [r.get("respondant_name") or "" for r in c.get("respondantList") or []],
                             "complainants": [r.get("complainant_name") or "" for r in c.get("complainantList") or []],
