@@ -154,10 +154,49 @@ def court_ids(sel):
     return [c for c in ids if all(storage.path(c, n).exists() for n in LOAD_FILES)]
 
 
+BLANK_HEARING = {"hearing_time": "", "list": "", "held": "", "purpose_tags": "", "purpose_text": "", "outcome_text": "",
+                 "next_date": "", "next_sitting": "", "prev_sitting": "", "postponed_from": "", "raw_text": "",
+                 "next_stage_tags": "", "cross_examination_of": ""}
+
+
+def history_of(case_key):
+    """{hearing date: {"label", "judges", "next"}} for the held hearings of a case's portal history (history.json)."""
+    try:
+        raw = json.loads((ORDER_DIR / case_key / "history.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found = {}
+    for e in raw or []:
+        if e.get("dateOfAction") and (e.get("actionTaken") or "").startswith("Hearing"):
+            nxt = e.get("dateOfNextHearing") or ""
+            found[history_hearing_dates([e])[0]] = {
+                "label": e["actionTaken"], "judges": (e.get("judgesName") or "").replace(",", ", "),
+                "next": history_hearing_dates([{"dateOfAction": nxt, "actionTaken": "Hearing"}])[0] if nxt else ""}
+    return found
+
+
+def with_history(case_key, hearings):
+    """The cause-list hearings of a case plus one entry (from_history) for every hearing of the portal's history
+    not on a cause list -- the history reaches back before the cause lists were crawled. Every entry gets its
+    history (label, bench, next date) and the court's record of the hearing."""
+    history, record = history_of(case_key), proceedings_of(case_key)
+    out = [{**h, "history": history.get(h["hearing_date"]), "record": record.get(h["hearing_date"], "")} for h in hearings]
+    known = {h["hearing_date"] for h in out}
+    out += [{**BLANK_HEARING, "hearing_date": d, "history": history.get(d), "record": record.get(d, ""), "from_history": True}
+            for d in sorted(set(history) - known)]
+    return out
+
+
+def details_mtimes():
+    """When the saved histories and statuses last changed, so that the loaded data is rebuilt after a crawl."""
+    files = list(ORDER_DIR.glob("*/history.json")) + list(ORDER_DIR.glob("*/status.json"))
+    return (len(files), max((f.stat().st_mtime_ns for f in files), default=0))
+
+
 def load(sel=None):
     sel = sel or selection()
     ids = court_ids(sel)
-    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids)
+    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids) + (details_mtimes(),)
     if sel in _cache and _cache[sel]["mtimes"] == mtimes:
         return _cache[sel]["data"]
 
@@ -177,7 +216,7 @@ def load(sel=None):
         key = r["case_key"]
         kind, seq, year = _split_key(key)
         names = lambda role: [p["party"] for p in parties[key] if p["role"] == role]
-        hs = sorted(hearings[key], key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
+        hs = sorted(with_history(key, hearings[key]), key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
         for newer, h in zip([None] + hs, hs):  # no date in the outcome text: fall back to the sitting that followed
             h["next_sitting"] = newer["hearing_date"] if newer and newer["hearing_date"] > h["hearing_date"] else ""
         for h, older in zip(hs, hs[1:] + [None]):  # the sitting before this one, if on a different day
@@ -468,35 +507,14 @@ def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
         abort(404)
-    # The hearing history from the portal (history.json) is the backbone of the timeline: one entry per held
-    # hearing. A hearing also on a cause list gets that entry's details; one that is not gets a bare entry
-    # (from_history). An order dated on a day absent from both still gets an entry of its own (from_order).
+    # The hearings (from the cause lists and the portal's history, see with_history) are the timeline. An order
+    # dated on a day absent from both still gets an entry of its own (from_order).
     orders = orders_of(case_key)
-    proceedings = proceedings_of(case_key)
-    blank = {"hearing_time": "", "list": "", "held": "", "purpose_text": "", "outcome_text": "", "next_date": "",
-             "next_sitting": "", "postponed_from": "", "raw_text": "", "next_stage_tags": "",
-             "cross_examination_of": ""}
-    history = {}
-    try:
-        raw = json.loads((ORDER_DIR / case_key / "history.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raw = []
-    for e in raw:
-        if e.get("dateOfAction") and (e.get("actionTaken") or "").startswith("Hearing"):
-            day = history_hearing_dates([e])[0]
-            nxt = (e.get("dateOfNextHearing") or "")
-            history[day] = {"label": e["actionTaken"], "judges": (e.get("judgesName") or "").replace(",", ", "),
-                            "next": history_hearing_dates([{"dateOfAction": nxt, "actionTaken": "Hearing"}])[0] if nxt else ""}
-    hearings = [{**h, "history": history.get(h["hearing_date"])} for h in c["hearings"]]
-    known = {h["hearing_date"] for h in hearings}
-    hearings += [{**blank, "hearing_date": d, "history": history.get(d), "from_history": True}
-                 for d in history if d not in known]
-    known |= set(history)
-    hearings += [{**blank, "hearing_date": d, "history": None, "from_order": True} for d in proceedings if d not in known and d not in orders]
-    known |= set(proceedings)
-    hearings += [{**blank, "hearing_date": d, "history": None, "from_order": True} for d in orders if d not in known]
+    known = {h["hearing_date"] for h in c["hearings"]}
+    hearings = c["hearings"] + [{**BLANK_HEARING, "hearing_date": d, "history": None, "record": "", "from_order": True}
+                                for d in orders if d not in known]
     hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
-    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders, proceedings=proceedings)
+    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
 
 
 def _link_from_form():

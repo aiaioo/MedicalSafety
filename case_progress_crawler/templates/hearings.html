@@ -25,8 +25,9 @@
     <td class="muted">{{ h.purpose_tags.replace('_', ' ') }}</td>
     <td>{% if h.held == 'no' %}<span class="muted">not held</span>
       {% elif h.outcome_text %}{{ h.outcome_text|truncate(100) }}
+      {% elif h.record %}{{ h.record|truncate(100) }}
       {% else %}<span class="muted">—</span>{% endif %}</td>
-    <td>{% set nd = h.next_date or h.next_sitting %}{% if nd %}<a href="{{ url_for('day', date=nd) }}">{{ nd }}</a>{% endif %}</td>
+    <td>{% set nd = h.next_date or (h.history.next if h.history) or h.next_sitting %}{% if nd %}<a href="{{ url_for('day', date=nd) }}">{{ nd }}</a>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
