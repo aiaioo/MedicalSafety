@@ -15,6 +15,7 @@
   <span class="muted">{{ cases|length }} cases</span>
   · <a href="{{ url_for('hearings', year=year) }}">Hearings by date</a>
   · <a href="{{ url_for('hospitals') }}">Hospitals</a>
+  · <a href="{{ url_for('advocates') }}">Advocates</a>
 </form>
 {% include "_cases_table.html" %}
 

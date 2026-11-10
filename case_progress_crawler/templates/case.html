@@ -17,6 +17,10 @@
 {% if c.label_reason %}<p class="muted">Labelled {{ c.label.replace('_', ' ') }}: {{ c.label_reason }}</p>{% endif %}
 <p><b>Complainant(s):</b> {{ c.complainants|join('; ') or '—' }}<br>
    <b>Respondent(s):</b> {{ c.respondents|join('; ') or '—' }}</p>
+{% if c.advocate_links.complainant or c.advocate_links.respondent %}
+<p><b>Advocate(s) for the complainant:</b> {% for slug, name in c.advocate_links.complainant %}<a href="{{ url_for('advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}<br>
+   <b>Advocate(s) for the respondent:</b> {% for slug, name in c.advocate_links.respondent %}<a href="{{ url_for('advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}</p>
+{% endif %}
 
 <h2 id="links">Links <button type="button" id="add-link-open" style="font-size:.8rem;vertical-align:middle">Add link</button></h2>
 <ul>

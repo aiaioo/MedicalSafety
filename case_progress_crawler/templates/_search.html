@@ -1,7 +1,7 @@
 <form method="get" class="search">
   {% if year %}<input type="hidden" name="year" value="{{ year }}">{% endif %}
   <input type="search" name="q" value="{{ q }}" list="suggestions" autocomplete="off" autofocus
-         placeholder="Search by party, case number or hospital" aria-label="Search cases">
+         placeholder="Search by party, case number, hospital or advocate" aria-label="Search cases">
   <datalist id="suggestions"></datalist>
   <button type="submit">Search</button>
 </form>

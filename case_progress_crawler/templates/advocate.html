@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('advocates') }}">&larr; Advocates</a></p>
+<h1>{{ a.name }}</h1>
+<p class="muted">{{ a.cases|length }} case{{ 's' if a.cases|length != 1 }}: {{ complainant }} for the complainant, {{ respondent }} for the respondent</p>
+{% set cases = a.cases %}
+{% include "_cases_table.html" %}
+{% endblock %}

@@ -3,10 +3,12 @@
 
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
-                     ?q= searches by party, case number or hospital (with autocomplete from /suggest)
+                     ?q= searches by party, case number, hospital or advocate (with autocomplete from /suggest)
                      ; on /hearings/ the results are the matching hearing dates
   /hospitals/        hospitals named among the respondents, with case counts
   /hospital/<slug>   the cases against one hospital
+  /advocates/        advocates named in the consumer cases (cause lists and case details), with case counts
+  /advocate/<slug>   the cases one advocate appeared in, and for which side
   /hearings/         days of hearings, latest first, with a short summary of each
                      case; ?year=YYYY filters
   /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
@@ -43,6 +45,7 @@ import fitz  # PyMuPDF
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import storage
+from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
 
@@ -193,19 +196,39 @@ def details_mtimes():
     return (len(files), max((f.stat().st_mtime_ns for f in files), default=0))
 
 
+def advocates_mtimes(ids):
+    """When advocates.csv last changed in each analysed court (only the consumer courts have one)."""
+    return tuple(storage.path(c, "advocates.csv").stat().st_mtime for c in ids if storage.path(c, "advocates.csv").exists())
+
+
+def case_advocates(rows):
+    """{slug: {"name", "roles"}} for one case's advocates.csv rows; roles are the sides the advocate appeared for."""
+    found = {}
+    for r in rows:
+        for n in advocate_names(r["advocate"]):
+            a = found.setdefault(advocate_key(n), {"names": defaultdict(int), "roles": set()})
+            a["names"][n] += 1
+            a["roles"].add(r["role"])
+    return found
+
+
 def load(sel=None):
     sel = sel or selection()
     ids = court_ids(sel)
-    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids) + (details_mtimes(),)
+    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids) + (details_mtimes(), advocates_mtimes(ids))
     if sel in _cache and _cache[sel]["mtimes"] == mtimes:
         return _cache[sel]["data"]
 
     parties = defaultdict(list)
+    advocate_rows = defaultdict(list)
     hearings = defaultdict(list)
     status_rows = []  # case keys are distinct across courts
     for c in ids:
         for r in storage.read_csv(c, "parties.csv"):
             parties[r["case_key"]].append(r)
+        if storage.path(c, "advocates.csv").exists():
+            for r in storage.read_csv(c, "advocates.csv"):
+                advocate_rows[r["case_key"]].append(r)
         for r in storage.read_csv(c, "timeline.csv"):
             r["hearing_date"] = ist_date(r["hearing_date"])  # older files hold the portal's UTC timestamps
             hearings[r["case_key"]].append(r)
@@ -226,7 +249,7 @@ def load(sel=None):
             if pr["role"] == "respondent":
                 for n in hospital_names(pr["party"]):
                     hospitals.setdefault(hospital_key(n), n)
-        cases[key] = {**r, "hospitals": hospitals, "kind": kind, "seq": seq, "year": year,
+        cases[key] = {**r, "hospitals": hospitals, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
@@ -241,7 +264,21 @@ def load(sel=None):
             hospitals[slug]["cases"].append(c)
     hospitals = {s: {"slug": s, "name": HOSPITAL_DISPLAY.get(s) or max(h["names"], key=lambda n: (hospital_key(n) == s, h["names"][n], -len(n))), "cases": h["cases"]}
                  for s, h in hospitals.items() if s}
-    data = {"cases": cases, "hospitals": hospitals, "ordered": ordered, "by_date": by_date,
+    advocates = defaultdict(lambda: {"names": defaultdict(int), "cases": [], "sides": {}})
+    for c in ordered:
+        for slug, a in c["advocate_info"].items():
+            adv = advocates[slug]
+            for n, k in a["names"].items():
+                adv["names"][n] += k
+            adv["cases"].append(c)
+            adv["sides"][c["case_key"]] = sorted(a["roles"])
+        c["advocate_links"] = {role: sorted(((slug, advocate_display(a["names"])) for slug, a in c["advocate_info"].items()
+                                             if role in a["roles"] and slug), key=lambda x: x[1].lower())
+                               for role in ("complainant", "respondent")}
+        c["advocates"] = {role: [n for _, n in links] for role, links in c["advocate_links"].items()}
+    advocates = {s: {"slug": s, "name": advocate_display(a["names"]), "cases": a["cases"], "sides": a["sides"]}
+                 for s, a in advocates.items() if s}
+    data = {"cases": cases, "hospitals": hospitals, "advocates": advocates, "ordered": ordered, "by_date": by_date,
             "years": sorted({c["year"] for c in ordered}, reverse=True),
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
     _cache[sel] = {"mtimes": mtimes, "data": data}
@@ -277,7 +314,7 @@ def non_medical(choice):
     if choice not in ("show", "hide"):
         abort(404)
     ref = urlparse(request.referrer or "")
-    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/") or ref.path.startswith(("/day/", "/hospital/")) else url_for("home")
+    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/", "/advocates/") or ref.path.startswith(("/day/", "/hospital/", "/advocate/")) else url_for("home")
     resp = redirect(back)
     resp.set_cookie("non_medical", choice, max_age=365 * 86400, samesite="Lax")
     return resp
@@ -289,7 +326,7 @@ def select_court(sel):
         abort(404)
     ref = urlparse(request.referrer or "")
     # back to the list the visitor was on; a case or hospital page may not exist under the new choice
-    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/") else url_for("home")
+    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/", "/advocates/") else url_for("home")
     resp = redirect(back)
     resp.set_cookie("court", sel, max_age=365 * 86400, samesite="Lax")
     return resp
@@ -298,7 +335,8 @@ def select_court(sel):
 def matches(c, q):
     """Does a case match a search by party, case number or hospital?"""
     words = q.lower().split()
-    haystack = " ".join(c["complainants"] + c["respondents"] + list(c["hospitals"].values())).lower()
+    haystack = " ".join(c["complainants"] + c["respondents"] + list(c["hospitals"].values())
+                        + c["advocates"]["complainant"] + c["advocates"]["respondent"]).lower()
     if all(w in haystack for w in words):
         return True
     ids = id_tokens(c["enquiry_id"]) + id_tokens(c["case_key"])
@@ -316,7 +354,7 @@ def home():
 
 @app.route("/suggest")
 def suggest():
-    """Autocomplete: up to 12 party names, hospital names and case numbers containing the query."""
+    """Autocomplete: up to 12 party, hospital and advocate names and case numbers containing the query."""
     q = request.args.get("q", "").strip().lower()
     if len(q) < 2:
         return jsonify([])
@@ -325,6 +363,7 @@ def suggest():
     pool = {c["enquiry_id"] for c in shown}
     pool |= {p for c in shown for p in c["complainants"] + c["respondents"]}
     pool |= {h["name"] for h in visible_hospitals(data)}
+    pool |= {a["name"] for a in visible_advocates(data)}
     hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
     return jsonify(hits[:12])
 
@@ -351,6 +390,38 @@ def hospital(slug):
     if h is None:
         abort(404)
     return render_template("hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
+
+
+def visible_advocates(data):
+    """The advocates with their visible cases only (an advocate left with none is dropped), and the count of
+    those cases for the complainant side and for the respondent side."""
+    out = []
+    for a in data["advocates"].values():
+        cases = [c for c in a["cases"] if visible(c)]
+        if cases:
+            sides = [a["sides"][c["case_key"]] for c in cases]
+            out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
+                        "respondent": sum("respondent" in s for s in sides)})
+    return out
+
+
+@app.route("/advocates/")
+def advocates():
+    q = request.args.get("q", "").strip().lower()
+    advs = [a for a in visible_advocates(load()) if not q or q in a["name"].lower()]
+    advs.sort(key=lambda a: (-len(a["cases"]), a["name"].lower()))
+    return render_template("advocates.html", advocates=advs, q=q)
+
+
+@app.route("/advocate/<slug>")
+def advocate(slug):
+    a = load()["advocates"].get(slug)
+    if a is None:
+        abort(404)
+    cases = [c for c in a["cases"] if visible(c)]
+    return render_template("advocate.html", a={**a, "cases": cases}, links=court_links(),
+                           complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
+                           respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases))
 
 
 @app.route("/hearings/")
