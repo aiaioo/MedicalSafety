@@ -65,6 +65,30 @@ HOSPITAL_TITLE = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|e
                             r"(?:administrator|administartor|superintendent|directors?|owners?|head|management|ceo|md)\b|[\s/.,&-])+", re.I)
 
 
+PROVIDER_WORD = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?|medical|health\s*care|diagnostics?|maternity|surgical|"
+                           r"polyclinic|dispensary|institute|labs?|laborator\w+|eye care|dental|fertility|ivf|scanning|scanner)\b", re.I)
+DOCTOR_WORD = re.compile(r"\bdr\b\.?|\bdoctor\b", re.I)
+NON_MEDICAL = re.compile(r"\b(?:insurance|insurer|assurance|bank|finance|financial|motors?|cars?|industries|builders|developers|"
+                         r"properties|lifts|impex|corporation|manager|commissioner|officer)\b", re.I)
+
+
+def provider_side(complainants, respondents):
+    """Which side of a case is the hospital/doctor: 'complainant', 'respondent', or '' when it cannot be told.
+    A hospital-like name (hospital, clinic, nursing home, medical ...) decides it; failing that a 'Dr.' against a
+    party that is not a company; if neither side shows either, the respondent is assumed (the usual case of a
+    patient complaining), unless the complainant is a company/insurer/bank, which is not a patient."""
+    sides = ([p for p in complainants if not NON_MEDICAL.search(p)], [p for p in respondents if not NON_MEDICAL.search(p)])
+    for word in (PROVIDER_WORD, DOCTOR_WORD):
+        c, r = (any(word.search(p) for p in side) for side in sides)
+        if c != r:
+            if word is DOCTOR_WORD and any(NON_MEDICAL.search(p) for p in (respondents if c else complainants)):
+                return ""  # a doctor in a dispute with a bank or a car dealer: not a medical case
+            return "complainant" if c else "respondent"
+        if c and r:
+            return ""
+    return "" if any(NON_MEDICAL.search(p) for p in complainants) else "respondent"
+
+
 def hospital_names(party):
     """Hospital/clinic/nursing-home names mentioned in a party string, e.g.
     'Dr.Tarun Patil, C/o Manipal Hospitals, Bangalore.' -> ['Manipal Hospitals']"""
@@ -249,7 +273,8 @@ def load(sel=None):
             if pr["role"] == "respondent":
                 for n in hospital_names(pr["party"]):
                     hospitals.setdefault(hospital_key(n), n)
-        cases[key] = {**r, "hospitals": hospitals, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
+        provider = provider_side(names("complainant"), names("respondent"))
+        cases[key] = {**r, "hospitals": hospitals, "provider_side": provider, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
@@ -392,6 +417,18 @@ def hospital(slug):
     return render_template("hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
 
 
+def represents(case, role):
+    """'hospital' (the hospital or doctor), 'patient' or '' (unclear) for an advocate on `role`'s side of the case."""
+    if not case["provider_side"]:
+        return ""
+    return "hospital" if role == case["provider_side"] else "patient"
+
+
+@app.context_processor
+def helpers():
+    return {"represents": represents}
+
+
 def visible_advocates(data):
     """The advocates with their visible cases only (an advocate left with none is dropped), and the count of
     those cases for the complainant side and for the respondent side."""
@@ -402,7 +439,9 @@ def visible_advocates(data):
             sides = [a["sides"][c["case_key"]] for c in cases]
             out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
                         "respondent": sum("respondent" in s for s in sides)})
-            out[-1]["patient"], out[-1]["hospital"] = out[-1]["complainant"], out[-1]["respondent"]  # complainants are patients, respondents hospitals
+            roles = [(c, r) for c in cases for r in a["sides"][c["case_key"]]]
+            out[-1]["patient"] = sum(represents(c, r) == "patient" for c, r in roles)
+            out[-1]["hospital"] = sum(represents(c, r) == "hospital" for c, r in roles)
     return out
 
 
@@ -422,7 +461,9 @@ def advocate(slug):
     cases = [c for c in a["cases"] if visible(c)]
     return render_template("advocate.html", a={**a, "cases": cases}, links=court_links(),
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
-                           respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases))
+                           respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
+                           patient=sum(represents(c, r) == "patient" for c in cases for r in a["sides"][c["case_key"]]),
+                           hospital=sum(represents(c, r) == "hospital" for c in cases for r in a["sides"][c["case_key"]]))
 
 
 @app.route("/hearings/")
