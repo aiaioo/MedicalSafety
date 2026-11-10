@@ -402,6 +402,7 @@ def visible_advocates(data):
             sides = [a["sides"][c["case_key"]] for c in cases]
             out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
                         "respondent": sum("respondent" in s for s in sides)})
+            out[-1]["patient"], out[-1]["hospital"] = out[-1]["complainant"], out[-1]["respondent"]  # complainants are patients, respondents hospitals
     return out
 
 
