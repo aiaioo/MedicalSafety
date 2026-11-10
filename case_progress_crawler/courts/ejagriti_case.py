@@ -33,6 +33,7 @@ from .medical import CLASSIFIER_VERSION, classify
 REQUEST_DELAY = 0.5     # seconds between requests, to go easy on the portal
 ORDER_KINDS = {1: "daily_order", 2: "judgement"}  # orderTypeId -> file name part
 RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?) is looked at this often
+RECENT = timedelta(days=3)  # a hearing this recent with no order is asked about again every run
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
 
 
@@ -86,7 +87,7 @@ class CaseDetailsPersister(ABC):
 
 
 class DiskPersister(CaseDetailsPersister):
-    """case_details/consumer/<case key>/status.json, history.json, meta.json, orders/<date>_<kind>.pdf or .html
+    """case_details/consumer/<case key>/status.json, history.json, no_orders.json, meta.json, orders/<date>_<kind>.pdf or .html
     and versions/ (written atomically)."""
 
     def __init__(self, root=None):
@@ -247,19 +248,37 @@ class ConsumerCaseDownloader:
                 recheck_failed = recheck_failed or recheck
             time.sleep(REQUEST_DELAY)
         # Every hearing in the history should have its order too; the status lists most of them, so try the
-        # ones it does not (a daily order, as the portal's "View" button does) and quietly skip those without.
+        # ones it does not (a daily order, as the portal's "View" button does). A hearing the portal has no
+        # order for (HTTP 400) is noted in no_orders.json and only asked about again after RECHECK_AFTER, or
+        # daily while the hearing is recent (orders are uploaded a little late). Other errors are not noted.
         in_status = {h.get("dateOfHearing") for h in status.get("caseHearingDetails") or []}
+        misses = self._json(case_number, "no_orders.json") or {}
+        misses_changed = False
         for day in history_hearing_dates(history):
             if day in in_status or self._versions(case_number, f"orders/{day}_daily_order"):
+                continue
+            checked = misses.get(day)
+            if checked and now - datetime.fromisoformat(checked) < RECHECK_AFTER \
+                    and now.date() - datetime.strptime(day, "%Y-%m-%d").date() > RECENT:
                 continue
             try:
                 content, ext = self.fetch_order(status["fillingReferenceNumber"], day, 1)
                 name = f"orders/{day}_daily_order.{ext}"
                 self.persister.save_file(case_number, name, content)
                 out["saved"].append(name)
+                if misses.pop(day, None):
+                    misses_changed = True
             except Exception as e:
-                log(f"  no order for history hearing {day}: {e}")
+                no_order = isinstance(e, ValueError) or getattr(getattr(e, "response", None), "status_code", None) == 400
+                if no_order:
+                    misses[day] = now.isoformat(timespec="seconds")
+                    misses_changed = True
+                else:
+                    log(f"  FAILED order of history hearing {day}: {e}")
+                    out["failed"].append(f"orders/{day}_daily_order")
             time.sleep(REQUEST_DELAY)
+        if misses_changed:
+            self.persister.save_json(case_number, "no_orders.json", dict(sorted(misses.items())))
         # A failed re-check keeps the old status, so that the change is noticed again next time.
         if previous is None or not recheck_failed:
             self._save_json_versioned(case_number, "status.json", status, stamp, out)
