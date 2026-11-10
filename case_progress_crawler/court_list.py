@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh storage/courts.json, the list of courts the crawler knows about, by city.
+"""Refresh the stored list (storage.save_courts) of courts the crawler knows about, by city.
 
 It holds the crawler's own courts (courts/, e.g. the Karnataka Medical Council) and the
 consumer courts of Bangalore read from the e-Jagriti portal (courts/ejagriti.py). Courts

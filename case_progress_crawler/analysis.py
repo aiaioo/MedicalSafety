@@ -14,12 +14,12 @@ Inputs:  pdfs/kmc/pre_hearing/*.pdf      - pre-hearing PDFs: lists of cases for 
          pdfs/kmc/post_hearing/*.pdf    - post-hearing PDFs: outcome of a hearing and the next date/stage.
          Circulars announcing that a sitting is postponed to another date may sit
          in either folder; a next date that falls on a postponed sitting is moved to the new date.
-Outputs (in storage/kmc/, via storage.py; rebuilt from scratch on every run, so re-running after
+Outputs (in the database, via storage.py; rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
-         enquiries.json   - everything, one object per enquiry
-         status.csv       - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
-         parties.csv      - one row per party: enquiry, party, party_type (doctor/non_doctor/institution), role (complainant/respondent)
-         timeline.csv     - one row per enquiry per hearing date, including next_date (extracted from the outcome
+         enquiries        - everything, one object per enquiry
+         status           - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
+         parties          - one row per party: enquiry, party, party_type (doctor/non_doctor/institution), role (complainant/respondent)
+         timeline         - one row per enquiry per hearing date, including next_date (extracted from the outcome
                             text, after applying postponement circulars; postponed_from holds the original date) and raw_text (what the list PDFs printed for the case, source file by source file)
 
 Requires poppler's `pdftotext` on PATH (or /opt/local/bin). Table-style lists
@@ -733,17 +733,14 @@ def build(files, circulars=()):
 
 
 def write_outputs(result):
-    storage.write_json(COURT, "enquiries.json", result)
     party_rows = []
     for eid, r in result.items():
         rows = [(n, "complainant") for n in r["complainants"]] + [(n, "respondent") for n in r["respondents"]]
         rows = [(n, ro) for n, ro in rows if not is_noise(n)]
         for name, role in rows:  # keep enquiries with no parties recorded
             party_rows.append([eid, name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
-    storage.write_csv(COURT, "parties.csv", ["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"], party_rows)
-    storage.write_csv(COURT, "status.csv", ["case_key", "enquiry_id", "status", "status_since"],
-                      [[case_key(eid), eid, r["status"], r["status_since"] or ""]
-                       for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0]))])
+    status_rows = [[case_key(eid), eid, r["status"], r["status_since"] or ""]
+                   for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0]))]
     timeline_rows = []
     for eid, r in result.items():
         for h in r["hearings"]:
@@ -753,17 +750,14 @@ def write_outputs(result):
                                   h["outcome"], h["next_date"] or "", h["postponed_from"] or "", ", ".join(h["next_stage_tags"]),
                                   "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
                                   "\n\n".join(h["raw"]), case_key(eid)])
-    storage.write_csv(COURT, "timeline.csv",
-                      ["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                       "outcome_text", "next_date", "postponed_from", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"],
-                      timeline_rows)
+    storage.replace_analysis(COURT, result, status=status_rows, parties=party_rows, timeline=timeline_rows)
 
 
 def main():
     files, circulars = collect()
     result = build(files, circulars)
     write_outputs(result)
-    print(f"{len(files)} PDFs, {len(circulars)} postponement circulars, {len(result)} enquiries -> {os.path.relpath(storage.court_dir(COURT), os.getcwd())}/")
+    print(f"{len(files)} PDFs, {len(circulars)} postponement circulars, {len(result)} enquiries -> database ({COURT})")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
 

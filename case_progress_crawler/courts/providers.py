@@ -9,8 +9,9 @@ A party name is classified by kind() as
   "institution"  a hospital, clinic, nursing home, medical college, pharmacy, lab, pharma firm ... -- or a
                  hospital's officer named only by title ("Chief Medical Officer", "Medical Superintendent")
   "doctor"       an individual doctor ("Dr. X")
-  "commercial"   a business that is not a provider (bank, insurer, builder, car dealer ...), or a bare
-                 official ("The Branch Manager")
+  "insurer"      an insurance company or health-insurance TPA
+  "organisation" any other business or body that is not a provider (bank, builder, car dealer ...), or an
+                 official named by title ("The Branch Manager", "Chairman", "Assistant Executive Engineer")
   "other"        anyone else, typically a private person
 The words are looked for in the party's own name, without the person it acts "through" ("Apollo Hospitals
 Through its Medical Superintendent Dr. X" is the hospital, whose representative does not make it a doctor).
@@ -20,7 +21,7 @@ import re
 
 INSTITUTION_PATTERNS = [
     # hospitals, clinics, nursing homes, medical colleges and centres
-    r"hospitals?", r"\w*clinics?", r"nursing\s+homes?", r"nethralaya|netralaya",
+    r"hospitals?", r"\w*clinics?", r"nursing\s+homes?", r"nethralaya|netralaya", r"h[ru]+dayalaya|hridayalaya", r"ssims",
     r"medical\s+(?:college|cent(?:re|er)|institute|institutions?|trust|foundation|research|complex|mission)",
     r"institutes?\s+of\s+medical", r"medical\s+sciences",
     # pharmacies and chemists
@@ -54,7 +55,10 @@ class ProviderMatcher:
         r"co-?operative|society|telecom|airlines?|electronics|jewell?ers?|jewellery)\b", re.IGNORECASE)
     company_re = re.compile(r"\b(?:ltd|limited|pvt|private|company|co|corporation|corp|industries|enterprises|associates|bank|"
                             r"engineering|finance)\b", re.IGNORECASE)
-    official_re = re.compile(r"\b(?:manager|commissioner|officer|registrar|secretary)\b", re.IGNORECASE)
+    insurer_re = re.compile(r"\b(?:insurance|insurer|assurance|tpa|medi\s*assist|third\s+party\s+administrator)\b", re.IGNORECASE)
+    official_re = re.compile(r"\b(?:manager|commissioner|officer|registrar|secretary|chairman|engineer|inspector|collector|"
+                             r"tahsildar|director|president|executive|department|government|govt|board|authority|municipal\w*|corporation|"
+                             r"panchayat|state|union\s+of\s+india)\b", re.IGNORECASE)
     only_doctor_re = re.compile(r"^(?:\W*\d*\W*)?(?:dr|doctors?)\b", re.IGNORECASE)  # a name that is only "Dr. So-and-so"
     # hospital names for hospital_names()
     hospital_word_re = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
@@ -78,14 +82,17 @@ class ProviderMatcher:
         return bool(self.veterinary_re.search(name or ""))
 
     def kind(self, name):
-        """'institution', 'doctor', 'commercial' or 'other' (see the module docstring)."""
+        """'institution', 'doctor', 'insurer', 'organisation' or 'other' (see the module docstring)."""
         n = self.clean(name)
         if self.institution_re.search(n):
             return "institution"
+        if self.insurer_re.search(n):
+            return "insurer"
         if self.doctor_re.search(n):
             return "doctor"
         if self.commercial_re.search(n) or self.company_re.search(n) or self.official_re.search(n):
-            return "commercial"
+            # "Customer Relations Officer Through its St Johns Hospital" is the hospital's officer
+            return "institution" if self.institution_re.search(name or "") and self.official_re.search(n) else "organisation"
         return "other"
 
     def hospital_names(self, party):
@@ -101,6 +108,25 @@ class ProviderMatcher:
                 names.append(re.sub(r"\s+", " ", name).strip())
         return names
 
+    def party_of(self, complainants, respondents, role):
+        """Whom an advocate on `role`'s side acts for, judged from that side's own parties and the case's provider side:
+        'hospital' (hospital or doctor), 'patient', 'insurer', 'organisation' (a business or official, not a patient),
+        'mixed' (the side has an insurer or organisation beside a provider or a private person) or '' (cannot be told)."""
+        own = complainants if role == "complainant" else respondents
+        kinds = {self.kind(p) for p in own}
+        provider = kinds & {"institution", "doctor"}
+        non = kinds & {"insurer", "organisation"}
+        side = self.provider_side(complainants, respondents)
+        if provider:
+            if non:
+                return "mixed"
+            return "hospital" if side == role else ("patient" if side else "")
+        if non:
+            if "other" in kinds:
+                return "mixed"
+            return "insurer" if non == {"insurer"} else "organisation"
+        return "patient" if side and side != role else ""
+
     def provider_side(self, complainants, respondents):
         """Which side of a case is the hospital/doctor: 'complainant', 'respondent', or '' when it cannot be told.
         An institution decides it (also a hospital officer named by title only, like "Chief Medical Officer");
@@ -112,12 +138,12 @@ class ProviderMatcher:
             c, r = (want in k for k in kinds)
             if c != r:
                 other = kinds[1] if c else kinds[0]
-                if want == "doctor" and "commercial" in other and "institution" not in other:
+                if want == "doctor" and other & {"insurer", "organisation"} and "institution" not in other:
                     return ""
                 return "complainant" if c else "respondent"
             if c and r:
                 return ""
-        return "" if "commercial" in kinds[0] else "respondent"
+        return "" if kinds[0] & {"insurer", "organisation"} else "respondent"
 
 
 MATCHER = ProviderMatcher()

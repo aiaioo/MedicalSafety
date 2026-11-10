@@ -11,22 +11,23 @@ If the portal starts demanding a captcha, these requests will fail with an HTTP 
 Downloads are incremental (see ConsumerCaseDownloader.sync): a case seen for the first time is fetched in
 full; after that only what is new is saved -- orders of new hearings, and a new version of an order that the
 portal has changed (earlier versions are kept, as <date>_<kind>_v2.pdf ...). Changed status and history are
-likewise kept: the old copy moves to versions/.
+likewise kept: the old copy is stored as a version.
 
 What is saved, and where, is up to a CaseDetailsPersister, so the downloader knows nothing about folders:
-DiskPersister files them under case_details/consumer/<case key>/.
+StoragePersister hands them to storage.py (documents to the database, order files to disk).
 """
 
 import base64
 import html
 import json
-import os
 import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
-from . import BASE_DIR, log, make_session
+import storage
+
+from . import log, make_session
 from .ejagriti import API_BASE, TIMEOUT, USER_AGENT
 from .medical import CLASSIFIER_VERSION, classify
 
@@ -46,19 +47,18 @@ def history_hearing_dates(history):
 
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
-    that has appeared on a saved cause list (causelists/consumer/); a later list's parties replace an earlier one's."""
-    from analysis_consumer import CASE_NO_RE, latest_files  # a top-level module; imported late as it imports this package
+    that has appeared on a saved cause list (storage.latest_cause_lists); a later list's parties replace an earlier one's."""
+    from analysis_consumer import CASE_NO_RE  # a top-level module; imported late as it imports this package
     cases = {}
-    for path in latest_files().values():
-        with open(path, encoding="utf-8") as f:
-            for row in json.load(f)["causelists"]:
-                for c in row["cases"]:
-                    number = " ".join((c.get("caseNumber") or "").split())
-                    if number and CASE_NO_RE.fullmatch(number):  # skips a mistyped number ("DC/525/RBT/CC/14/633"); the case is also listed under its right one
-                        cases[number] = {
-                            "respondents": [r.get("respondant_name") or "" for r in c.get("respondantList") or []],
-                            "complainants": [r.get("complainant_name") or "" for r in c.get("complainantList") or []],
-                            "case_type": c.get("caseTypeName") or ""}
+    for cause_list in storage.latest_cause_lists():
+        for row in cause_list["doc"]["causelists"]:
+            for c in row["cases"]:
+                number = " ".join((c.get("caseNumber") or "").split())
+                if number and CASE_NO_RE.fullmatch(number):  # skips a mistyped number ("DC/525/RBT/CC/14/633"); the case is also listed under its right one
+                    cases[number] = {
+                        "respondents": [r.get("respondant_name") or "" for r in c.get("respondantList") or []],
+                        "complainants": [c2.get("complainant_name") or "" for c2 in c.get("complainantList") or []],
+                        "case_type": c.get("caseTypeName") or ""}
     return cases
 
 
@@ -86,41 +86,46 @@ class CaseDetailsPersister(ABC):
         """Save the bytes of an order (PDF or HTML); return where it was saved."""
 
 
-class DiskPersister(CaseDetailsPersister):
-    """case_details/consumer/<case key>/status.json, history.json, no_orders.json, meta.json, orders/<date>_<kind>.pdf or .html
-    and versions/ (written atomically)."""
+class StoragePersister(CaseDetailsPersister):
+    """Keeps a case's details with storage.py: the JSON documents (status.json, history.json, meta.json,
+    classification.json, no_orders.json) and their earlier versions (versions/<stem>_<stamp>.json) in the
+    database, the orders (orders/<date>_<kind>[_vN].pdf|html) as files."""
 
-    def __init__(self, root=None):
-        self.root = root or os.path.join(BASE_DIR, "case_details", "consumer")
-
-    def _path(self, case_number, name):
+    def _key(self, case_number):
         from analysis_consumer import case_key  # the same key the analysis and the viewer use
-        return os.path.join(self.root, case_key(case_number), *name.split("/"))
+        return case_key(case_number)
+
+    @staticmethod
+    def _version(name):
+        """('status.json', '20261110T103000') for 'versions/status_20261110T103000.json'."""
+        stem, stamp = name[len("versions/"):-len(".json")].rsplit("_", 1)
+        return f"{stem}.json", stamp
 
     def exists(self, case_number, name):
-        return os.path.exists(self._path(case_number, name))
+        if name.startswith("orders/"):
+            return storage.order_exists(self._key(case_number), name[len("orders/"):])
+        return self.read(case_number, name) is not None
 
     def read(self, case_number, name):
-        try:
-            with open(self._path(case_number, name), "rb") as f:
-                return f.read()
-        except FileNotFoundError:
-            return None
-
-    def _write(self, case_number, name, write, mode):
-        dest = self._path(case_number, name)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp = dest + ".part"
-        with open(tmp, mode, **({} if "b" in mode else {"encoding": "utf-8"})) as f:
-            write(f)
-        os.replace(tmp, dest)
-        return dest
+        key = self._key(case_number)
+        if name.startswith("orders/"):
+            return storage.read_order_file(key, name[len("orders/"):])
+        doc = storage.load_case_document(key, name)
+        return None if doc is None else json.dumps(doc, ensure_ascii=False).encode("utf-8")
 
     def save_json(self, case_number, name, data):
-        return self._write(case_number, name, lambda f: json.dump(data, f, indent=1, ensure_ascii=False), "w")
+        storage.save_case_document(self._key(case_number), name, data)
+        return f"{self._key(case_number)}/{name}"
 
     def save_file(self, case_number, name, content):
-        return self._write(case_number, name, lambda f: f.write(content), "wb")
+        key = self._key(case_number)
+        if name.startswith("versions/"):
+            doc_name, stamp = self._version(name)
+            storage.save_case_document_version(key, doc_name, stamp, json.loads(content))
+            return f"{key}/{name}"
+        if name.startswith("orders/"):
+            return str(storage.save_order_file(key, name[len("orders/"):], content))
+        raise ValueError(f"not a file of a case: {name}")
 
 
 class ConsumerCaseDownloader:

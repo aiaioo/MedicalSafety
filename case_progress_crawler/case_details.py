@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Download the status, hearing history and order PDFs of consumer cases from e-Jagriti.
 
-Files go to case_details/consumer/<case key>/ (status.json, history.json, orders/<date>_daily_order.pdf or
-_judgement.pdf, or .html for older orders); orders already saved are not fetched again, and a re-issued order is
+The status, history and other documents go to the database, the orders to case_details/consumer/<case key>/orders/
+(<date>_daily_order.pdf or _judgement.pdf, or .html for older orders), all through storage.py; orders already saved are not fetched again, and a re-issued order is
 saved as a new version (_v2) beside the old one. The daily cron run (downloader.py) does this for every tracked case.
 
 Usage:  python case_details.py DC/525/CC/763/2026 [CASE_NUMBER ...]
@@ -13,7 +13,7 @@ import argparse
 import sys
 
 from courts import log
-from courts.ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_cases
+from courts.ejagriti_case import ConsumerCaseDownloader, StoragePersister, tracked_cases
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
     if not numbers:
         parser.error("give case numbers or --tracked")
 
-    downloader = ConsumerCaseDownloader(DiskPersister())
+    downloader = ConsumerCaseDownloader(StoragePersister())
     failures = 0
     for number in numbers:
         log(f"== {number}")

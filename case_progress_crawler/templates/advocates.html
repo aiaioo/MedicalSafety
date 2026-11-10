@@ -10,11 +10,11 @@
   <button type="submit">Filter</button>
 </form>
 <table>
-  <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th></tr>
+  <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th></tr>
   {% for a in advocates %}
-  <tr><td><a href="{{ url_for('advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td></tr>
+  <tr><td><a href="{{ url_for('advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td></tr>
   {% else %}
-  <tr><td colspan="6">No advocates.</td></tr>
+  <tr><td colspan="7">No advocates.</td></tr>
   {% endfor %}
 </table>
 {% endblock %}

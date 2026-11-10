@@ -1,33 +1,31 @@
 """Consumer commissions (e-Jagriti): download the cause lists of the courts in court_list.py.
 
-For every active consumer court in storage/courts.json (the state commission and the district
+For every active consumer court in the courts table (storage.load_courts) (the state commission and the district
 commissions of Bangalore; run court_list.py to refresh it), the day's cause lists of all its
 court numbers (the portal's "All") are fetched from the e-Jagriti API (courts/ejagriti.py)
-for each working day from yesterday to LOOKAHEAD_DAYS ahead, and saved as one JSON file per
-commission per day in causelists/consumer/<commission id>/.
+for each working day from yesterday to LOOKAHEAD_DAYS ahead, and saved as one document per
+commission per day (storage.save_cause_list).
 
 Only medical cases are kept (courts/medical.py: a respondent that is a hospital, clinic,
 pharmacy, diagnostic centre or lab, pharma firm or doctor); the rest of each list is dropped and
 a list with no medical case is not saved at all.
 
-Unlike the KMC's PDFs these are structured: each file holds the cases listed (case number,
+Unlike the KMC's PDFs these are structured: each document holds the cases listed (case number,
 parties, advocates, bench, stage, previous hearing date). Cause lists are revised during
 the day, so a list whose update time has changed since it was saved is saved again as
-<date>_2.json, _3 ... and the earlier versions are kept. What has been saved is
-recorded in storage/consumer/state.json; an empty (unpublished) list is not recorded, so it is
+a new version (2, 3 ...) and the earlier versions are kept. What has been saved is
+recorded in the crawl state (storage.load_state); an empty (unpublished) list is not recorded, so it is
 asked for again on the next run.
 """
 
-import json
-import os
 import time
 from datetime import date, datetime, timedelta
 
 import storage
 
-from . import BASE_DIR, Court, log, make_session
+from . import Court, log, make_session
 from . import ejagriti
-from .ejagriti_case import ConsumerCaseDownloader, DiskPersister, tracked_cases
+from .ejagriti_case import ConsumerCaseDownloader, StoragePersister, tracked_cases
 from .medical import FILTER_VERSION, keep_medical
 
 LOOKBACK_DAYS = 1   # yesterday's list may have been revised after the last run
@@ -48,17 +46,13 @@ class EJagritiConsumer(Court):
     name = "Consumer commissions (e-Jagriti)"
     in_court_list = False  # its courts are the ones in court_list.py, not this crawler itself
 
-    @property
-    def data_dir(self):
-        return os.path.join(BASE_DIR, "causelists", self.id)
-
     def commissions(self):
         """The active consumer courts from court_list.py's courts.json; if that has not been
         made yet, read them from the portal."""
         courts = [c for c in storage.load_courts().values()
                   if c.get("active") and c.get("ejagriti_commission_id")]
         if not courts:
-            log("No consumer courts in storage/courts.json (run court_list.py); reading them from e-Jagriti")
+            log("No consumer courts stored (run court_list.py); reading them from e-Jagriti")
             courts = [{**c, "active": True} for c in ejagriti.bangalore_courts()]
         return courts
 
@@ -76,22 +70,17 @@ class EJagritiConsumer(Court):
         # a list saved under older filter rules is rewritten in place; a revised list gets a new version
         version = prev["version"] if refilter else prev["version"] + 1 if prev else 1
         suffix = "" if version == 1 else f"_{version}"
-        dest = os.path.join(self.data_dir, str(commission["ejagriti_commission_id"]),
-                            f"{day.isoformat()}{suffix}.json")
+        name = f"{commission['ejagriti_commission_id']}/{day.isoformat()}{suffix}.json"
         cases = sum(len(r["cases"]) for r in rows)
         log(f"New: {commission['name']}, {day}: {cases} medical cases of {listed} listed"
             f"{' (filtered again)' if refilter else '' if version == 1 else f' (revision {version})'}")
         if dry_run:
             return True
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp = dest + ".part"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"commission": commission["name"], "ejagriti_commission_id": commission["ejagriti_commission_id"],
-                       "date": day.isoformat(), "cases_listed": listed,
-                       "fetched_at": datetime.now().isoformat(timespec="seconds"), "causelists": rows},
-                      f, indent=1, ensure_ascii=False)
-        os.replace(tmp, dest)
-        state["seen"][key] = {"saved_to": os.path.relpath(dest, BASE_DIR), "updated_at": updated_at,
+        storage.save_cause_list(commission["ejagriti_commission_id"], day.isoformat(), version,
+                                {"commission": commission["name"], "ejagriti_commission_id": commission["ejagriti_commission_id"],
+                                 "date": day.isoformat(), "cases_listed": listed,
+                                 "fetched_at": datetime.now().isoformat(timespec="seconds"), "causelists": rows})
+        state["seen"][key] = {"saved_to": name, "updated_at": updated_at,
                               "is_final": all(r.get("isFinal") for r in rows), "version": version, "filter": FILTER_VERSION,
                               "downloaded_at": datetime.now().isoformat(timespec="seconds")}
         storage.save_state(self.id, state)
@@ -130,7 +119,7 @@ class EJagritiConsumer(Court):
         try:
             cases = tracked_cases()
             log(f"== case details of {len(cases)} cases")
-            return ConsumerCaseDownloader(DiskPersister()).sync_all(cases, dry_run)
+            return ConsumerCaseDownloader(StoragePersister()).sync_all(cases, dry_run)
         except Exception as e:
             log(f"ERROR case details: {e}")
             return 1

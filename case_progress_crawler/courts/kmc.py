@@ -11,7 +11,7 @@ listing the cases before the Council. Two kinds exist:
 
 Each run fetches the page, finds pre- and post-hearing PDFs not seen before, downloads
 them into pdfs/kmc/pre_hearing or pdfs/kmc/post_hearing, and records them in
-storage/kmc/state.json so they are never downloaded twice. A PDF that fails to download is
+the crawl state (storage.py) so they are never downloaded twice. A PDF that fails to download is
 not recorded, so the next run retries it.
 
 Files placed by hand in manually_downloaded/kmc/{pre,post}_hearing are also

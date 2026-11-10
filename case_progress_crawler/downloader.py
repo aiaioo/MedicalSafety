@@ -3,7 +3,7 @@
 
 Every court (see courts/) has its own Court subclass that knows how that court
 publishes its lists; this script just runs them. Downloads go into pdfs/<court>/ and
-what has been fetched is remembered in storage/<court>/state.json.
+what has been fetched is remembered in the crawl state (storage.py).
 
 Usage:  python downloader.py [--court ID ...] [--dry-run] [--back DAYS]
         (no --court: every court)

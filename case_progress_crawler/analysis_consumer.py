@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Analyse the consumer cause lists downloaded by courts/consumer.py.
 
-Writes the same four files as analysis.py does for the KMC, plus advocates.csv, in storage/consumer/ (via storage.py;
+Stores the same four tables as analysis.py does for the KMC, plus advocates, for the court "consumer" (via storage.py;
 rebuilt from scratch on every run), so viewer.py can show them with `--court consumer`:
-  enquiries.json   - everything, one object per case
-  status.csv       - one row per case: case_key, enquiry_id (the case number), status, date the status first appeared,
+  enquiries        - everything, one object per case
+  status           - one row per case: case_key, enquiry_id (the case number), status, date the status first appeared,
                      and the label (medical / not_medical / unclear, with the reason) that case_details.py gave the case
                      once its details were downloaded -- empty if they have not been (the viewer hides not_medical)
-  parties.csv      - one row per party: complainants and respondents (party_type as in analysis.py)
-  timeline.csv     - one row per case per cause-list date
+  parties          - one row per party: complainants and respondents (party_type as in analysis.py)
+  timeline         - one row per case per cause-list date
 
 Differences from the KMC data, because a cause list is only a schedule:
   * status is "listed" -- the case is on a cause list -- never open/disposed/dismissed, which the
@@ -17,29 +17,23 @@ Differences from the KMC data, because a cause list is only a schedule:
     "FOR PRONOUNCEMENT OF ORDER", ...) with the court number and bench. There is no outcome text and no
     next date; the viewer then shows the next date the case was listed on. "held" means the date has passed.
   * the portal's per-case "dateOfHearing" field is kept in raw_text only; its meaning is not established.
-  * advocates (named on the cause lists, and in each case's status.json once its details are downloaded) are
-    written to advocates.csv, one row per case, side and advocate field as printed; viewer.py cleans the names.
+  * advocates (named on the cause lists, and in each case's status once its details are downloaded) are
+    stored in the advocates table, one row per case, side and advocate field as printed; viewer.py cleans the names.
 
-Where a cause list was revised (<date>_2.json ...) only the latest revision is used.
+Where a cause list was revised only the latest revision is used.
 
 Usage:  python analysis_consumer.py
 """
 
-import glob
-import json
-import os
 import re
 import sys
 from datetime import date
 
 import storage
 from analysis import party_type
-from courts import BASE_DIR
 
 COURT = "consumer"
-DATA_DIR = os.path.join(BASE_DIR, "causelists", COURT)
 
-FILE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:_(\d+))?\.json$")
 CASE_NO_RE = re.compile(r"(?P<prefix>.+)/(?P<serial>\d+)/(?P<year>\d{4})$")
 TIME_RE = re.compile(r"\bAT\s+(\d{1,2}):(\d{2})\s*([AP])\.?\s*M", re.IGNORECASE)
 # (tag, regex) for the stage printed on the list
@@ -61,40 +55,22 @@ def case_key(case_number):
     return f"{m['prefix'].replace('/', '-')}_{int(m['serial'])}_{m['year']}"
 
 
-def latest_files():
-    """{(commission folder, date): path} -- the highest revision of each commission's list for each date."""
-    best = {}
-    for path in glob.glob(os.path.join(DATA_DIR, "*", "*.json")):
-        m = FILE_RE.search(path)
-        if not m:
-            continue
-        key = (os.path.basename(os.path.dirname(path)), m.group(1))
-        version = int(m.group(2) or 1)
-        if key not in best or version > best[key][0]:
-            best[key] = (version, path)
-    return {k: p for k, (v, p) in sorted(best.items())}
+def source_name(cause_list):
+    """How a cause list is named in the raw text of a hearing: <commission>/<date>[_<version>].json, as its file was."""
+    suffix = "" if cause_list["version"] == 1 else f"_{cause_list['version']}"
+    return f"{cause_list['commission_id']}/{cause_list['date']}{suffix}.json"
 
 
-def read_label(case_key):
-    """(label, reason) from case_details/consumer/<case key>/classification.json, or ("", "") if not downloaded yet."""
-    path = os.path.join(BASE_DIR, "case_details", COURT, case_key, "classification.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
-        return doc["label"], doc["reason"]
-    except (FileNotFoundError, KeyError, ValueError):
-        return "", ""
+def read_labels():
+    """{case key: (label, reason)} from the classification of each case whose details were downloaded."""
+    return {k: (d["label"], d["reason"]) for k, d in storage.load_case_documents("classification.json").items()
+            if "label" in d and "reason" in d}
 
 
-def detail_advocates(case_key):
-    """{"complainant": [...], "respondent": [...]} from case_details/consumer/<case key>/status.json, empty if not downloaded."""
-    path = os.path.join(BASE_DIR, "case_details", COURT, case_key, "status.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
-    except (OSError, ValueError):
-        return {"complainant": [], "respondent": []}
-    return {role: [a.strip() for a in doc.get(f"{role}Advocate") or [] if isinstance(a, str) and a.strip()]
+def detail_advocates(status):
+    """{"complainant": [...], "respondent": [...]} from a case's downloaded status (None if not downloaded)."""
+    status = status or {}
+    return {role: [a.strip() for a in status.get(f"{role}Advocate") or [] if isinstance(a, str) and a.strip()]
             for role in ("complainant", "respondent")}
 
 
@@ -126,10 +102,8 @@ def ist_date(value):
 def collect():
     """{case number: case} from every cause list file."""
     cases = {}
-    for (commission, day), path in latest_files().items():
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
-        source = os.path.relpath(path, DATA_DIR)
+    for cause_list in storage.latest_cause_lists():
+        doc, source = cause_list["doc"], source_name(cause_list)
         for row in doc["causelists"]:
             for c in row["cases"]:
                 number = " ".join((c.get("caseNumber") or "").split())
@@ -193,16 +167,15 @@ def build(cases, today=None):
 
 
 def write_outputs(result):
-    storage.write_json(COURT, "enquiries.json", result)
     party_rows = []
     for eid, r in result.items():
         for role, listed in (("complainant", r["complainants"]), ("respondent", r["respondents"])):
             for name in listed:
                 party_rows.append([eid, name, party_type(name, role), role, r["as_of"], r["case_key"]])
-    storage.write_csv(COURT, "parties.csv", ["enquiry_id", "party", "party_type", "role", "party_as_of", "case_key"], party_rows)
     advocate_rows = []
+    statuses = storage.load_case_documents("status.json")
     for eid, r in result.items():
-        details = detail_advocates(r["case_key"])
+        details = detail_advocates(statuses.get(r["case_key"]))
         for role in ("complainant", "respondent"):
             seen = set()
             for source, listed in (("case_details", details[role]), ("cause_list", r["advocates"][role])):
@@ -210,9 +183,8 @@ def write_outputs(result):
                     if a not in seen:
                         seen.add(a)
                         advocate_rows.append([eid, r["case_key"], role, a, source])
-    storage.write_csv(COURT, "advocates.csv", ["enquiry_id", "case_key", "role", "advocate", "source"], advocate_rows)
-    storage.write_csv(COURT, "status.csv", ["case_key", "enquiry_id", "status", "status_since", "label", "label_reason"],
-                      [[r["case_key"], eid, r["status"], r["status_since"], *read_label(r["case_key"])] for eid, r in result.items()])
+    labels = read_labels()
+    status_rows = [[r["case_key"], eid, r["status"], r["status_since"], *labels.get(r["case_key"], ("", ""))] for eid, r in result.items()]
     timeline_rows = []
     for eid, r in result.items():
         for h in r["hearings"]:
@@ -221,17 +193,14 @@ def write_outputs(result):
                                   "yes" if h["held"] else "no", ", ".join(p["tags"]), p["text"],
                                   h["outcome"], h["next_date"] or "", h["postponed_from"] or "", "", "",
                                   "\n\n".join(h["raw"]), r["case_key"]])
-    storage.write_csv(COURT, "timeline.csv",
-                      ["enquiry_id", "hearing_date", "hearing_time", "time_source", "list", "held", "purpose_tags", "purpose_text",
-                       "outcome_text", "next_date", "postponed_from", "next_stage_tags", "cross_examination_of", "raw_text", "case_key"],
-                      timeline_rows)
+    storage.replace_analysis(COURT, result, status=status_rows, parties=party_rows, advocates=advocate_rows, timeline=timeline_rows)
 
 
 def main():
-    files = latest_files()
+    lists = len(storage.latest_cause_lists())
     result = build(collect())
     write_outputs(result)
-    print(f"{len(files)} cause lists, {len(result)} cases -> {os.path.relpath(storage.court_dir(COURT), os.getcwd())}/")
+    print(f"{lists} cause lists, {len(result)} cases -> database ({COURT})")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
 

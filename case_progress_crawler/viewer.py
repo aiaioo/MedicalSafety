@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web UI over the CSVs written by analysis.py (read through storage.py).
+"""Web UI over the analysis written by analysis.py (read through storage.py).
 
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
@@ -25,7 +25,7 @@ Shows KMC cases (from analysis.py), CPA -- Consumer Protection Act -- cases from
 in a cookie). --court sets the choice for visitors who have not made one.
 
 Consumer cases that case_details.py labelled not_medical (a property dispute, a bank v. a doctor ...; the label is
-in status.csv) are hidden from the lists, hospital counts and search, and shown with a "not medical" badge if the
+in the analysis status) are hidden from the lists, hospital counts and search, and shown with a "not medical" badge if the
 "show non-medical" link at the top is on (a cookie). A case page opened directly always shows. Cases labelled
 "unclear" are shown, with a badge.
 
@@ -34,7 +34,6 @@ Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
 
 import argparse
 import datetime
-import json
 import re
 from html import unescape
 from pathlib import Path
@@ -54,7 +53,6 @@ app = Flask(__name__)
 COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
 SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
-LOAD_FILES = ("status.csv", "timeline.csv", "parties.csv")
 PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
@@ -135,7 +133,7 @@ def visible(c):
 def court_ids(sel):
     """The courts a selection covers that have been analysed (a court with no data yet is skipped)."""
     ids = list(COURTS) if sel == "all" else [sel]
-    return [c for c in ids if all(storage.path(c, n).exists() for n in LOAD_FILES)]
+    return [c for c in ids if storage.has_analysis(c)]
 
 
 BLANK_HEARING = {"hearing_time": "", "list": "", "held": "", "purpose_tags": "", "purpose_text": "", "outcome_text": "",
@@ -143,12 +141,8 @@ BLANK_HEARING = {"hearing_time": "", "list": "", "held": "", "purpose_tags": "",
                  "next_stage_tags": "", "cross_examination_of": ""}
 
 
-def history_of(case_key):
-    """{hearing date: {"label", "judges", "next"}} for the held hearings of a case's portal history (history.json)."""
-    try:
-        raw = json.loads((ORDER_DIR / case_key / "history.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+def history_of(raw):
+    """{hearing date: {"label", "judges", "next"}} for the held hearings of a case's portal history (its history document)."""
     found = {}
     for e in raw or []:
         if e.get("dateOfAction") and (e.get("actionTaken") or "").startswith("Hearing"):
@@ -159,11 +153,11 @@ def history_of(case_key):
     return found
 
 
-def with_history(case_key, hearings):
+def with_history(raw_history, status, hearings):
     """The cause-list hearings of a case plus one entry (from_history) for every hearing of the portal's history
     not on a cause list -- the history reaches back before the cause lists were crawled. Every entry gets its
     history (label, bench, next date) and the court's record of the hearing."""
-    history, record = history_of(case_key), proceedings_of(case_key)
+    history, record = history_of(raw_history), proceedings_of(status)
     out = [{**h, "history": history.get(h["hearing_date"]), "record": record.get(h["hearing_date"], "")} for h in hearings]
     known = {h["hearing_date"] for h in out}
     out += [{**BLANK_HEARING, "hearing_date": d, "history": history.get(d), "record": record.get(d, ""), "from_history": True}
@@ -171,19 +165,8 @@ def with_history(case_key, hearings):
     return out
 
 
-def details_mtimes():
-    """When the saved histories and statuses last changed, so that the loaded data is rebuilt after a crawl."""
-    files = list(ORDER_DIR.glob("*/history.json")) + list(ORDER_DIR.glob("*/status.json"))
-    return (len(files), max((f.stat().st_mtime_ns for f in files), default=0))
-
-
-def advocates_mtimes(ids):
-    """When advocates.csv last changed in each analysed court (only the consumer courts have one)."""
-    return tuple(storage.path(c, "advocates.csv").stat().st_mtime for c in ids if storage.path(c, "advocates.csv").exists())
-
-
 def case_advocates(rows):
-    """{slug: {"name", "roles"}} for one case's advocates.csv rows; roles are the sides the advocate appeared for."""
+    """{slug: {"name", "roles"}} for one case's advocates rows; roles are the sides the advocate appeared for."""
     found = {}
     for r in rows:
         for n in advocate_names(r["advocate"]):
@@ -196,7 +179,7 @@ def case_advocates(rows):
 def load(sel=None):
     sel = sel or selection()
     ids = court_ids(sel)
-    mtimes = tuple(storage.mtimes(c, *LOAD_FILES) for c in ids) + (details_mtimes(), advocates_mtimes(ids))
+    mtimes = tuple(storage.analysis_version(c) for c in ids) + (storage.case_documents_version(),)
     if sel in _cache and _cache[sel]["mtimes"] == mtimes:
         return _cache[sel]["data"]
 
@@ -204,23 +187,24 @@ def load(sel=None):
     advocate_rows = defaultdict(list)
     hearings = defaultdict(list)
     status_rows = []  # case keys are distinct across courts
+    histories, statuses = storage.load_case_documents("history.json"), storage.load_case_documents("status.json")
     for c in ids:
-        for r in storage.read_csv(c, "parties.csv"):
+        analysis = storage.load_analysis(c)
+        for r in analysis["parties"]:
             parties[r["case_key"]].append(r)
-        if storage.path(c, "advocates.csv").exists():
-            for r in storage.read_csv(c, "advocates.csv"):
-                advocate_rows[r["case_key"]].append(r)
-        for r in storage.read_csv(c, "timeline.csv"):
-            r["hearing_date"] = ist_date(r["hearing_date"])  # older files hold the portal's UTC timestamps
+        for r in analysis["advocates"]:
+            advocate_rows[r["case_key"]].append(r)
+        for r in analysis["timeline"]:
+            r["hearing_date"] = ist_date(r["hearing_date"])  # older data holds the portal's UTC timestamps
             hearings[r["case_key"]].append(r)
-        status_rows += [{**r, "court": c, "court_label": COURTS[c]} for r in storage.read_csv(c, "status.csv")]
+        status_rows += [{**r, "court": c, "court_label": COURTS[c]} for r in analysis["status"]]
 
     cases = {}
     for r in status_rows:
         key = r["case_key"]
         kind, seq, year = _split_key(key)
         names = lambda role: [p["party"] for p in parties[key] if p["role"] == role]
-        hs = sorted(with_history(key, hearings[key]), key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
+        hs = sorted(with_history(histories.get(key), statuses.get(key), hearings[key]), key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
         for newer, h in zip([None] + hs, hs):  # no date in the outcome text: fall back to the sitting that followed
             h["next_sitting"] = newer["hearing_date"] if newer and newer["hearing_date"] > h["hearing_date"] else ""
         for h, older in zip(hs, hs[1:] + [None]):  # the sitting before this one, if on a different day
@@ -375,10 +359,9 @@ def hospital(slug):
 
 
 def represents(case, role):
-    """'hospital' (the hospital or doctor), 'patient' or '' (unclear) for an advocate on `role`'s side of the case."""
-    if not case["provider_side"]:
-        return ""
-    return "hospital" if role == case["provider_side"] else "patient"
+    """Whom an advocate on `role`'s side of the case acts for: 'hospital', 'patient', 'insurer', 'organisation',
+    'mixed' or '' (see ProviderMatcher.party_of)."""
+    return MATCHER.party_of(case["complainants"], case["respondents"], role)
 
 
 @app.context_processor
@@ -399,6 +382,7 @@ def visible_advocates(data):
             roles = [(c, r) for c in cases for r in a["sides"][c["case_key"]]]
             out[-1]["patient"] = sum(represents(c, r) == "patient" for c, r in roles)
             out[-1]["hospital"] = sum(represents(c, r) == "hospital" for c, r in roles)
+            out[-1]["other_org"] = sum(represents(c, r) in ("insurer", "organisation") for c, r in roles)
     return out
 
 
@@ -420,7 +404,8 @@ def advocate(slug):
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
                            respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
                            patient=sum(represents(c, r) == "patient" for c in cases for r in a["sides"][c["case_key"]]),
-                           hospital=sum(represents(c, r) == "hospital" for c in cases for r in a["sides"][c["case_key"]]))
+                           hospital=sum(represents(c, r) == "hospital" for c in cases for r in a["sides"][c["case_key"]]),
+                           other_org=sum(represents(c, r) in ("insurer", "organisation") for c in cases for r in a["sides"][c["case_key"]]))
 
 
 @app.route("/hearings/")
@@ -495,7 +480,6 @@ def pdf_page(kind, name, n):
     return Response(png, mimetype="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
-ORDER_DIR = Path(__file__).parent / "case_details" / "consumer"  # <case key>/orders/<date>_<kind>[_vN].pdf|html
 ORDER_RE = re.compile(r"(?P<date>[0-9-]+)_(?P<kind>daily_order|judgement)(?:_v(?P<v>\d+))?\.(?P<ext>pdf|html)")
 ORDER_KINDS = {"daily_order": "Daily order", "judgement": "Judgement"}
 _text_cache = {}  # (path, mtime) -> extracted text
@@ -528,8 +512,7 @@ def orders_of(case_key):
     """{hearing date: [order]} for a case's saved orders, oldest version first; an order is
     {"date", "name", "label", "ext", "text"}."""
     found = defaultdict(list)
-    folder = ORDER_DIR / case_key / "orders"
-    for p in sorted(folder.glob("*")) if folder.is_dir() else []:
+    for p in storage.order_files(case_key):
         m = ORDER_RE.fullmatch(p.name)
         if m:
             label = ORDER_KINDS[m["kind"]] + (f" (version {m['v']})" if m["v"] else "")
@@ -548,21 +531,17 @@ def order_file(case_key, name):
     """A saved order; HTML orders come from the court's portal, so they are sandboxed (no scripts)."""
     if not ORDER_RE.fullmatch(name) or not re.fullmatch(r"[\w-]+", case_key):
         abort(404)
-    resp = send_from_directory(ORDER_DIR / case_key / "orders", name)
+    resp = send_from_directory(storage.order_dir(case_key), name)
     if name.endswith(".html"):  # not on PDFs: a sandbox stops the browser's PDF viewer
         resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
     return resp
 
 
-def proceedings_of(case_key):
-    """{hearing date: text} of what the court recorded for each hearing (proceedingText in the portal's status),
-    as plain text; hearings with nothing recorded are left out."""
-    try:
-        status = json.loads((ORDER_DIR / case_key / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+def proceedings_of(status):
+    """{hearing date: text} of what the court recorded for each hearing (proceedingText in the case's portal status
+    document), as plain text; hearings with nothing recorded are left out."""
     found = {}
-    for h in status.get("caseHearingDetails") or []:
+    for h in (status or {}).get("caseHearingDetails") or []:
         html = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", h.get("proceedingText") or "")
         html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", html)
         text = unescape(re.sub(r"<[^>]+>", " ", html))
@@ -603,33 +582,29 @@ def add_link(case_key):
         abort(404)
     link = _link_from_form()
     court = court_of(case_key)
-    links = storage.load_links(court)
-    links.setdefault(case_key, []).append(link)
-    storage.save_links(court, links)
+    storage.save_case_links(court, case_key, storage.load_links(court).get(case_key, []) + [link])
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/edit")
 def edit_link(case_key, i):
     court = court_of(case_key)
-    links = storage.load_links(court)
-    if i >= len(links.get(case_key, [])):
+    links = storage.load_links(court).get(case_key, [])
+    if i >= len(links):
         abort(404)
-    links[case_key][i] = _link_from_form()
-    storage.save_links(court, links)
+    links[i] = _link_from_form()
+    storage.save_case_links(court, case_key, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
 @app.post("/case/<case_key>/links/<int:i>/delete")
 def delete_link(case_key, i):
     court = court_of(case_key)
-    links = storage.load_links(court)
-    if i >= len(links.get(case_key, [])):
+    links = storage.load_links(court).get(case_key, [])
+    if i >= len(links):
         abort(404)
-    del links[case_key][i]
-    if not links[case_key]:
-        del links[case_key]
-    storage.save_links(court, links)
+    del links[i]
+    storage.save_case_links(court, case_key, links)
     return redirect(url_for("case", case_key=case_key) + "#links")
 
 
