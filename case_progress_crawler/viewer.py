@@ -37,9 +37,10 @@ under /case_tracker/ in its own process, behind its sign-in, by registering this
 import argparse
 import datetime
 import re
+import statistics
 from html import unescape
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -47,6 +48,7 @@ from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, rende
 
 import progress_storage as storage
 from courts.providers import MATCHER
+from metrics import OUTCOMES, case_pace, outcome_of
 from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
@@ -180,6 +182,52 @@ def case_advocates(rows):
     return found
 
 
+def analytics(cases, all_years=None):
+    """Numbers for the front page's panel, from the cases shown: per court the count of each outcome, and the
+    most-named hospitals."""
+    per_court = {}
+    for c in cases:
+        row = per_court.setdefault(c["court"], {"label": c["court_label"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+        row["total"] += 1
+        row[c["outcome"]] += 1
+        row.setdefault("gaps", []).extend(c["gaps"])
+        row.setdefault("adj", Counter()).update(c["adjournments"])
+        row.setdefault("with_hearings", 0)
+        row["with_hearings"] += bool(c["gaps"])
+    for row in per_court.values():
+        row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
+        row["long_gap_pct"] = round(100 * sum(g > 60 for g in row["gaps"]) / len(row["gaps"])) if row["gaps"] else None
+        row["n_gaps"] = len(row["gaps"])
+        a = row["adj"]
+        row["adj_rows"] = [(label, a[("patient", k)], a[("hospital", k)]) for k, label in (("time", "Asked for time"), ("absent", "Absent"))]
+        row["adj_total"] = sum(a.values())
+        closed = row["total"] - row["open"]
+        row["closed"] = closed
+        row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
+        row["dismissed_pct"] = round(100 * row["dismissed"] / closed) if closed else None
+        row["decided_pct"] = round(100 * (row["disposed"] + row["allowed"]) / closed) if closed else None
+    hospitals = defaultdict(lambda: [0, ""])
+    for c in cases:
+        for slug, n in c["hospitals"].items():
+            if slug:
+                hospitals[slug][0] += 1
+                hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or hospitals[slug][1] or n
+    top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), reverse=True)[:5]
+    by_year = {}
+    for c in all_years or cases:
+        row = by_year.setdefault(c["year"], {"year": c["year"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+        row["total"] += 1
+        row[c["outcome"]] += 1
+        row.setdefault("gaps", []).extend(c["gaps"])
+    years = []
+    for y in sorted(by_year, reverse=True):
+        row = by_year[y]
+        row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
+        row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
+        years.append(row)
+    return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years}
+
+
 def load(sel=None):
     sel = sel or selection()
     ids = court_ids(sel)
@@ -219,7 +267,9 @@ def load(sel=None):
                 for n in MATCHER.hospital_names(pr["party"]):
                     hospitals.setdefault(hospital_key(n), n)
         provider = MATCHER.provider_side(names("complainant"), names("respondent"))
-        cases[key] = {**r, "hospitals": hospitals, "provider_side": provider, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
+        gaps, adjourned = case_pace(hs, provider, datetime.date.today().isoformat())
+        cases[key] = {**r, "outcome": outcome_of(r, statuses.get(key)), "hospitals": hospitals, "provider_side": provider,
+                      "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
@@ -342,8 +392,9 @@ def home():
     data = load()
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
-    cases = [c for c in data["ordered"] if visible(c) and (year is None or c["year"] == year) and (not q or matches(c, q))]
-    return render_template("case_tracker/home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links())
+    in_scope = [c for c in data["ordered"] if visible(c) and (not q or matches(c, q))]
+    cases = [c for c in in_scope if year is None or c["year"] == year]
+    return render_template("case_tracker/home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links(), stats=analytics(cases, in_scope))
 
 
 @bp.route("/suggest")

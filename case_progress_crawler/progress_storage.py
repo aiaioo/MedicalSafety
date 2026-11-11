@@ -256,6 +256,24 @@ def replace_analysis(court, enquiries, **rows):
         cur.execute("INSERT INTO analysis_runs (court) VALUES (%s) ON CONFLICT (court) DO UPDATE SET run_at = now()", (court,))
 
 
+CASE_METRIC_COLUMNS = ["court", "case_key", "enquiry_id", "year", "kind", "outcome", "provider_side", "label", "hospitals", "n_hearings",
+                       "n_held", "first_hearing", "last_hearing", "n_gaps", "median_gap_days", "max_gap_days",
+                       "time_asked_patient", "time_asked_hospital", "absent_patient", "absent_hospital"]
+HEARING_METRIC_COLUMNS = ["court", "case_key", "hearing_date", "held", "gap_days", "time_asked_by", "absent_side",
+                          "provider_side", "from_history"]
+
+
+def replace_metrics(case_rows, hearing_rows):
+    """Replace case_metrics and hearing_metrics (metrics.py) with these rows, in the column orders above."""
+    with _db() as cur:
+        cur.execute("DELETE FROM case_metrics")
+        cur.execute("DELETE FROM hearing_metrics")
+        for table, columns, rows in (("case_metrics", CASE_METRIC_COLUMNS, case_rows),
+                                     ("hearing_metrics", HEARING_METRIC_COLUMNS, hearing_rows)):
+            if rows:
+                psycopg2.extras.execute_values(cur, f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s", rows, page_size=2000)
+
+
 def has_analysis(court):
     """Has this court been analysed (so that load_analysis has something to give)?"""
     with _db() as cur:
@@ -292,7 +310,8 @@ def load_enquiries(court):
 # ---------------------------------------------------------------------------------------------
 
 TABLES = ["courts", "crawl_state", "case_links", "cause_lists", "case_documents", "case_document_versions",
-          "analysis_status", "analysis_parties", "analysis_advocates", "analysis_timeline", "analysis_enquiries"]
+          "analysis_status", "analysis_parties", "analysis_advocates", "analysis_timeline", "analysis_enquiries",
+          "case_metrics", "hearing_metrics"]
 
 
 def status():

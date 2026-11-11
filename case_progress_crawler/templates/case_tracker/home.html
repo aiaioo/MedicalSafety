@@ -17,6 +17,54 @@
   · <a href="{{ url_for('case_tracker.hospitals') }}">Hospitals</a>
   · <a href="{{ url_for('case_tracker.advocates') }}">Advocates</a>
 </form>
+{% if stats.total %}
+<section class="panel">
+  <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' in ' ~ year if year }})</span></h2>
+  <div class="panel-grid">
+  {% for c in stats.courts %}
+    <div>
+      <h3>{{ c.label }} <span class="muted">{{ c.total }} cases · {{ c.closed }} closed</span></h3>
+      <div class="bar" role="img" aria-label="{{ c.label }} case outcomes">
+        {% for k, label, n, pct in c.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
+      </div>
+      <ul class="legend">
+        {% for k, label, n, pct in c.bars %}<li><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</li>{% endfor %}
+      </ul>
+      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('disposed','disposed')] if c[k] %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} days between hearings; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).</p>{% endif %}
+      {% if c.adj_total %}
+      <table class="adj"><tr><th></th><th>Patient side</th><th>Hospital side</th></tr>
+        {% for label, pt, hs in c.adj_rows %}<tr><td>{{ label }}</td><td>{{ pt }}</td><td>{{ hs }}</td></tr>{% endfor %}
+      </table>
+      <p class="muted">Hearings whose recorded text says which side asked for time or was absent.</p>
+      {% endif %}
+    </div>
+  {% endfor %}
+  {% if stats.top_hospitals %}
+    <div>
+      <h3>Most often named</h3>
+      <ol class="tophosp">
+        {% for n, name, slug in stats.top_hospitals %}<li><a href="{{ url_for('case_tracker.hospital', slug=slug) }}">{{ name }}</a> <span class="muted">{{ n }}</span></li>{% endfor %}
+      </ol>
+    </div>
+  {% endif %}
+  </div>
+  {% if stats.years|length > 1 %}
+  <h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3>
+  <table class="years">
+    {% for y in stats.years %}
+    <tr{{ ' class=on' if y.year == year }}>
+      <td><a href="{{ url_for('case_tracker.home', year=y.year, q=q or None) }}">{{ y.year }}</a></td>
+      <td class="muted">{{ y.total }}</td>
+      <td style="width:60%"><div class="bar">{% for k, label, n, pct in y.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}</div></td>
+      <td class="muted">{{ y.open }} open · {{ y.total - y.open }} closed{% if y.median_gap is not none %} · {{ y.median_gap }}d between hearings{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p class="muted">"Disposed" is the court's own status and does not say how the case was decided; "dismissed" includes non-prosecution. Percentages are of closed cases.</p>
+</section>
+{% endif %}
 {% include "case_tracker/_cases_table.html" %}
 
 {% endblock %}

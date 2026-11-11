@@ -127,3 +127,44 @@ CREATE TABLE IF NOT EXISTS analysis_enquiries (
     doc         jsonb NOT NULL,
     PRIMARY KEY (court, enquiry_id)
 );
+
+-- ---- labels for slicing (metrics.py rebuilds both wholesale; see its docstring) -----------------------
+
+CREATE TABLE IF NOT EXISTS case_metrics (
+    court               text NOT NULL,
+    case_key            text NOT NULL,
+    enquiry_id          text NOT NULL,
+    year                integer,
+    kind                text NOT NULL DEFAULT '',
+    outcome             text NOT NULL,              -- open / disposed / allowed / dismissed
+    provider_side       text NOT NULL DEFAULT '',   -- which party is the hospital/doctor: complainant / respondent / ''
+    label               text NOT NULL DEFAULT '',   -- medical / not_medical / unclear / ''
+    hospitals           text NOT NULL DEFAULT '',
+    n_hearings          integer NOT NULL,
+    n_held              integer NOT NULL,
+    first_hearing       date,
+    last_hearing        date,
+    n_gaps              integer NOT NULL,
+    median_gap_days     integer,
+    max_gap_days        integer,
+    time_asked_patient  integer NOT NULL,           -- hearings where the record says the patient side asked for time
+    time_asked_hospital integer NOT NULL,
+    absent_patient      integer NOT NULL,
+    absent_hospital     integer NOT NULL,
+    computed_at         timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (court, case_key)
+);
+
+CREATE TABLE IF NOT EXISTS hearing_metrics (
+    id              bigserial PRIMARY KEY,
+    court           text NOT NULL,
+    case_key        text NOT NULL,
+    hearing_date    date,
+    held            boolean NOT NULL,
+    gap_days        integer,                        -- days since the previous hearing day (NULL for the first)
+    time_asked_by   text NOT NULL DEFAULT '',       -- patient / hospital / both / '' (not stated, or provider unknown)
+    absent_side     text NOT NULL DEFAULT '',
+    provider_side   text NOT NULL DEFAULT '',
+    from_history    boolean NOT NULL DEFAULT false  -- the hearing is known only from the portal's history, not a cause list
+);
+CREATE INDEX IF NOT EXISTS hearing_metrics_case ON hearing_metrics (court, case_key);
