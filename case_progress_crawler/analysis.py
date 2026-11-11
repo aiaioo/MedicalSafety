@@ -549,6 +549,9 @@ STAGE_RULES = [
 ]
 DISMISS_RE = re.compile(r"(?:complaint|case|enquiry|inquiry)?\s*(?:is|are|stands?|was|hereby)\s+(?:hereby\s+)?dismissed|dismissed\s+(?:for|as)\b|dismiss(?:al)?\s+of\s+(?:the\s+)?complaint", re.I)
 DISPOSE_RE = re.compile(r"(?:is|are|stands?|was|hereby)\s+(?:hereby\s+)?(?:disposed|closed|dropped|withdrawn)|disposed\s+of", re.I)
+WITHDRAW_RE = re.compile(r"withdr[ae]w|withdrawn", re.I)  # "dismissed as withdrawn", "inquiry ... is withdrawn": the complaint ended by withdrawal
+# "closed" of a stage ("the stage of cr. ex. of R1 to 5 is closed") is not the complaint ending
+STAGE_CLOSED_RE = re.compile(r"\bstage\b[^.]{0,60}\bclosed\b", re.I)
 CONDITIONAL_RE = re.compile(r"failing\s+which|otherwise|if\s+(?:the\s+)?(?:complainant|respondent)|will\s+be\s+dismissed|shall\s+be\s+dismissed|may\s+be\s+dismissed", re.I)
 
 
@@ -559,9 +562,13 @@ def classify(text):
         return tags, details
     terminal = []
     for s in sentences(text):
-        if DISMISS_RE.search(s) and not CONDITIONAL_RE.search(s):
+        if CONDITIONAL_RE.search(s):
+            continue
+        if (DISMISS_RE.search(s) or DISPOSE_RE.search(s)) and WITHDRAW_RE.search(s):
+            terminal.append("complaint_withdrawn")  # before dismissed/disposed: "dismissed as withdrawn" is a withdrawal
+        elif DISMISS_RE.search(s):
             terminal.append("complaint_dismissed")
-        if DISPOSE_RE.search(s) and not CONDITIONAL_RE.search(s):
+        elif DISPOSE_RE.search(s) and not STAGE_CLOSED_RE.search(s):
             terminal.append("complaint_disposed")
     tags.extend(dict.fromkeys(terminal))
     for tag, rx in STAGE_RULES:
@@ -717,7 +724,7 @@ def build(files, circulars=()):
         last = hearings[-1] if hearings else None
         status, status_since = "open", hearings[0]["date"] if hearings else None
         for h in reversed(hearings):
-            for t in ("complaint_dismissed", "complaint_disposed"):
+            for t in ("complaint_withdrawn", "complaint_dismissed", "complaint_disposed"):
                 if t in h["next_stage_tags"]:
                     status = t.replace("complaint_", "")
                     status_since = next(x["date"] for x in hearings if t in x["next_stage_tags"])  # first hearing recording it

@@ -56,7 +56,7 @@ def outcome_of(row, status_doc):
     """open / disposed / allowed / dismissed / withdrawn / settled / returned: the KMC's own status, or for a
     consumer case the portal's case stage; a bare "DISPOSED OFF" is refined from the disposing hearing's text."""
     if row["court"] == "kmc":
-        return row["status"] if row["status"] in ("disposed", "dismissed") else "open"
+        return row["status"] if row["status"] in ("disposed", "dismissed", "withdrawn") else "open"
     stage = ((status_doc or {}).get("caseStage") or "").strip().upper()
     outcome = CONSUMER_OUTCOMES.get(stage, "open")
     if outcome == "disposed":
