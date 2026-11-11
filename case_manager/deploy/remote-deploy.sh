@@ -5,6 +5,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 APP_DIR=${APP_DIR:-/opt/case_manager}
+CRAWLER_DIR=${CRAWLER_DIR:-/opt/case_progress_crawler}
 ENV_FILE=/etc/case-manager/case-manager.env
 BACKUP_DIR=/var/backups/case-manager
 SERVICE=case-manager
@@ -14,6 +15,7 @@ BASELINE=26
 
 cd "$APP_DIR"
 chown -R -h case-manager:case-manager .
+[ -d "$CRAWLER_DIR" ] && chown -R -h case-manager:case-manager "$CRAWLER_DIR"
 
 echo "--- Python dependencies"
 sudo -u case-manager .venv/bin/pip install --quiet -r requirements.txt
@@ -63,6 +65,20 @@ if [ ${#pending[@]} -gt 0 ]; then
   done
 else
   echo "no new migrations"
+fi
+
+# The case tracker (app.py mounts it at /case_tracker/) keeps its data in its own
+# database, named by CASE_PROGRESS_DATABASE_URL in the env file. Creating that
+# database and its role is a one-off by hand (like case_manager's); this only
+# makes sure its tables exist (idempotent). A problem here warns -- it doesn't stop the deploy.
+echo "--- Case tracker database"
+if [ ! -d "$CRAWLER_DIR" ]; then
+  echo "no $CRAWLER_DIR: the case tracker is not mounted"
+elif ! grep -q '^CASE_PROGRESS_DATABASE_URL=' "$ENV_FILE"; then
+  echo "WARNING: CASE_PROGRESS_DATABASE_URL isn't in $ENV_FILE, so the case tracker has no database yet" >&2
+else
+  (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && sudo -E -u case-manager "$APP_DIR/.venv/bin/python" progress_storage.py init) \
+    || echo "WARNING: couldn't create the case tracker's tables (does the database exist?)" >&2
 fi
 
 echo "--- Restarting $SERVICE"

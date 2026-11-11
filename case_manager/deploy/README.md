@@ -75,11 +75,13 @@ from that header. `X-Forwarded-For`/`-Proto` pair with `TRUSTED_PROXY_HOPS=1`.
 same process and behind the same sign-in. It looks for the crawler next to this folder (or in `$CASE_PROGRESS_DIR`)
 and, if `viewer.py` isn't there, just doesn't mount it. To use it on the droplet:
 
-- put the crawler's code beside `/opt/case_manager` (and its `pdfs/` and `case_details/` data, which the viewer reads
-  by path) -- `deploy.sh` doesn't ship them yet;
+- `deploy.sh` copies the crawler's committed code to `/opt/case_progress_crawler`, beside `/opt/case_manager`, and
+  leaves its data there alone (`pdfs/`, `case_details/`, ...). It does not copy that data or the database contents:
+  load them onto the droplet separately, or the tracker's pages will be empty;
 - give the crawler's database its own variable, `CASE_PROGRESS_DATABASE_URL`, in
-  `/etc/case-manager/case-manager.env` (default `postgresql:///case_progress`; `DATABASE_URL` is this app's);
-- `pip install -r requirements.txt` again (the crawler's modules need `requests`, `beautifulsoup4` and `pypdf`).
+  `/etc/case-manager/case-manager.env` (default `postgresql:///case_progress`; `DATABASE_URL` is this app's; see `case-manager.env.example`), after creating
+  that database and role once by hand -- each deploy then creates its tables;
+- the Python dependencies (the crawler's modules need `requests`, `beautifulsoup4` and `pypdf`) are installed by the deploy.
 
 ## Outgoing email (Postmark)
 
