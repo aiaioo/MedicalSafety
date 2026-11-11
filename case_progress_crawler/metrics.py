@@ -2,7 +2,7 @@
 """Labels for cases and hearings, stored so the numbers can be sliced any way in SQL.
 
 Two tables (see db/schema.sql), rebuilt wholesale by `python metrics.py` (the daily crawl runs it after the analyses):
-  case_metrics     one row per case: outcome (open / disposed / allowed / dismissed), which side is the hospital or doctor,
+  case_metrics     one row per case: outcome (open / disposed / allowed / dismissed / withdrawn / settled / returned), which side is the hospital or doctor,
                    hospitals, years, hearing counts, days between hearings, adjournments by patient / hospital side.
   hearing_metrics  one row per hearing: the days since the previous hearing day, and which side asked for time or was
                    absent, as far as the court's recorded text says (never guessed: '' when it does not say).
@@ -20,7 +20,8 @@ from collections import Counter
 
 import progress_storage as storage
 
-OUTCOMES = [("open", "Still open"), ("disposed", "Disposed"), ("allowed", "Allowed"), ("dismissed", "Dismissed")]
+OUTCOMES = [("open", "Still open"), ("disposed", "Disposed"), ("allowed", "Allowed"), ("dismissed", "Dismissed"),
+            ("withdrawn", "Withdrawn"), ("settled", "Settled"), ("returned", "Returned or transferred")]
 # the e-Jagriti case stage of a closed consumer case; a bare "DISPOSED OFF" does not say who won
 CONSUMER_OUTCOMES = {"DISPOSED OFF": "disposed", "ALLOWED": "allowed", "DISMISSED": "dismissed",
                      "DISMISSED IN NON-PROSECUTION": "dismissed"}
@@ -31,11 +32,39 @@ TIME_ASKED = re.compile(r"(pray|seek|sought|request|ask)\w*\s+(for\s+)?(some\s+|
 ABSENT = re.compile(r"\babsent\b|not present|no representation|remained absent|called out.{0,20}none", re.I)
 
 
+SETTLED = re.compile(r"settle|compromise|fully satisfied|memo of satisfaction", re.I)
+WITHDRAWN = re.compile(r"withdr[ae]w|withdrawn", re.I)
+ALLOWED = re.compile(r"^\W*allowed\b|\b(partly|part)\b[^.]{0,15}\ballowed\b|\ballowed\b[^.]{0,10}\b(partly|in part)\b|\b(complaint|appeal|petition|revision|application|case)\b[^.]{0,60}\ballowed\b", re.I)
+DISMISSED = re.compile(r"dismiss", re.I)
+RETURNED = re.compile(r"\breturn(ed)?\b.{0,40}\bcomplain|tr[a-z]{0,3}sferred to|\btransfer(red)? (the )?(case|complaint)|\bjurisdiction", re.I)
+
+
+def disposal_outcome(text):
+    """How a case the portal calls "DISPOSED OFF" ended, from the text of the hearing that disposed of it:
+    settled / withdrawn / allowed / dismissed / returned, else 'disposed' (the text does not say). Settlement and
+    withdrawal come first ("settled out of court and withdrawn", "dismissed as withdrawn"); a partly allowed
+    complaint counts as allowed."""
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]*>|&nbsp;", " ", text or ""))
+    for outcome, rx in (("settled", SETTLED), ("withdrawn", WITHDRAWN), ("allowed", ALLOWED), ("dismissed", DISMISSED),
+                        ("returned", RETURNED)):
+        if rx.search(text):
+            return outcome
+    return "disposed"
+
+
 def outcome_of(row, status_doc):
-    """open / disposed / allowed / dismissed: the KMC's own status, or the portal's case stage for a consumer case."""
+    """open / disposed / allowed / dismissed / withdrawn / settled / returned: the KMC's own status, or for a
+    consumer case the portal's case stage; a bare "DISPOSED OFF" is refined from the disposing hearing's text."""
     if row["court"] == "kmc":
         return row["status"] if row["status"] in ("disposed", "dismissed") else "open"
-    return CONSUMER_OUTCOMES.get(((status_doc or {}).get("caseStage") or "").strip().upper(), "open")
+    stage = ((status_doc or {}).get("caseStage") or "").strip().upper()
+    outcome = CONSUMER_OUTCOMES.get(stage, "open")
+    if outcome == "disposed":
+        final = [h for h in (status_doc or {}).get("caseHearingDetails") or []
+                 if (h.get("caseStage") or "").strip().upper() == stage and h.get("proceedingText")]
+        if final:
+            outcome = disposal_outcome(max(final, key=lambda h: h.get("dateOfHearing") or "")["proceedingText"])
+    return outcome
 
 
 def adjournment_sides(text):
