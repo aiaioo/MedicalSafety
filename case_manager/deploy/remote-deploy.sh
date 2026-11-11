@@ -77,7 +77,7 @@ if [ ! -d "$CRAWLER_DIR" ]; then
 elif ! grep -q '^CASE_PROGRESS_DATABASE_URL=' "$ENV_FILE"; then
   echo "WARNING: CASE_PROGRESS_DATABASE_URL isn't in $ENV_FILE, so the case tracker has no database yet" >&2
 else
-  (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && sudo -E -u case-manager "$APP_DIR/.venv/bin/python" progress_storage.py init) \
+  (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && runuser -u case-manager -- "$APP_DIR/.venv/bin/python" progress_storage.py init) \
     || echo "WARNING: couldn't create the case tracker's tables (does the database exist?)" >&2
 fi
 
