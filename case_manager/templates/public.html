@@ -165,13 +165,15 @@
 
     {% if case_tracker %}
     {# The case tracker's search box and "At a glance" analyses (shown on the Medical Safety website only -- see
-       app.py's _case_tracker_panel). The tracker itself is for signed-in users: its links and a search send a
-       visitor to sign in first, then on to where they were going. #}
+       app.py's _case_tracker_panel). The tracker itself is for signed-in users, so the search box is shown only to
+       them; the panel's links send a signed-out visitor to sign in first, then on to where they were going. #}
     <div class="public-hero-col public-case-tracker ct ct-public">
+      {% if g.user and not g.user.is_guest %}
       <form method="get" action="{{ url_for('case_tracker.home') }}" class="search">
         <input type="search" name="q" autocomplete="off" placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
         <button type="submit">Search</button>
       </form>
+      {% endif %}
       {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
     </div>
     {% endif %}

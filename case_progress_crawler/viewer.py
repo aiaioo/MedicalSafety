@@ -41,7 +41,7 @@ import statistics
 import threading
 from html import unescape
 from pathlib import Path
-from collections import Counter, defaultdict
+from collections import defaultdict
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -192,16 +192,12 @@ def analytics(cases, all_years=None):
         row["total"] += 1
         row[c["outcome"]] += 1
         row.setdefault("gaps", []).extend(c["gaps"])
-        row.setdefault("adj", Counter()).update(c["adjournments"])
         row.setdefault("with_hearings", 0)
         row["with_hearings"] += bool(c["gaps"])
     for row in per_court.values():
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
         row["long_gap_pct"] = round(100 * sum(g > 60 for g in row["gaps"]) / len(row["gaps"])) if row["gaps"] else None
         row["n_gaps"] = len(row["gaps"])
-        a = row["adj"]
-        row["adj_rows"] = [(label, a[("patient", k)], a[("hospital", k)]) for k, label in (("time", "Sought time"), ("absent", "Absent"))]
-        row["adj_total"] = sum(a.values())
         closed = row["total"] - row["open"]
         row["closed"] = closed
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
@@ -221,7 +217,10 @@ def analytics(cases, all_years=None):
         row[c["outcome"]] += 1
         row.setdefault("gaps", []).extend(c["gaps"])
     years = []
+    this_year = datetime.date.today().year
     for y in sorted(by_year, reverse=True):
+        if y > this_year:  # a case numbered for a year yet to come (a typo or a pre-registered number): no line for it
+            continue
         row = by_year[y]
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
@@ -320,9 +319,18 @@ def warm_cache():
 bp.record_once(lambda state: warm_cache())  # when the blueprint is registered, here or in the case manager
 
 
+def can_manage_links():
+    """Only the case manager's administrator sees or changes the hand-entered links on cases. (Run on its own, the
+    viewer has no sign-in, so there is no g.user and the links are open, as they always were.)"""
+    user = getattr(g, "user", None)
+    return user is None or bool(user.is_admin)
+
+
 def court_links(sel=None):
-    """Hand-entered links of the selected courts, by case key."""
+    """Hand-entered links of the selected courts, by case key -- none for anyone but the administrator."""
     links = {}
+    if not can_manage_links():
+        return links
     for c in court_ids(sel or selection()):
         links.update(storage.load_links(c))
     return links
@@ -367,7 +375,7 @@ def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
     return {"selections": SELECTIONS, "selected": selection(), "non_medical_count": hidden,
-            "show_non_medical": show_non_medical()}
+            "show_non_medical": show_non_medical(), "can_edit_links": can_manage_links()}
 
 
 @bp.route("/non-medical/<choice>")
@@ -701,6 +709,8 @@ def _link_from_form():
 
 @bp.post("/case/<case_key>/links")
 def add_link(case_key):
+    if not can_manage_links():
+        abort(403)
     if case_key not in load()["cases"]:
         abort(404)
     link = _link_from_form()
@@ -711,6 +721,8 @@ def add_link(case_key):
 
 @bp.post("/case/<case_key>/links/<int:i>/edit")
 def edit_link(case_key, i):
+    if not can_manage_links():
+        abort(403)
     court = court_of(case_key)
     links = storage.load_links(court).get(case_key, [])
     if i >= len(links):
@@ -722,6 +734,8 @@ def edit_link(case_key, i):
 
 @bp.post("/case/<case_key>/links/<int:i>/delete")
 def delete_link(case_key, i):
+    if not can_manage_links():
+        abort(403)
     court = court_of(case_key)
     links = storage.load_links(court).get(case_key, [])
     if i >= len(links):

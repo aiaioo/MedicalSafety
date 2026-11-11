@@ -22,6 +22,7 @@
    <b>Advocate(s) for the respondent:</b> {% for slug, name in c.advocate_links.respondent %}<a href="{{ url_for('case_tracker.advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}</p>
 {% endif %}
 
+{% if can_edit_links %}
 <h2 id="links">Links <button type="button" id="add-link-open" style="font-size:.8rem;vertical-align:middle">Add link</button></h2>
 <ul>
   {% for l in links %}
@@ -57,6 +58,7 @@
     d.addEventListener('click', function (e) { if (e.target === d) d.close(); });  // click on the backdrop
   })();
 </script>
+{% endif %}
 
 <h2>Hearings</h2>
 <ul class="timeline">
