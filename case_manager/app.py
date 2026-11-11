@@ -238,6 +238,9 @@ app.register_blueprint(key_gate.bp)
 app.register_blueprint(auth.bp)
 
 
+case_tracker_viewer = None  # the crawler's viewer module once mounted (see below)
+
+
 def _mount_case_tracker() -> None:
     """Serve the case progress crawler's viewer (../case_progress_crawler/viewer.py) under /case_tracker/, in this
     process, so it shares the sign-in above (it is just more routes behind the same gate). Its modules are put at the
@@ -251,6 +254,8 @@ def _mount_case_tracker() -> None:
     sys.path.append(str(crawler_dir))
     import viewer  # the crawler's
 
+    global case_tracker_viewer
+    case_tracker_viewer = viewer
     app.register_blueprint(viewer.bp, url_prefix="/case_tracker")
 
 
@@ -4882,6 +4887,23 @@ def current_website():
     return next((s for s in sites if s["name"] == DEFAULT_SITE_NAME), sites[0] if sites else None)
 
 
+CASE_TRACKER_PANEL_SITE = "medicalsafety.in"  # the only website whose public page shows the case tracker's panel
+
+
+def _case_tracker_panel(site) -> dict | None:
+    """The case tracker's "At a glance" numbers for the top of the public page -- on the Medical Safety website
+    only, and only if the tracker is mounted and has cases. A problem reading them leaves the panel out rather
+    than breaking the page."""
+    if site["id"] != CASE_TRACKER_PANEL_SITE or case_tracker_viewer is None:
+        return None
+    try:
+        stats = case_tracker_viewer.front_page_stats()
+    except Exception:
+        app.logger.exception("case tracker panel for the public page")
+        return None
+    return stats if stats["total"] else None
+
+
 @app.route("/public")
 def public_view():
     site = current_website()
@@ -4902,6 +4924,7 @@ def public_view():
         "public.html", website=site,
         sections=storage.public_sections(site["id"]),
         legal_tools=storage.public_legal_tools_section(site["id"]),
+        case_tracker=_case_tracker_panel(site),
     )
 
 

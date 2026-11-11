@@ -6,6 +6,7 @@
 <title>{{ website.name }}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% if case_tracker %}{% include "case_tracker/_panel_styles.html" %}{% endif %}
 <style>
   .public-page { max-width: 1500px; margin: 0 auto; padding: 0 20px 48px; }
   /* One grid holds the hero, the legal-tools panel and every section's
@@ -161,6 +162,19 @@
         {% if website.tagline %}<p>{{ website.tagline }}</p>{% endif %}
       </div>
     </div>
+
+    {% if case_tracker %}
+    {# The case tracker's search box and "At a glance" analyses (shown on the Medical Safety website only -- see
+       app.py's _case_tracker_panel). The tracker itself is for signed-in users: its links and a search send a
+       visitor to sign in first, then on to where they were going. #}
+    <div class="public-hero-col public-case-tracker ct ct-public">
+      <form method="get" action="{{ url_for('case_tracker.home') }}" class="search">
+        <input type="search" name="q" autocomplete="off" placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
+        <button type="submit">Search</button>
+      </form>
+      {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
+    </div>
+    {% endif %}
 
     <aside class="legal-tools">
       <h2>{{ legal_tools.title if legal_tools else "Legal tools" }}</h2>

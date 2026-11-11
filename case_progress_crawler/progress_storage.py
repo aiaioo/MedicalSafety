@@ -22,6 +22,7 @@ paths. Every read here is of the whole current state; every write is one transac
 import json
 import os
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -35,6 +36,7 @@ CASE_DETAILS_DIR = BASE_DIR / "case_details" / "consumer"  # <case key>/orders/<
 DEFAULT_DSN = "postgresql:///case_progress"
 
 _pool = None
+_pool_lock = threading.Lock()  # the viewer warms its cache in a thread while requests arrive: make the pool once
 
 
 # ---------------------------------------------------------------------------------------------
@@ -45,8 +47,11 @@ def _db():
     """A cursor in a transaction: committed when the block ends, rolled back if it raises."""
     global _pool
     if _pool is None:
-        _pool = ThreadedConnectionPool(1, 8, os.environ.get("CASE_PROGRESS_DATABASE_URL", DEFAULT_DSN))
-    conn = _pool.getconn()
+        with _pool_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(1, 8, os.environ.get("CASE_PROGRESS_DATABASE_URL", DEFAULT_DSN))
+    pool = _pool
+    conn = pool.getconn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             yield cur
@@ -55,7 +60,7 @@ def _db():
         conn.rollback()
         raise
     finally:
-        _pool.putconn(conn)
+        pool.putconn(conn)
 
 
 def _json(value):

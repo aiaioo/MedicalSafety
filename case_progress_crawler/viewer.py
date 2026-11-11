@@ -433,6 +433,14 @@ def home():
     return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, q=q, links=court_links(), stats=stats)
 
 
+def front_page_stats():
+    """The front page's "At a glance" numbers over every court, for a page outside the tracker (the case manager's
+    public page): the visitor's court and non-medical cookies don't apply there, so cases labelled not_medical are
+    left out."""
+    shown = [c for c in load("all")["ordered"] if c.get("label") != "not_medical"]
+    return analytics(shown, shown)
+
+
 @bp.route("/suggest")
 def suggest():
     """Autocomplete: up to 12 party, hospital and advocate names and case numbers containing the query."""

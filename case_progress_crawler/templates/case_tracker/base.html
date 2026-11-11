@@ -21,20 +21,6 @@
   .badge.open { background: #fff3cd; } .badge.dismissed { background: #f8d7da; } .badge.disposed { background: #d1e7dd; } .badge.withdrawn { background: #dcdcf0; }
   .badge.med { background: #d1e7dd; } .badge.notmed { background: #e2e3e5; color: #555; } .badge.unclear { background: #fff3cd; }
   .muted { color: #666; font-size: .9em; }
-  .panel { border: 1px solid #ddd; border-radius: .5rem; padding: .5rem 1rem 1rem; margin: 0 0 1.5rem; background: #fafafa; }
-  .panel h2 { font-size: 1.1rem; margin: .5rem 0; } .panel h3 { font-size: .95rem; margin: .5rem 0 .3rem; }
-  .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem 1.5rem; }
-  .bar { display: flex; height: .9rem; border-radius: .45rem; overflow: hidden; background: #eee; }
-  .seg.open { background: #f0c75e; } .seg.disposed { background: #6fb98f; } .seg.allowed { background: #2e8b57; } .seg.dismissed { background: #d9777f; } .seg.withdrawn { background: #8f8fc9; } .seg.settled { background: #5aa9c9; } .seg.returned { background: #b8a07a; }
-  .legend { list-style: none; padding: 0; margin: .4rem 0; font-size: .85em; }
-  .legend a { color: inherit; text-decoration: none; } .legend a:hover, .legend a.on { text-decoration: underline; font-weight: bold; }
-  details.info { display: inline; position: relative; } details.info summary { display: inline; cursor: pointer; color: #666; list-style: none; }
-  details.info summary::-webkit-details-marker { display: none; }
-  .infobox { position: absolute; left: 0; top: 1.4em; z-index: 5; width: 16rem; background: #fff; border: 1px solid #bbb; border-radius: .4rem; padding: .4rem .6rem; font-size: .85em; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
-  .legend i { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; margin-right: .35rem; }
-  table.years td { padding: .2rem .5rem; border: none; vertical-align: middle; } table.years tr.on { background: #e7eefa; }
-  table.adj { width: auto; font-size: .85em; } table.adj th, table.adj td { padding: .15rem .6rem; border: none; text-align: left; }
-  .tophosp { margin: 0; padding-left: 1.2rem; font-size: .9em; }
   .timeline { list-style: none; padding: 0; border-left: 3px solid #ccc; margin-left: .5rem; }
   .timeline li { position: relative; padding: 0 0 1.2rem 1.2rem; }
   .timeline li::before { content: ""; position: absolute; left: -.55rem; top: .35rem; width: .8rem; height: .8rem; border-radius: 50%; background: #0b5cad; }
@@ -53,14 +39,10 @@
   nav.courts { margin: .4rem 0 .8rem; }
   nav.courts a { padding: .25rem .8rem; border: 1px solid #0b5cad; border-radius: 1rem; text-decoration: none; margin-right: .3rem; font-size: .9em; }
   nav.courts a.on { background: #0b5cad; color: #fff; }
-  form.search { display: flex; gap: .5rem; margin: .5rem 0 1.2rem; }
-  form.search input { flex: 1; font-size: 1.2rem; padding: .7rem 1rem; border: 2px solid #0b5cad; border-radius: .5rem; }
-  form.search input:focus { outline: 3px solid #b6d4f5; }
-  form.search button { font-size: 1.2rem; padding: .7rem 1.5rem; border: none; border-radius: .5rem; background: #0b5cad; color: #fff; font-weight: 600; cursor: pointer; }
-  form.search button:hover { background: #094a8c; }
 </style>
+{% include "case_tracker/_panel_styles.html" %}
 </head>
-<body>
+<body class="ct">
 {% block top %}{% endblock %}
 <header><a href="{{ url_for('case_tracker.home') }}" title="Home" aria-label="Home"><svg class="home" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg> Case progress</a></header>
 <nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('case_tracker.select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% if non_medical_count %}<a href="{{ url_for('case_tracker.non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
