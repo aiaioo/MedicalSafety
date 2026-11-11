@@ -1,7 +1,13 @@
 {% from 'case_tracker/_macros.html' import label_badge %}
+{% set pg = paginate(cases) %}
+{% macro pager() %}{% if pg.pages > 1 %}<p class="pager muted">{{ pg.first }}–{{ pg.last }} of {{ pg.total }} ·
+  {% if pg.prev %}<a href="{{ pg.prev }}">&larr; Previous</a>{% endif %}
+  {% for n, href in pg.numbers %}{% if n == pg.page %}<b>{{ n }}</b>{% else %}<a href="{{ href }}">{{ n }}</a>{% endif %} {% endfor %}
+  {% if pg.next %}<a href="{{ pg.next }}">Next &rarr;</a>{% endif %}</p>{% endif %}{% endmacro %}
+{{ pager() }}
 <table>
   <tr><th>Case</th><th>Parties</th><th>Status</th><th>Last hearing</th>{% if sides %}<th>Representing</th>{% endif %}</tr>
-  {% for c in cases %}
+  {% for c in pg["items"] %}
   {% set cl = links.get(c.case_key, []) %}
   <tr>
     <td><a href="{{ url_for('case_tracker.case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %} {{ label_badge(c) }}</td>
@@ -21,3 +27,4 @@
   <tr><td colspan="{{ 5 if sides else 4 }}">No cases.</td></tr>
   {% endfor %}
 </table>
+{{ pager() }}

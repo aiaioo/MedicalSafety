@@ -5,6 +5,7 @@
 {% block body %}
 <form method="get" style="margin:1rem 0">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+  {% if outcome %}<input type="hidden" name="outcome" value="{{ outcome }}">{% endif %}
   <label>Year
     <select name="year" onchange="this.form.submit()">
       <option value="">All</option>
@@ -13,6 +14,7 @@
   </label>
   <noscript><button>Filter</button></noscript>
   <span class="muted">{{ cases|length }} cases</span>
+  {% if outcome %}<span class="tag">{{ outcome_label }}</span> <a href="{{ url_for('case_tracker.home', year=year, q=q or None) }}">Clear filter</a>{% endif %}
   · <a href="{{ url_for('case_tracker.hearings', year=year) }}">Hearings by date</a>
   · <a href="{{ url_for('case_tracker.hospitals') }}">Hospitals</a>
   · <a href="{{ url_for('case_tracker.advocates') }}">Advocates</a>
@@ -28,10 +30,11 @@
         {% for k, label, n, pct in c.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
       </div>
       <ul class="legend">
-        {% for k, label, n, pct in c.bars %}<li><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</li>{% endfor %}
+        {% for k, label, n, pct in c.bars %}<li><a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases"><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</a></li>{% endfor %}
       </ul>
-      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('disposed','disposed')] if c[k] %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
-      {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} days between hearings; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).</p>{% endif %}
+      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('disposed','disposed')] if c[k] %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}">{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} day gaps; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).
+        <details class="info"><summary title="What is a gap?">ⓘ</summary><span class="infobox">A gap is the number of days between one hearing day and the next in the same case.</span></details></p>{% endif %}
       {% if c.adj_total %}
       <table class="adj"><tr><th></th><th>Patient side</th><th>Hospital side</th></tr>
         {% for label, pt, hs in c.adj_rows %}<tr><td>{{ label }}</td><td>{{ pt }}</td><td>{{ hs }}</td></tr>{% endfor %}
@@ -57,7 +60,7 @@
       <td><a href="{{ url_for('case_tracker.home', year=y.year, q=q or None) }}">{{ y.year }}</a></td>
       <td class="muted">{{ y.total }}</td>
       <td style="width:60%"><div class="bar">{% for k, label, n, pct in y.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}</div></td>
-      <td class="muted">{{ y.open }} open · {{ y.total - y.open }} closed{% if y.median_gap is not none %} · {{ y.median_gap }}d between hearings{% endif %}</td>
+      <td class="muted">{{ y.open }} open · {{ y.total - y.open }} closed{% if y.median_gap is not none %} · {{ y.median_gap }}d gaps{% endif %}</td>
     </tr>
     {% endfor %}
   </table>

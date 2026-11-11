@@ -24,6 +24,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 import progress_storage as storage
 
@@ -38,10 +39,15 @@ RECENT = timedelta(days=3)  # a hearing this recent with no order is asked about
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
 
 
+@lru_cache(maxsize=None)
+def _india_date(utc_timestamp):
+    return (datetime.strptime(utc_timestamp, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+
+
 def history_hearing_dates(history):
     """The dates (YYYY-MM-DD, India time) of the held hearings in a history list; the portal gives UTC
     timestamps, 5:30 behind, e.g. 2026-11-04T18:30:00.000Z is the hearing of 2026-11-05."""
-    return [(datetime.strptime(h["dateOfAction"][:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    return [_india_date(h["dateOfAction"][:19])
             for h in history or [] if h.get("dateOfAction") and (h.get("actionTaken") or "").startswith("Hearing")]
 
 

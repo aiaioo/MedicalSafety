@@ -199,7 +199,7 @@ def analytics(cases, all_years=None):
         row["long_gap_pct"] = round(100 * sum(g > 60 for g in row["gaps"]) / len(row["gaps"])) if row["gaps"] else None
         row["n_gaps"] = len(row["gaps"])
         a = row["adj"]
-        row["adj_rows"] = [(label, a[("patient", k)], a[("hospital", k)]) for k, label in (("time", "Asked for time"), ("absent", "Absent"))]
+        row["adj_rows"] = [(label, a[("patient", k)], a[("hospital", k)]) for k, label in (("time", "Sought time"), ("absent", "Absent"))]
         row["adj_total"] = sum(a.values())
         closed = row["total"] - row["open"]
         row["closed"] = closed
@@ -387,6 +387,21 @@ def matches(c, q):
     return all(any(t.startswith(w) for t in ids) for w in id_tokens(q))
 
 
+PAGE_SIZE = 50
+
+
+@bp.app_template_global()
+def paginate(cases):
+    """One page (?page=N) of a case list, and the links to the others."""
+    pages = max(1, -(-len(cases) // PAGE_SIZE))
+    page = min(max(request.args.get("page", 1, type=int), 1), pages)
+    link = lambda n: url_for(request.endpoint, **{**request.view_args, **request.args.to_dict(), "page": n})
+    return {"items": cases[(page - 1) * PAGE_SIZE:page * PAGE_SIZE], "page": page, "pages": pages, "total": len(cases),
+            "first": (page - 1) * PAGE_SIZE + 1, "last": min(page * PAGE_SIZE, len(cases)),
+            "prev": link(page - 1) if page > 1 else None, "next": link(page + 1) if page < pages else None,
+            "numbers": [(n, link(n)) for n in sorted({1, pages, *range(page - 2, page + 3)}) if 1 <= n <= pages]}
+
+
 @bp.route("/")
 def home():
     data = load()
@@ -394,7 +409,13 @@ def home():
     q = request.args.get("q", "").strip()
     in_scope = [c for c in data["ordered"] if visible(c) and (not q or matches(c, q))]
     cases = [c for c in in_scope if year is None or c["year"] == year]
-    return render_template("case_tracker/home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links(), stats=analytics(cases, in_scope))
+    outcome = request.args.get("outcome")
+    if outcome not in {k for k, _ in OUTCOMES}:
+        outcome = None
+    stats = analytics(cases, in_scope)
+    if outcome:
+        cases = [c for c in cases if c["outcome"] == outcome]
+    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, q=q, links=court_links(), stats=stats)
 
 
 @bp.route("/suggest")

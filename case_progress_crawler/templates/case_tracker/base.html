@@ -27,6 +27,10 @@
   .bar { display: flex; height: .9rem; border-radius: .45rem; overflow: hidden; background: #eee; }
   .seg.open { background: #f0c75e; } .seg.disposed { background: #6fb98f; } .seg.allowed { background: #2e8b57; } .seg.dismissed { background: #d9777f; }
   .legend { list-style: none; padding: 0; margin: .4rem 0; font-size: .85em; }
+  .legend a { color: inherit; text-decoration: none; } .legend a:hover, .legend a.on { text-decoration: underline; font-weight: bold; }
+  details.info { display: inline; position: relative; } details.info summary { display: inline; cursor: pointer; color: #666; list-style: none; }
+  details.info summary::-webkit-details-marker { display: none; }
+  .infobox { position: absolute; left: 0; top: 1.4em; z-index: 5; width: 16rem; background: #fff; border: 1px solid #bbb; border-radius: .4rem; padding: .4rem .6rem; font-size: .85em; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
   .legend i { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; margin-right: .35rem; }
   table.years td { padding: .2rem .5rem; border: none; vertical-align: middle; } table.years tr.on { background: #e7eefa; }
   table.adj { width: auto; font-size: .85em; } table.adj th, table.adj td { padding: .15rem .6rem; border: none; text-align: left; }
