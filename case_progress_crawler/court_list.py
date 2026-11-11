@@ -12,7 +12,7 @@ Usage:  python court_list.py
 import sys
 from datetime import date
 
-import storage
+import progress_storage as storage
 from courts import all_courts, ejagriti, log
 
 

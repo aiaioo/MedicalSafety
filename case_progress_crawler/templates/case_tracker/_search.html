@@ -11,7 +11,7 @@
   box.addEventListener('input', () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
-      const r = await fetch('{{ url_for("suggest") }}?q=' + encodeURIComponent(box.value));
+      const r = await fetch('{{ url_for("case_tracker.suggest") }}?q=' + encodeURIComponent(box.value));
       list.replaceChildren(...(await r.json()).map(s => Object.assign(document.createElement('option'), {value: s})));
     }, 150);
   });

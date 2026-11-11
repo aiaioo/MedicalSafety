@@ -1,10 +1,10 @@
-{% extends "base.html" %}
+{% extends "case_tracker/base.html" %}
 {% block title %}{{ a.name }}{% endblock %}
 {% block body %}
-<p><a href="{{ url_for('advocates') }}">&larr; Advocates</a></p>
+<p><a href="{{ url_for('case_tracker.advocates') }}">&larr; Advocates</a></p>
 <h1>{{ a.name }}</h1>
 <p class="muted">{{ a.cases|length }} case{{ 's' if a.cases|length != 1 }}: {{ complainant }} for the complainant, {{ respondent }} for the respondent ; by party type, {{ patient }} for the patient, {{ hospital }} for the hospital/doctor, {{ other_org }} for an insurer or other organisation</p>
 {% set cases = a.cases %}
 {% set sides = a.sides %}
-{% include "_cases_table.html" %}
+{% include "case_tracker/_cases_table.html" %}
 {% endblock %}

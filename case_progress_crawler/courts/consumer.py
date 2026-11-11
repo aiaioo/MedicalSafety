@@ -21,7 +21,7 @@ asked for again on the next run.
 import time
 from datetime import date, datetime, timedelta
 
-import storage
+import progress_storage as storage
 
 from . import Court, log, make_session
 from . import ejagriti

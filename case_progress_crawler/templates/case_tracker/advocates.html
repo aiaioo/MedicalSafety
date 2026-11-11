@@ -1,18 +1,18 @@
-{% extends "base.html" %}
+{% extends "case_tracker/base.html" %}
 {% block title %}Advocates{% endblock %}
 {% block body %}
-<p><a href="{{ url_for('home') }}">&larr; All cases</a></p>
+<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>
 <h1>Advocates</h1>
 <p class="muted">{{ advocates|length }} advocates and law firms named in the consumer cases, on the cause lists and in the case details.
   The hospital/doctor side of each case is worked out from the party names (hospital, clinic, Dr. ...); where neither side looks medical the respondent is assumed, and where both do it is left unclear. Names are as the court prints them, so one advocate may still appear under a spelling that was not merged.</p>
-<form class="search" method="get" action="{{ url_for('advocates') }}">
+<form class="search" method="get" action="{{ url_for('case_tracker.advocates') }}">
   <input type="search" name="q" value="{{ q }}" placeholder="Filter advocates" aria-label="Filter advocates">
   <button type="submit">Filter</button>
 </form>
 <table>
   <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th></tr>
   {% for a in advocates %}
-  <tr><td><a href="{{ url_for('advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td></tr>
+  <tr><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td></tr>
   {% else %}
   <tr><td colspan="7">No advocates.</td></tr>
   {% endfor %}

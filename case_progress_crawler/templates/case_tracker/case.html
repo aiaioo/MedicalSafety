@@ -1,9 +1,9 @@
-{% extends "base.html" %}
+{% extends "case_tracker/base.html" %}
 {% block title %}{{ c.enquiry_id }}{% endblock %}
-{% from '_macros.html' import label_badge %}
+{% from 'case_tracker/_macros.html' import label_badge %}
 {% macro order_block(items) %}
   {% for o in items %}
-  <p><b>Order:</b> <a href="{{ url_for('order_file', case_key=c.case_key, name=o.name) }}" target="_blank" rel="noopener noreferrer">{{ o.label }} ({{ o.ext|upper }})</a></p>
+  <p><b>Order:</b> <a href="{{ url_for('case_tracker.order_file', case_key=c.case_key, name=o.name) }}" target="_blank" rel="noopener noreferrer">{{ o.label }} ({{ o.ext|upper }})</a></p>
   {% endfor %}
   {% for o in items %}
   <details><summary class="muted">Text of {{ o.label|lower }}</summary>
@@ -11,15 +11,15 @@
   {% endfor %}
 {% endmacro %}
 {% block body %}
-<p><a href="{{ url_for('home', year=c.year) }}">&larr; {{ c.year }} cases</a></p>
+<p><a href="{{ url_for('case_tracker.home', year=c.year) }}">&larr; {{ c.year }} cases</a></p>
 <h1>{{ c.enquiry_id }} <span class="badge {{ c.status }}">{{ c.status }}</span> {{ label_badge(c) }}</h1>
 {% if c.status_since %}<p class="muted">Status since {{ c.status_since }}</p>{% endif %}
 {% if c.label_reason %}<p class="muted">Labelled {{ c.label.replace('_', ' ') }}: {{ c.label_reason }}</p>{% endif %}
 <p><b>Complainant(s):</b> {{ c.complainants|join('; ') or '—' }}<br>
    <b>Respondent(s):</b> {{ c.respondents|join('; ') or '—' }}</p>
 {% if c.advocate_links.complainant or c.advocate_links.respondent %}
-<p><b>Advocate(s) for the complainant:</b> {% for slug, name in c.advocate_links.complainant %}<a href="{{ url_for('advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}<br>
-   <b>Advocate(s) for the respondent:</b> {% for slug, name in c.advocate_links.respondent %}<a href="{{ url_for('advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}</p>
+<p><b>Advocate(s) for the complainant:</b> {% for slug, name in c.advocate_links.complainant %}<a href="{{ url_for('case_tracker.advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}<br>
+   <b>Advocate(s) for the respondent:</b> {% for slug, name in c.advocate_links.respondent %}<a href="{{ url_for('case_tracker.advocate', slug=slug) }}">{{ name }}</a>{{ '; ' if not loop.last }}{% else %}—{% endfor %}</p>
 {% endif %}
 
 <h2 id="links">Links <button type="button" id="add-link-open" style="font-size:.8rem;vertical-align:middle">Add link</button></h2>
@@ -27,10 +27,10 @@
   {% for l in links %}
   <li><span class="{{ 'hasnote' if l.note }}"><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.text }}</a>
     {% if l.note %}<span class="muted">ⓘ</span><span class="popup">{{ l.note }}</span>{% endif %}</span>
-    <form method="post" action="{{ url_for('delete_link', case_key=c.case_key, i=loop.index0) }}" style="display:inline"
+    <form method="post" action="{{ url_for('case_tracker.delete_link', case_key=c.case_key, i=loop.index0) }}" style="display:inline"
           onsubmit="return confirm('Remove this link?')"><button type="submit" class="icon" title="Remove link" aria-label="Remove link">🗑</button></form>
     <details style="display:inline"><summary class="muted" style="display:inline;cursor:pointer">edit</summary>
-      <form method="post" action="{{ url_for('edit_link', case_key=c.case_key, i=loop.index0) }}">
+      <form method="post" action="{{ url_for('case_tracker.edit_link', case_key=c.case_key, i=loop.index0) }}">
         <input name="url" value="{{ l.url }}" required size="40">
         <input name="text" value="{{ l.text }}" placeholder="Link text" size="30">
         <input name="note" value="{{ l.note }}" placeholder="Pop-up note" size="30">
@@ -41,7 +41,7 @@
   {% endfor %}
 </ul>
 <dialog id="add-link-dialog">
-  <form method="post" action="{{ url_for('add_link', case_key=c.case_key) }}" class="addlink">
+  <form method="post" action="{{ url_for('case_tracker.add_link', case_key=c.case_key) }}" class="addlink">
     <h3>Add link</h3>
     <label>URL<br><input name="url" placeholder="https://…" required size="50"></label>
     <label>Link text<br><input name="text" placeholder="Link text" size="50"></label>
@@ -62,7 +62,7 @@
 <ul class="timeline">
   {% for h in hearings %}
   <li class="{{ 'notheld' if h.held == 'no' }}">
-    <h3>{% if h.from_order or h.from_history %}{{ h.hearing_date }}{% else %}<a href="{{ url_for('day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% endif %}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
+    <h3>{% if h.from_order or h.from_history %}{{ h.hearing_date }}{% else %}<a href="{{ url_for('case_tracker.day', date=h.hearing_date) }}">{{ h.hearing_date }}</a>{% endif %}{% if h.hearing_time %} {{ h.hearing_time }}{% endif %}
       {% if h.list %}<span class="muted">· list {{ h.list }}</span>{% endif %}
       {% if h.history %}<span class="muted">· {{ h.history.label }}</span>{% endif %}
       {% if h.from_order %}<span class="muted">· from the order (not in the hearing history or a cause list)</span>{% elif h.from_history %}<span class="muted">· from the hearing history (not on a cause list)</span>{% endif %}
@@ -71,9 +71,9 @@
     {% if h.purpose_text %}<p><b>Purpose:</b> {{ h.purpose_text }}</p>{% endif %}
     {% if h.cross_examination_of %}<p><b>Cross-examination of:</b> {{ h.cross_examination_of }}</p>{% endif %}
     {% if h.outcome_text %}<p><b>What happened:</b> {{ h.outcome_text }}</p>{% endif %}
-    {% if h.next_date %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_date) }}">{{ h.next_date }}</a>{% if h.postponed_from %} <span class="muted">(postponed by circular from <a href="{{ url_for('day', date=h.postponed_from) }}">{{ h.postponed_from }}</a>)</span>{% endif %}</p>
-    {% elif h.history and h.history.next %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.history.next) }}">{{ h.history.next }}</a></p>
-    {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
+    {% if h.next_date %}<p><b>Next date:</b> <a href="{{ url_for('case_tracker.day', date=h.next_date) }}">{{ h.next_date }}</a>{% if h.postponed_from %} <span class="muted">(postponed by circular from <a href="{{ url_for('case_tracker.day', date=h.postponed_from) }}">{{ h.postponed_from }}</a>)</span>{% endif %}</p>
+    {% elif h.history and h.history.next %}<p><b>Next date:</b> <a href="{{ url_for('case_tracker.day', date=h.history.next) }}">{{ h.history.next }}</a></p>
+    {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('case_tracker.day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
     {% if h.record %}<p><b>Court's record:</b></p><div class="record">{{ h.record }}</div>{% endif %}
     {{ order_block(orders.get(h.hearing_date, [])) }}
     {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}

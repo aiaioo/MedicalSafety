@@ -16,3 +16,9 @@ gunicorn>=22.0
 
 # File encryption -- see encryptor.py.
 cryptography>=42.0
+
+# The case tracker (../case_progress_crawler/viewer.py, mounted at /case_tracker
+# -- see app.py's _mount_case_tracker) imports the crawler's modules, which need these.
+requests>=2.31
+beautifulsoup4>=4.12
+pypdf>=4.0

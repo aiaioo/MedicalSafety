@@ -1,6 +1,6 @@
-{% extends "base.html" %}
+{% extends "case_tracker/base.html" %}
 {% block top %}
-{% include "_search.html" %}
+{% include "case_tracker/_search.html" %}
 {% endblock %}
 {% block body %}
 <form method="get" style="margin:1rem 0">
@@ -13,10 +13,10 @@
   </label>
   <noscript><button>Filter</button></noscript>
   <span class="muted">{{ cases|length }} cases</span>
-  · <a href="{{ url_for('hearings', year=year) }}">Hearings by date</a>
-  · <a href="{{ url_for('hospitals') }}">Hospitals</a>
-  · <a href="{{ url_for('advocates') }}">Advocates</a>
+  · <a href="{{ url_for('case_tracker.hearings', year=year) }}">Hearings by date</a>
+  · <a href="{{ url_for('case_tracker.hospitals') }}">Hospitals</a>
+  · <a href="{{ url_for('case_tracker.advocates') }}">Advocates</a>
 </form>
-{% include "_cases_table.html" %}
+{% include "case_tracker/_cases_table.html" %}
 
 {% endblock %}

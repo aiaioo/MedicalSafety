@@ -69,6 +69,18 @@ Certbot wrote; it is a record, not applied by deploy.sh). It must keep
 Case Plan) and the email sender from the domain the visitor used, and gets it
 from that header. `X-Forwarded-For`/`-Proto` pair with `TRUSTED_PROXY_HOPS=1`.
 
+## Case tracker
+
+`app.py` mounts the case progress crawler's viewer (`../case_progress_crawler/viewer.py`) at `/case_tracker/`, in the
+same process and behind the same sign-in. It looks for the crawler next to this folder (or in `$CASE_PROGRESS_DIR`)
+and, if `viewer.py` isn't there, just doesn't mount it. To use it on the droplet:
+
+- put the crawler's code beside `/opt/case_manager` (and its `pdfs/` and `case_details/` data, which the viewer reads
+  by path) -- `deploy.sh` doesn't ship them yet;
+- give the crawler's database its own variable, `CASE_PROGRESS_DATABASE_URL`, in
+  `/etc/case-manager/case-manager.env` (default `postgresql:///case_progress`; `DATABASE_URL` is this app's);
+- `pip install -r requirements.txt` again (the crawler's modules need `requests`, `beautifulsoup4` and `pypdf`).
+
 ## Outgoing email (Postmark)
 
 Password-reset, email-verification and notification emails go out through

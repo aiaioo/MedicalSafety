@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-off: copy the crawler's old data files into the PostgreSQL database (through storage.py).
+"""One-off: copy the crawler's old data files into the PostgreSQL database (through progress_storage.py).
 
 Reads storage/ (courts.json, <court>/state.json, links.json, the analysis CSVs and enquiries.json), causelists/consumer/
 and the JSON documents of case_details/consumer/<case key>/ (status, history, meta, classification, no_orders and
@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-import storage
+import progress_storage as storage
 
 OLD_STORAGE = storage.BASE_DIR / "storage"
 CAUSELISTS = storage.BASE_DIR / "causelists" / "consumer"

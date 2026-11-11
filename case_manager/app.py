@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import sys
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape, unescape
@@ -235,6 +236,25 @@ app.register_blueprint(key_gate.bp)
 # Sign-up/sign-in/sign-out, plus a before-request gate that keeps every other
 # route behind a signed-in session and sets g.user -- see auth.py.
 app.register_blueprint(auth.bp)
+
+
+def _mount_case_tracker() -> None:
+    """Serve the case progress crawler's viewer (../case_progress_crawler/viewer.py) under /case_tracker/, in this
+    process, so it shares the sign-in above (it is just more routes behind the same gate). Its modules are put at the
+    end of sys.path, so this app's own modules (storage ...) always win; the crawler keeps its database access in
+    progress_storage.py, with its own CASE_PROGRESS_DATABASE_URL. CASE_PROGRESS_DIR overrides where the crawler is;
+    if it isn't there (e.g. a deployment that ships only this app) the tracker is simply not mounted."""
+    crawler_dir = Path(os.environ.get("CASE_PROGRESS_DIR") or Path(__file__).resolve().parent.parent / "case_progress_crawler")
+    if not (crawler_dir / "viewer.py").is_file():
+        print(f"case tracker not mounted: {crawler_dir}/viewer.py not found")
+        return
+    sys.path.append(str(crawler_dir))
+    import viewer  # the crawler's
+
+    app.register_blueprint(viewer.bp, url_prefix="/case_tracker")
+
+
+_mount_case_tracker()
 
 UPLOAD_EXTENSIONS = {".pdf": "pdf"}
 

@@ -2,8 +2,9 @@
 
 Structured data lives in PostgreSQL (database `case_progress`, schema in db/schema.sql); nothing else in the
 project talks to the database or reads/writes data files -- they call the functions here, which take and return
-plain dicts, lists and strings. Set DATABASE_URL to use another database (default: postgresql:///case_progress);
-`python storage.py init` creates the tables, `python storage.py status` counts the rows.
+plain dicts, lists and strings. Set CASE_PROGRESS_DATABASE_URL to use another database (default: postgresql:///case_progress; not DATABASE_URL, which
+the case manager -- that mounts the viewer in its own process -- uses for its own database);
+`python progress_storage.py init` creates the tables, `python progress_storage.py status` counts the rows.
 
 In the database (by court id, e.g. "kmc", "consumer", where a function takes one):
   courts            court_list.py:       every known court, by city                      load_courts / save_courts
@@ -44,7 +45,7 @@ def _db():
     """A cursor in a transaction: committed when the block ends, rolled back if it raises."""
     global _pool
     if _pool is None:
-        _pool = ThreadedConnectionPool(1, 8, os.environ.get("DATABASE_URL", DEFAULT_DSN))
+        _pool = ThreadedConnectionPool(1, 8, os.environ.get("CASE_PROGRESS_DATABASE_URL", DEFAULT_DSN))
     conn = _pool.getconn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -309,4 +310,4 @@ if __name__ == "__main__":
     elif command == "status":
         status()
     else:
-        sys.exit("usage: python storage.py [init|status]")
+        sys.exit("usage: python progress_storage.py [init|status]")

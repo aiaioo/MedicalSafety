@@ -14,7 +14,7 @@ Inputs:  pdfs/kmc/pre_hearing/*.pdf      - pre-hearing PDFs: lists of cases for 
          pdfs/kmc/post_hearing/*.pdf    - post-hearing PDFs: outcome of a hearing and the next date/stage.
          Circulars announcing that a sitting is postponed to another date may sit
          in either folder; a next date that falls on a postponed sitting is moved to the new date.
-Outputs (in the database, via storage.py; rebuilt from scratch on every run, so re-running after
+Outputs (in the database, via progress_storage.py; rebuilt from scratch on every run, so re-running after
 the downloader fetches new PDFs updates them):
          enquiries        - everything, one object per enquiry
          status           - one row per enquiry: case_key, enquiry_id, status, date the status first appeared
@@ -39,7 +39,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date
 
-import storage
+import progress_storage as storage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COURT = "kmc"  # the analysis below parses KMC list layouts; another court would get its own parser

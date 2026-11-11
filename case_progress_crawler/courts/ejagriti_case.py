@@ -14,7 +14,7 @@ portal has changed (earlier versions are kept, as <date>_<kind>_v2.pdf ...). Cha
 likewise kept: the old copy is stored as a version.
 
 What is saved, and where, is up to a CaseDetailsPersister, so the downloader knows nothing about folders:
-StoragePersister hands them to storage.py (documents to the database, order files to disk).
+StoragePersister hands them to progress_storage.py (documents to the database, order files to disk).
 """
 
 import base64
@@ -25,7 +25,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
-import storage
+import progress_storage as storage
 
 from . import log, make_session
 from .ejagriti import API_BASE, TIMEOUT, USER_AGENT
@@ -87,7 +87,7 @@ class CaseDetailsPersister(ABC):
 
 
 class StoragePersister(CaseDetailsPersister):
-    """Keeps a case's details with storage.py: the JSON documents (status.json, history.json, meta.json,
+    """Keeps a case's details with progress_storage.py: the JSON documents (status.json, history.json, meta.json,
     classification.json, no_orders.json) and their earlier versions (versions/<stem>_<stamp>.json) in the
     database, the orders (orders/<date>_<kind>[_vN].pdf|html) as files."""
 

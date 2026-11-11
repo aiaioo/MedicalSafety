@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web UI over the analysis written by analysis.py (read through storage.py).
+"""Web UI over the analysis written by analysis.py (read through progress_storage.py).
 
   /                  all cases, newest year / highest sequence number first,
                      with status and collapsible links; ?year=YYYY filters by year
@@ -30,6 +30,8 @@ in the analysis status) are hidden from the lists, hospital counts and search, a
 "unclear" are shown, with a badge.
 
 Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
+On its own the pages are at / (as listed above). The case manager (../case_manager/app.py) mounts the same pages
+under /case_tracker/ in its own process, behind its sign-in, by registering this module's `bp` Blueprint.
 """
 
 import argparse
@@ -41,15 +43,17 @@ from collections import defaultdict
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-import storage
+import progress_storage as storage
 from courts.providers import MATCHER
 from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
 
-app = Flask(__name__)
+# The viewer is a Blueprint so the case manager can mount it (app.py registers it at /case_tracker); run on its
+# own (`python viewer.py`), it is mounted at "/" in a small Flask app of its own -- see create_app().
+bp = Blueprint("case_tracker", __name__, template_folder="templates", static_folder="static")
 COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
 SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
@@ -267,7 +271,33 @@ def court_of(case_key):
     return c["court"]
 
 
-@app.context_processor
+def _cookie_path():
+    """Where the viewer's cookies apply: "/" on its own, "/case_tracker/" when the case manager mounts it."""
+    return url_for("case_tracker.home")
+
+
+def _back_to(pages, prefixes=()):
+    """The page the visitor came from (path and query) if it is one of `pages`, or starts with one of `prefixes`
+    (paths relative to the viewer's own root, so they hold wherever it is mounted); otherwise the viewer's home."""
+    ref = urlparse(request.referrer or "")
+    root = _cookie_path()
+    rel = "/" + ref.path[len(root):] if ref.path.startswith(root) else None
+    if rel is not None and (rel in pages or rel.startswith(prefixes)):
+        return ref.path + ("?" + ref.query if ref.query else "")
+    return url_for("case_tracker.home")
+
+
+@bp.before_request
+def signed_in_accounts_only():
+    """Inside the case manager (which has already checked that someone is signed in, and set g.user) a key-session
+    guest -- someone holding a secret key but no account -- is sent to sign in: the tracker is not part of what a key
+    covers. On its own there is no g.user, so everyone gets in."""
+    user = getattr(g, "user", None)
+    if user is not None and user.is_guest:
+        return redirect(url_for("auth.signin"))
+
+
+@bp.context_processor
 def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
@@ -275,26 +305,24 @@ def selector():
             "show_non_medical": show_non_medical()}
 
 
-@app.route("/non-medical/<choice>")
+@bp.route("/non-medical/<choice>")
 def non_medical(choice):
     if choice not in ("show", "hide"):
         abort(404)
-    ref = urlparse(request.referrer or "")
-    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/", "/advocates/") or ref.path.startswith(("/day/", "/hospital/", "/advocate/")) else url_for("home")
+    back = _back_to(("/", "/hearings/", "/hospitals/", "/advocates/"), ("/day/", "/hospital/", "/advocate/"))
     resp = redirect(back)
-    resp.set_cookie("non_medical", choice, max_age=365 * 86400, samesite="Lax")
+    resp.set_cookie("non_medical", choice, max_age=365 * 86400, samesite="Lax", path=_cookie_path())
     return resp
 
 
-@app.route("/court/<sel>")
+@bp.route("/court/<sel>")
 def select_court(sel):
     if sel not in SELECTIONS:
         abort(404)
-    ref = urlparse(request.referrer or "")
     # back to the list the visitor was on; a case or hospital page may not exist under the new choice
-    back = ref.path + ("?" + ref.query if ref.query else "") if ref.path in ("/", "/hearings/", "/hospitals/", "/advocates/") else url_for("home")
+    back = _back_to(("/", "/hearings/", "/hospitals/", "/advocates/"))
     resp = redirect(back)
-    resp.set_cookie("court", sel, max_age=365 * 86400, samesite="Lax")
+    resp.set_cookie("court", sel, max_age=365 * 86400, samesite="Lax", path=_cookie_path())
     return resp
 
 
@@ -309,16 +337,16 @@ def matches(c, q):
     return all(any(t.startswith(w) for t in ids) for w in id_tokens(q))
 
 
-@app.route("/")
+@bp.route("/")
 def home():
     data = load()
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
     cases = [c for c in data["ordered"] if visible(c) and (year is None or c["year"] == year) and (not q or matches(c, q))]
-    return render_template("home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links())
+    return render_template("case_tracker/home.html", cases=cases, years=data["years"], year=year, q=q, links=court_links())
 
 
-@app.route("/suggest")
+@bp.route("/suggest")
 def suggest():
     """Autocomplete: up to 12 party, hospital and advocate names and case numbers containing the query."""
     q = request.args.get("q", "").strip().lower()
@@ -344,18 +372,18 @@ def visible_hospitals(data):
     return out
 
 
-@app.route("/hospitals/")
+@bp.route("/hospitals/")
 def hospitals():
     hs = sorted(visible_hospitals(load()), key=lambda h: (-len(h["cases"]), h["name"].lower()))
-    return render_template("hospitals.html", hospitals=hs)
+    return render_template("case_tracker/hospitals.html", hospitals=hs)
 
 
-@app.route("/hospital/<slug>")
+@bp.route("/hospital/<slug>")
 def hospital(slug):
     h = load()["hospitals"].get(slug)
     if h is None:
         abort(404)
-    return render_template("hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
+    return render_template("case_tracker/hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
 
 
 def represents(case, role):
@@ -364,7 +392,7 @@ def represents(case, role):
     return MATCHER.party_of(case["complainants"], case["respondents"], role)
 
 
-@app.context_processor
+@bp.context_processor
 def helpers():
     return {"represents": represents}
 
@@ -386,21 +414,21 @@ def visible_advocates(data):
     return out
 
 
-@app.route("/advocates/")
+@bp.route("/advocates/")
 def advocates():
     q = request.args.get("q", "").strip().lower()
     advs = [a for a in visible_advocates(load()) if not q or q in a["name"].lower()]
     advs.sort(key=lambda a: (-len(a["cases"]), a["name"].lower()))
-    return render_template("advocates.html", advocates=advs, q=q)
+    return render_template("case_tracker/advocates.html", advocates=advs, q=q)
 
 
-@app.route("/advocate/<slug>")
+@bp.route("/advocate/<slug>")
 def advocate(slug):
     a = load()["advocates"].get(slug)
     if a is None:
         abort(404)
     cases = [c for c in a["cases"] if visible(c)]
-    return render_template("advocate.html", a={**a, "cases": cases}, links=court_links(),
+    return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(),
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
                            respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
                            patient=sum(represents(c, r) == "patient" for c in cases for r in a["sides"][c["case_key"]]),
@@ -408,7 +436,7 @@ def advocate(slug):
                            other_org=sum(represents(c, r) in ("insurer", "organisation") for c in cases for r in a["sides"][c["case_key"]]))
 
 
-@app.route("/hearings/")
+@bp.route("/hearings/")
 def hearings():
     data = load()
     year = request.args.get("year")
@@ -420,17 +448,17 @@ def hearings():
         entries = [(c, h) for c, h in data["by_date"][d] if visible(c) and (not q or matches(c, q))]
         if entries:
             days.append((d, entries))
-    return render_template("hearings.html", days=days, years=data["hearing_years"], year=year, q=q)
+    return render_template("case_tracker/hearings.html", days=days, years=data["hearing_years"], year=year, q=q)
 
 
-@app.route("/day/<date>")
+@bp.route("/day/<date>")
 def day(date):
     try:
         datetime.date.fromisoformat(date)
     except ValueError:
         abort(404)
     entries = [(c, h) for c, h in load()["by_date"].get(date, []) if visible(c)]  # a future next date has no hearings yet
-    return render_template("day.html", date=date, entries=entries,
+    return render_template("case_tracker/day.html", date=date, entries=entries,
                            pdfs=pdfs_for_date(date) if PDF_COURT in court_ids(selection()) else [])
 
 
@@ -456,21 +484,21 @@ def _pdf_path(kind, name):
     return path
 
 
-@app.route("/pdf/<kind>/<name>")
+@bp.route("/pdf/<kind>/<name>")
 def pdf_view(kind, name):
     path = _pdf_path(kind, name)
     with fitz.open(path) as d:
         pages = d.page_count
-    return render_template("pdf.html", kind=kind, label=PDF_KINDS[kind], name=name, pages=pages)
+    return render_template("case_tracker/pdf.html", kind=kind, label=PDF_KINDS[kind], name=name, pages=pages)
 
 
-@app.route("/pdf/<kind>/<name>/download")
+@bp.route("/pdf/<kind>/<name>/download")
 def pdf_download(kind, name):
     _pdf_path(kind, name)
     return send_from_directory(PDF_DIR / PDF_COURT / kind, name, as_attachment=True)
 
 
-@app.route("/pdf/<kind>/<name>/page/<int:n>.png")
+@bp.route("/pdf/<kind>/<name>/page/<int:n>.png")
 def pdf_page(kind, name, n):
     path = _pdf_path(kind, name)
     with fitz.open(path) as d:
@@ -526,7 +554,7 @@ def orders_of(case_key):
     return found
 
 
-@app.route("/order/<case_key>/<name>")
+@bp.route("/order/<case_key>/<name>")
 def order_file(case_key, name):
     """A saved order; HTML orders come from the court's portal, so they are sandboxed (no scripts)."""
     if not ORDER_RE.fullmatch(name) or not re.fullmatch(r"[\w-]+", case_key):
@@ -551,7 +579,7 @@ def proceedings_of(status):
     return found
 
 
-@app.route("/case/<case_key>")
+@bp.route("/case/<case_key>")
 def case(case_key):
     c = load()["cases"].get(case_key)
     if c is None:
@@ -563,7 +591,7 @@ def case(case_key):
     hearings = c["hearings"] + [{**BLANK_HEARING, "hearing_date": d, "history": None, "record": "", "from_order": True}
                                 for d in orders if d not in known]
     hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
-    return render_template("case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
+    return render_template("case_tracker/case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
 
 
 def _link_from_form():
@@ -576,17 +604,17 @@ def _link_from_form():
             "note": request.form.get("note", "").strip()}
 
 
-@app.post("/case/<case_key>/links")
+@bp.post("/case/<case_key>/links")
 def add_link(case_key):
     if case_key not in load()["cases"]:
         abort(404)
     link = _link_from_form()
     court = court_of(case_key)
     storage.save_case_links(court, case_key, storage.load_links(court).get(case_key, []) + [link])
-    return redirect(url_for("case", case_key=case_key) + "#links")
+    return redirect(url_for("case_tracker.case", case_key=case_key) + "#links")
 
 
-@app.post("/case/<case_key>/links/<int:i>/edit")
+@bp.post("/case/<case_key>/links/<int:i>/edit")
 def edit_link(case_key, i):
     court = court_of(case_key)
     links = storage.load_links(court).get(case_key, [])
@@ -594,10 +622,10 @@ def edit_link(case_key, i):
         abort(404)
     links[i] = _link_from_form()
     storage.save_case_links(court, case_key, links)
-    return redirect(url_for("case", case_key=case_key) + "#links")
+    return redirect(url_for("case_tracker.case", case_key=case_key) + "#links")
 
 
-@app.post("/case/<case_key>/links/<int:i>/delete")
+@bp.post("/case/<case_key>/links/<int:i>/delete")
 def delete_link(case_key, i):
     court = court_of(case_key)
     links = storage.load_links(court).get(case_key, [])
@@ -605,7 +633,14 @@ def delete_link(case_key, i):
         abort(404)
     del links[i]
     storage.save_case_links(court, case_key, links)
-    return redirect(url_for("case", case_key=case_key) + "#links")
+    return redirect(url_for("case_tracker.case", case_key=case_key) + "#links")
+
+
+def create_app():
+    """The viewer on its own, at "/" (the case manager instead registers `bp` under /case_tracker)."""
+    app = Flask(__name__)
+    app.register_blueprint(bp)
+    return app
 
 
 if __name__ == "__main__":
@@ -615,4 +650,4 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=5000)
     args = ap.parse_args()
     DEFAULT_SELECTION = args.court
-    app.run(host=args.host, port=args.port)
+    create_app().run(host=args.host, port=args.port)

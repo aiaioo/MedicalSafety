@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyse the consumer cause lists downloaded by courts/consumer.py.
 
-Stores the same four tables as analysis.py does for the KMC, plus advocates, for the court "consumer" (via storage.py;
+Stores the same four tables as analysis.py does for the KMC, plus advocates, for the court "consumer" (via progress_storage.py;
 rebuilt from scratch on every run), so viewer.py can show them with `--court consumer`:
   enquiries        - everything, one object per case
   status           - one row per case: case_key, enquiry_id (the case number), status, date the status first appeared,
@@ -29,7 +29,7 @@ import re
 import sys
 from datetime import date
 
-import storage
+import progress_storage as storage
 from analysis import party_type
 
 COURT = "consumer"
