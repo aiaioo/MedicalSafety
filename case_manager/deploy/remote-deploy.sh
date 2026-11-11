@@ -81,6 +81,18 @@ else
     || echo "WARNING: couldn't create the case tracker's tables (does the database exist?)" >&2
 fi
 
+# The daily crawl of the case tracker's data (see case_progress_crawler/deploy/README.md):
+# analysis.py needs poppler's pdftotext; the units run it from a systemd timer.
+echo "--- Case tracker crawl (systemd timer)"
+if [ -d "$CRAWLER_DIR/deploy" ]; then
+  command -v pdftotext >/dev/null || apt-get install -y -q poppler-utils
+  for u in case-progress-crawl.service case-progress-crawl.timer; do
+    cmp -s "$CRAWLER_DIR/deploy/$u" /etc/systemd/system/$u || { cp "$CRAWLER_DIR/deploy/$u" /etc/systemd/system/$u; echo "updated $u"; }
+  done
+  systemctl daemon-reload
+  systemctl enable --now case-progress-crawl.timer
+fi
+
 echo "--- Restarting $SERVICE"
 systemctl restart "$SERVICE"
 # /healthz answers even while the site is locked waiting for the encryption key.

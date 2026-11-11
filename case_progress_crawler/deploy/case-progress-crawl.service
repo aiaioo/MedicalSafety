@@ -1,0 +1,30 @@
+# systemd unit for the daily crawl on a DigitalOcean droplet -- see README.md here.
+# Started by case-progress-crawl.timer (or by hand: sudo systemctl start case-progress-crawl).
+
+[Unit]
+Description=Case progress crawl (KMC and consumer-court lists, case details, analysis)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=case-manager
+Group=case-manager
+WorkingDirectory=/opt/case_progress_crawler
+# Shared with the web app: the crawler reads CASE_PROGRESS_DATABASE_URL from it.
+EnvironmentFile=/etc/case-manager/case-manager.env
+ExecStart=/opt/case_progress_crawler/deploy/run-crawl.sh
+TimeoutStartSec=3h
+
+# The droplet is small and runs the web app too: run at low priority, and throttle
+# (not kill) the crawl if it grows past this.
+Nice=10
+IOSchedulingClass=idle
+MemoryHigh=450M
+
+# It writes only under its own directory (pdfs/, case_details/) and talks to Postgres and the courts.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/case_progress_crawler

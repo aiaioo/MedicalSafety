@@ -739,7 +739,7 @@ def write_outputs(result):
         rows = [(n, ro) for n, ro in rows if not is_noise(n)]
         for name, role in rows:  # keep enquiries with no parties recorded
             party_rows.append([eid, name, party_type(name, role), role, r["as_of"] or "", case_key(eid)])
-    status_rows = [[case_key(eid), eid, r["status"], r["status_since"] or ""]
+    status_rows = [[case_key(eid), eid, r["status"], r["status_since"] or "", "", ""]  # no label / label_reason for the KMC
                    for eid, r in sorted(result.items(), key=lambda kv: (case_key(kv[0]), kv[0]))]
     timeline_rows = []
     for eid, r in result.items():
