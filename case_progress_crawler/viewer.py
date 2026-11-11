@@ -38,6 +38,7 @@ import argparse
 import datetime
 import re
 import statistics
+import threading
 from html import unescape
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -303,6 +304,20 @@ def load(sel=None):
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
     _cache[sel] = {"mtimes": mtimes, "data": data}
     return data
+
+
+def warm_cache():
+    """Load every selection's data in a background thread, so the first visitor doesn't wait for it."""
+    def run():
+        for sel in [DEFAULT_SELECTION] + [s for s in SELECTIONS if s != DEFAULT_SELECTION]:
+            try:
+                load(sel)
+            except Exception as e:  # a request will hit and report the same problem
+                print(f"case tracker: warming {sel} failed: {e!r}")
+    threading.Thread(target=run, daemon=True, name="case-tracker-warm").start()
+
+
+bp.record_once(lambda state: warm_cache())  # when the blueprint is registered, here or in the case manager
 
 
 def court_links(sel=None):
