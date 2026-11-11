@@ -1,10 +1,10 @@
-# Daily at 14:00 India time, the time of the Mac's cron job. Persistent=true runs a
+# Daily at 3 am India time, when nobody is using the site. Persistent=true runs a
 # missed one when the droplet next boots.
 [Unit]
 Description=Daily case progress crawl
 
 [Timer]
-OnCalendar=*-*-* 14:00:00 Asia/Kolkata
+OnCalendar=*-*-* 03:00:00 Asia/Kolkata
 Persistent=true
 RandomizedDelaySec=300
 
