@@ -60,9 +60,14 @@ sudo systemctl enable --now case-manager
 sudo systemctl status case-manager   # should be "active (running)"
 ```
 
-Put a reverse proxy (nginx or Caddy) in front for TLS; this service only
-binds `127.0.0.1:8000` and is not meant to face the internet directly. That
-proxy setup isn't included here since it's independent of the app itself.
+Put a reverse proxy in front for TLS; this service only binds
+`127.0.0.1:8000` and is not meant to face the internet directly. The droplet
+uses nginx -- `deploy/nginx-case-manager.conf` is a copy of its
+`/etc/nginx/sites-enabled/case-manager` (the Certbot-managed lines are what
+Certbot wrote; it is a record, not applied by deploy.sh). It must keep
+`proxy_set_header Host $host;`: the app picks the site name (Medical Safety or
+Case Plan) and the email sender from the domain the visitor used, and gets it
+from that header. `X-Forwarded-For`/`-Proto` pair with `TRUSTED_PROXY_HOPS=1`.
 
 ## Outgoing email (Postmark)
 
