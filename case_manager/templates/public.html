@@ -120,6 +120,16 @@
     </div>
     <aside class="legal-tools" id="paLegal"></aside>
   </div>
+  {% if case_tracker %}
+  {# The same case tracker search box and "At a glance" analyses the other signed-in users see below the hero. #}
+  <div class="public-case-tracker ct ct-public">
+    <form method="get" action="{{ url_for('case_tracker.home') }}" class="search">
+      <input type="search" name="q" autocomplete="off" placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
+      <button type="submit">Search</button>
+    </form>
+    {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
+  </div>
+  {% endif %}
   <div id="paSections" class="public-section-list"></div>
   <div class="pa-tray" id="paTray">
     <h2>Articles not yet placed</h2>

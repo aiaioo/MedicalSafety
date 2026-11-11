@@ -4919,6 +4919,7 @@ def public_view():
             websites=[{"id": w["id"], "name": w["name"], "domain": w["domain"]} for w in websites],
             layout=storage.admin_website_layout(chosen["id"]),
             sections=[], legal_tools=None,
+            case_tracker=_case_tracker_panel(chosen),
         )
     return render_template(
         "public.html", website=site,
