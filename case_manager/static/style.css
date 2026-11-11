@@ -1146,3 +1146,14 @@ a.tag:hover { background: #d7deec; }
 .image-thumb .image-thumb-move.left { left: 2px; }
 .image-thumb .image-thumb-move.right { left: 26px; }
 .image-thumb .image-thumb-move:disabled { opacity: 0.3; cursor: default; }
+.images-add-row { display: flex; gap: 8px; }
+.image-thumb.pdf-page { border-color: #b8c4e8; }
+/* A whole PDF kept together: taller cell with a strip for the page count and the "Split up" button. */
+.image-thumb.pdf-group { height: 140px; padding-bottom: 28px; box-sizing: border-box; width: 110px;
+  box-shadow: 3px 3px 0 -1px #fff, 3px 3px 0 0 #b8c4e8; }
+.image-thumb.pdf-group .image-thumb-num,
+.image-thumb.pdf-group .image-thumb-rotate { bottom: 30px; }
+.image-thumb .image-thumb-pages { position: absolute; left: 4px; bottom: 7px; font-size: 11px; color: #444; pointer-events: none; }
+.image-thumb .image-thumb-split { position: absolute; right: 3px; bottom: 3px; font-size: 11px; padding: 1px 6px;
+  border: 1px solid #cfd4e0; border-radius: 4px; background: #fff; cursor: pointer; }
+.image-thumb .image-thumb-split:disabled { opacity: 0.4; cursor: default; }

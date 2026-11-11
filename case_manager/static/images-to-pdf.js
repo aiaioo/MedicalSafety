@@ -1,7 +1,8 @@
-// "Create from images": pick images, reorder them by dragging, save them as one PDF uploaded through the
-// normal document upload. Images are sensitive, so they only ever live in this tab's memory: File objects are
-// read in place (never copied to disk or to a blob: URL), thumbnails are canvases, and the PDF is assembled in
-// memory. Closing the dialog drops every reference.
+// "Create from images and PDF sections": pick images and PDFs, reorder them (every PDF page is its own
+// thumbnail, so PDFs can be split up, interleaved with images and have pages removed), and save the result as
+// one PDF uploaded through the normal document upload. The material is sensitive, so it only ever lives in this
+// tab's memory: File objects are read in place (never copied to disk or to a blob: URL), thumbnails are
+// canvases, and the PDF is assembled in memory. Closing the dialog drops every reference.
 (function () {
   const openBtn = document.getElementById("imagesOpen");
   const modal = document.getElementById("imagesModal");
@@ -10,6 +11,8 @@
   const emptyHint = document.getElementById("imagesEmpty");
   const input = document.getElementById("imagesInput");
   const addBtn = document.getElementById("imagesAdd");
+  const pdfInput = document.getElementById("imagesPdfInput");
+  const addPdfBtn = document.getElementById("imagesAddPdf");
   const nameInput = document.getElementById("imagesName");
   const saveBtn = document.getElementById("imagesSave");
   const closeBtn = document.getElementById("imagesClose");
@@ -17,7 +20,11 @@
 
   const THUMB = 100;
   const MAX_PAGE_PT = 842;  // longest page side, in PDF points
-  let items = [];           // [{file, base: canvas, thumb: canvas, rot: quarter turns clockwise}] in page order
+  // In page order: an image {file, base: canvas, thumb: canvas, rot: quarter turns clockwise}, or a PDF page
+  // {pdf: <pdf-tools handle>, page: 0-based index, file, base, thumb, rot}, or a whole PDF kept together
+  // {pdf, group: true, file, base, thumb (first page), rot} until the user splits it into pages.
+  let items = [];
+  let pdfs = [];            // every PDF handle opened in this dialog, released on close
   let busy = false;
   let dragItem = null;
 
@@ -32,7 +39,10 @@
       const cell = document.createElement("div");
       cell.className = "image-thumb";
       cell.draggable = !busy;
-      cell.title = it.file.name;
+      cell.title = !it.pdf ? it.file.name
+        : it.group ? `${it.file.name}, all ${it.pdf.pageCount} pages` : `${it.file.name}, page ${it.page + 1}`;
+      cell.classList.toggle("pdf-page", !!it.pdf);
+      cell.classList.toggle("pdf-group", !!it.group);
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "image-thumb-remove";
@@ -48,6 +58,19 @@
       const mvL = moveButton("◀", "Move earlier", i === 0, () => move(it, -1));
       const mvR = moveButton("▶", "Move later", i === items.length - 1, () => move(it, 1));
       cell.append(it.thumb, rm, num, rotL, rotR, mvL, mvR);
+      if (it.group) {
+        const badge = document.createElement("span");
+        badge.className = "image-thumb-pages";
+        badge.textContent = `${it.pdf.pageCount} pages`;
+        const split = document.createElement("button");
+        split.type = "button";
+        split.className = "image-thumb-split";
+        split.textContent = "Split up";
+        split.title = it.pdf.pageCount > 1 ? "Show each page separately so they can be reordered or removed" : "";
+        split.disabled = busy || it.pdf.pageCount < 2;
+        split.addEventListener("click", () => splitUp(it));
+        cell.append(badge, split);
+      }
       cell.addEventListener("dragstart", (e) => {
         dragItem = it;
         cell.classList.add("dragging");
@@ -77,6 +100,7 @@
     emptyHint.hidden = items.length > 0;
     saveBtn.disabled = busy || items.length === 0;
     addBtn.disabled = busy;
+    addPdfBtn.disabled = busy;
   }
 
   // Tap-friendly alternative to drag-and-drop (HTML5 drag doesn't work on touch screens).
@@ -129,6 +153,10 @@
   async function addFiles(files) {
     const failed = [];
     for (const file of files) {
+      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+        await addPdf(file, failed);
+        continue;
+      }
       try {
         const bmp = await decode(file);
         const s = Math.min(THUMB / bmp.width, THUMB / bmp.height, 1);
@@ -143,6 +171,55 @@
       }
     }
     setStatus(failed.length ? `Could not read: ${failed.join(", ")}` : "", failed.length > 0);
+    render();
+  }
+
+  let toolsPromise = null;
+  function loadPdfTools() {
+    toolsPromise = toolsPromise || new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = modal.dataset.toolsSrc;
+      s.onload = () => resolve(window.PdfTools);
+      s.onerror = () => { toolsPromise = null; reject(new Error("Could not load the PDF library")); };
+      document.head.appendChild(s);
+    });
+    return toolsPromise;
+  }
+
+  // A PDF stays one item (so a PDF of hundreds of pages is a single thumbnail) until the user splits it.
+  async function addPdf(file, failed) {
+    try {
+      const tools = await loadPdfTools();
+      setStatus(`Reading ${file.name}…`);
+      const pdf = await tools.openPdf(file, modal.dataset.workerSrc);
+      pdfs.push(pdf);
+      const c = await pdf.thumb(0, THUMB);
+      items.push({ pdf, group: true, file, base: c, thumb: c, rot: 0 });
+      setStatus("");
+    } catch (e) {
+      failed.push(file.name);
+    }
+  }
+
+  async function splitUp(it) {
+    busy = true;
+    render();
+    try {
+      const pages = [];
+      for (let i = 0; i < it.pdf.pageCount; i++) {
+        setStatus(`Splitting ${it.file.name}: page ${i + 1} of ${it.pdf.pageCount}…`);
+        const c = i === 0 ? it.base : await it.pdf.thumb(i, THUMB);
+        const page = { pdf: it.pdf, page: i, file: it.file, base: c, thumb: c, rot: it.rot };
+        if (it.rot) refreshThumb(page);
+        pages.push(page);
+      }
+      const at = items.indexOf(it);
+      if (at >= 0) items.splice(at, 1, ...pages);  // the dialog may have been closed meanwhile
+      setStatus("");
+    } catch (e) {
+      setStatus(`Could not split ${it.file.name}`, true);
+    }
+    busy = false;
     render();
   }
 
@@ -234,6 +311,20 @@
     return rawImage(file);
   }
 
+  // Images become single-page PDFs by the code below; PDF pages are then copied across with pdf-lib in the
+  // order the user arranged everything.
+  async function buildCombined() {
+    const imgs = items.filter((it) => !it.pdf);
+    const imageBytes = imgs.length ? new Uint8Array(await (await buildPdf(imgs)).arrayBuffer()) : null;
+    let n = 0;
+    const entries = items.flatMap((it) => {
+      if (!it.pdf) return [{ image: imageBytes, page: n++, rot: 0 }];
+      if (!it.group) return [{ pdf: it.pdf, page: it.page, rot: it.rot }];
+      return Array.from({ length: it.pdf.pageCount }, (_, i) => ({ pdf: it.pdf, page: i, rot: it.rot }));
+    });
+    return (await loadPdfTools()).mergePages(entries);
+  }
+
   async function buildPdf(list) {
     const enc = new TextEncoder();
     const parts = [];
@@ -290,7 +381,7 @@
     nameInput.disabled = true;
     try {
       setStatus("Building PDF…");
-      const pdf = await buildPdf(items);
+      const pdf = pdfs.length ? await buildCombined() : await buildPdf(items);
       setStatus("Uploading…");
       const body = new FormData();
       body.append("file", new File([pdf], name.replace(/[\\/]/g, "-") + ".pdf", { type: "application/pdf" }));
@@ -299,6 +390,8 @@
       if (!res.ok) throw new Error(data.error || "Upload failed");
       setStatus(`Saved as "${data.id}". Reloading…`);
       items = [];
+      pdfs.forEach((p) => p.destroy());
+      pdfs = [];
       setTimeout(() => location.reload(), 600);
     } catch (err) {
       setStatus(err.message, true);
@@ -317,6 +410,9 @@
     if (busy) return;
     modal.classList.remove("open");
     items = [];            // drop every File and thumbnail reference
+    pdfs.forEach((p) => p.destroy());
+    pdfs = [];
+    pdfInput.value = "";
     dragItem = null;
     grid.replaceChildren();
     input.value = "";
@@ -329,6 +425,12 @@
   input.addEventListener("change", async () => {
     const files = Array.from(input.files);
     input.value = "";  // clear the picker's own file list immediately
+    await addFiles(files);
+  });
+  addPdfBtn.addEventListener("click", () => pdfInput.click());
+  pdfInput.addEventListener("change", async () => {
+    const files = Array.from(pdfInput.files);
+    pdfInput.value = "";
     await addFiles(files);
   });
   saveBtn.addEventListener("click", save);

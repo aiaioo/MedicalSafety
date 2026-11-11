@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife && esbuild static/src/article-editor.js --bundle --outfile=static/dist/article.bundle.js --format=iife && esbuild static/src/title-template-editor.js --bundle --outfile=static/dist/title-template-editor.bundle.js --format=iife",
+    "build": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife && esbuild static/src/article-editor.js --bundle --outfile=static/dist/article.bundle.js --format=iife && esbuild static/src/title-template-editor.js --bundle --outfile=static/dist/title-template-editor.bundle.js --format=iife && esbuild static/src/pdf-tools.js --bundle --outfile=static/dist/pdf-tools.bundle.js --format=iife --global-name=PdfTools && esbuild node_modules/pdfjs-dist/build/pdf.worker.mjs --bundle --minify --outfile=static/dist/pdf.worker.bundle.mjs --format=esm",
     "watch": "esbuild static/src/editor.js --bundle --outfile=static/dist/editor.bundle.js --format=iife --watch"
   },
   "dependencies": {
@@ -15,7 +15,9 @@
     "@tiptap/extension-text-align": "^3.31.3",
     "@tiptap/extension-text-style": "^3.31.3",
     "@tiptap/pm": "^3.31.3",
-    "@tiptap/starter-kit": "^3.31.3"
+    "@tiptap/starter-kit": "^3.31.3",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.5.438"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
