@@ -9,7 +9,8 @@ export async function openPdf(file, workerSrc) {
   if (workerSrc) pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
   const bytes = new Uint8Array(await file.arrayBuffer());
   // pdf.js transfers the buffer it is given to its worker, so give it a copy and keep ours for merging.
-  const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+  const task = pdfjs.getDocument({ data: bytes.slice() });
+  const doc = await task.promise;
   return {
     bytes,
     pageCount: doc.numPages,
@@ -25,7 +26,7 @@ export async function openPdf(file, workerSrc) {
       page.cleanup();
       return c;
     },
-    destroy() { return doc.destroy(); },
+    destroy() { return task.destroy(); },  // the loading task owns the worker; the document proxy has no destroy()
   };
 }
 
