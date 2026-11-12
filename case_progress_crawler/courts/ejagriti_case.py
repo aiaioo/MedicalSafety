@@ -51,6 +51,30 @@ def history_hearing_dates(history):
             for h in history or [] if h.get("dateOfAction") and (h.get("actionTaken") or "").startswith("Hearing")]
 
 
+OLD_DISTRICT_NUMBER_RE = re.compile(r"AB0(\d)/(\d+)/(.+)")
+_PARTY_WORD_RE = re.compile(r"[a-z]{4,}")
+_COMMON_PARTY_WORDS = {"also", "limited", "private", "hospital", "pvt", "ltd", "medical", "services"}
+
+
+def alias_number(case_number):
+    """Some cause lists give a district case an old-style number, AB0n/<commission>/<type>/<no>/<year>, which the
+    portal's case lookup answers with 400 ("Case Details are not available"); it knows the case as
+    DC/AB<n-1>/<commission>/... (AB03/525/CC/10/2024 is DC/AB2/525/CC/10/2024). None for any other number."""
+    m = OLD_DISTRICT_NUMBER_RE.fullmatch(case_number)
+    return f"DC/AB{int(m.group(1)) - 1}/{m.group(2)}/{m.group(3)}" if m and int(m.group(1)) > 1 else None
+
+
+def _party_words(names):
+    return {w for w in _PARTY_WORD_RE.findall(" ".join(names).lower()) if w not in _COMMON_PARTY_WORDS}
+
+
+def same_parties(status, parties):
+    """Is the portal's case (its status) the one on the cause list? Both a complainant and a respondent must share a word with
+    the listed ones; a number alone is not enough, as another commission's case may have it."""
+    return bool(_party_words([status.get("complainant") or ""]) & _party_words(parties.get("complainants") or [])
+                and _party_words([status.get("respondent") or ""]) & _party_words(parties.get("respondents") or []))
+
+
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
     that has appeared on a saved cause list (storage.latest_cause_lists); a later list's parties replace an earlier one's."""
@@ -227,8 +251,19 @@ class ConsumerCaseDownloader:
         out = {"saved": [], "skipped": [], "failed": []}
         previous = self._json(case_number, "status.json")
         old_entries = {h.get("courtRoomHearingId"): h for h in (previous or {}).get("caseHearingDetails") or []}
-        status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=case_number)
-        history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=case_number)
+        portal_number = case_number
+        try:
+            status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=case_number)
+        except Exception as e:
+            alias = alias_number(case_number)
+            if not (alias and parties and getattr(getattr(e, "response", None), "status_code", None) == 400):
+                raise
+            # the portal knows this case by another number; use it only if it is the same case. Everything is still saved under case_number.
+            status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=alias)
+            if not same_parties(status, parties):
+                raise ValueError(f"{alias} is not the same case as {case_number}") from e
+            portal_number = alias
+        history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=portal_number)
         recheck_failed = False
         for h in status.get("caseHearingDetails") or []:
             kind = ORDER_KINDS.get(h.get("orderTypeId"))
