@@ -8,7 +8,7 @@ import re
 import sys
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape as html_escape, unescape
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -4812,9 +4812,11 @@ def sync_case_with_tracker(case_id, case, role):
 
 
 def tracker_next_hearing(case) -> str:
-    """The date the case tracker says the case is next listed for (ISO), or "" when it is unknown (or the case is not in it)."""
+    """The date the case tracker says the case is next listed for (ISO), or "" when it is unknown, already past, or the case is not in it."""
     known = _tracker_case(case["case_number"], with_court=False) if case.get("case_number") else None
-    return (known or {}).get("next_hearing", "")
+    nxt = (known or {}).get("next_hearing", "")
+    today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date().isoformat()  # the courts' day (IST)
+    return nxt if nxt >= today else ""  # a date that has passed is not "next"
 
 
 def tracker_hearings_on_offer(case, role) -> int:
