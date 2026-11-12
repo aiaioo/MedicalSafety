@@ -65,15 +65,16 @@ PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
 _cache = {}  # selection -> {"mtimes", "data"}
-# Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name
+# Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name. Keys are
+# slugs as hospital_tokens() leaves them (apostrophes dropped, "Medical College" before "Hospital" dropped).
 HOSPITAL_ALIASES = {
     "bhagwan-mahaveer-jain-hospital": "bhagawan-mahaveer-jain-hospital",
     "bhagavanmahaveer-jain-hospital": "bhagawan-mahaveer-jain-hospital",
-    "rajarajeswari-medical-college-hospital": "rajarajeshwari-medical-college-hospital",
+    "rajarajeswari-hospital": "rajarajeshwari-hospital",
     "cloudenine-fertility-clodnine-hospital": "cloudnine-hospital",
     "clodnine-hospital": "cloudnine-hospital",
     "poornima-m-gowda-cloudnine-hospital": "cloudnine-hospital",
-    "motherhood-women-children-s-hospital": "motherhood-hospital",
+    "motherhood-women-children-hospital": "motherhood-hospital",
     "narayananethralaya-eye-hospital": "narayana-nethralaya-eye-hospital",
     "bgs-gleneagles-global-hospital": "gleneagles-global-hospital",
     "bowring-lady-curzon-hospital": "lady-curzon-hospital",
@@ -84,27 +85,55 @@ HOSPITAL_ALIASES = {
     "sudhamani-jayanagar-general-hospital": "jayanagar-general-hospital",
     "sowmya-dinesh-hr-ssm-hospital": "ssm-hospital",
     "satish-l-sparsh-super-speciality-hospital": "sparsh-hospital",
-    "sinam-inaoton-singha-st-martha-s-hospital": "st-martha-s-hospital",
+    "sinam-inaoton-singha-st-martha-hospital": "st-martha-hospital",
 }
 
 
 # Display names for aliased groups where no member is spelled cleanly
 HOSPITAL_DISPLAY = {"arka-hospital": "Arka Hospital", "ssm-hospital": "SSM Hospital",
                     "children-hospital": "Children Hospital", "jayanagar-general-hospital": "Jayanagar General Hospital",
-                    "st-martha-s-hospital": "St. Martha’s Hospital"}
+                    "st-martha-hospital": "St. Martha’s Hospital"}
 
 
-def hospital_key(name):
-    """Slug that merges spelling variants: 'Manipal Hospital' and 'M/s. Manipal Hospitals' share one."""
-    s = re.sub(r"^belongs to\W*", "", name.lower())
+def hospital_tokens(name):
+    """The words that identify a hospital, with the spelling differences that do not matter removed: case,
+    punctuation and apostrophes ("St. John's" = "St Johns" = "ST.JOHN'S"), a possessive or plural s on a saint's
+    name ("St Philomenas" = "St Philomena"), "Saint" = "St", "Hospitals" = "Hospital", "Medical College
+    Hospital" = "Hospital", "M/s", "Ltd"/"Pvt", and what comes before "through its"."""
+    s = name.lower()
+    t = re.search(r"\b(?:through|thro'?)\s+(?:its\s+)?(.*)$", s)
+    if t and re.search(r"\bhospitals?\b", t.group(1)):
+        s = t.group(1)
+    s = re.sub(r"^belongs to\W*", "", s)
     s = re.sub(r"\bms/\.", "", s)  # a mangled "M/s."
     s = re.sub(r"\b(?:[a-z]\.\s*){2,}", lambda m: re.sub(r"\W", "", m.group()) + " ", s)  # "K.I.M.S." -> "kims"
+    s = re.sub(r"['\u2019`]s\b", "", s)  # "John's" -> "John"
+    s = re.sub(r"['\u2019`]", "", s)
+    s = re.sub(r"\bsaint\b", "st", s)
+    s = re.sub(r"\bst\.?(?=[a-z])", "st ", s)  # "St.John" -> "St John"
     s = re.sub(r"[^a-z0-9]+", " ", s)
     s = re.sub(r"\bhospitals\b", "hospital", s)
     s = re.sub(r"\b(?:limited|ltd|pvt|private)\b", "", s)
-    s = re.sub(r"\bmedical college\s+(?:and\s+)?hospital\b", "medical college hospital", s)
-    slug = "-".join(s.split())
+    s = re.sub(r"\bmedical college\s+(?:and\s+)?hospital\b", "hospital", s)
+    s = re.sub(r"\b(st) (\w{3,}?)s\b", r"\1 \2", s)  # a saint's name with a stray s: "st johns" -> "st john"
+    return s.split()
+
+
+def hospital_key(name):
+    """Slug that merges spelling variants: 'Manipal Hospital' and 'M/s. Manipal Hospitals' share one, and so do
+    'St. John's Hospital', 'ST.JOHN'S MEDICAL COLLEGE HOSPITAL' and 'X through its St Johns Hospital' (see hospital_tokens).
+    Names that differ only by spaces ('Cloud nine', 'Cloudnine') get different slugs here; hospital_slug_map() joins them."""
+    slug = "-".join(hospital_tokens(name))
     return HOSPITAL_ALIASES.get(slug, slug)
+
+
+def hospital_slug_map(slugs_with_counts):
+    """{slug: slug to use} joining slugs that differ only by spaces or hyphens ('cloud-nine-hospital' and
+    'cloudnine-hospital'): the one used by most cases is kept (ties: the alphabetically first)."""
+    groups = defaultdict(list)
+    for slug, n in slugs_with_counts.items():
+        groups[slug.replace("-", "")].append((-n, slug))
+    return {slug: min(members)[1] for members in groups.values() for _, slug in members}
 
 
 def squash(s):
@@ -272,6 +301,13 @@ def load(sel=None):
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
+    slug_uses = defaultdict(int)
+    for c in cases.values():
+        for slug in c["hospitals"]:
+            slug_uses[slug] += 1
+    slug_map = hospital_slug_map(slug_uses)  # "cloud-nine-hospital" and "cloudnine-hospital" are one hospital
+    for c in cases.values():
+        c["hospitals"] = {slug_map[slug]: n for slug, n in c["hospitals"].items()}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
     by_date = defaultdict(list)  # hearing date -> [(case, hearing)], cases in list order
     for c in ordered:
@@ -282,7 +318,7 @@ def load(sel=None):
         for slug, n in c["hospitals"].items():
             hospitals[slug]["names"][n] += 1
             hospitals[slug]["cases"].append(c)
-    hospitals = {s: {"slug": s, "name": HOSPITAL_DISPLAY.get(s) or max(h["names"], key=lambda n: (hospital_key(n) == s, h["names"][n], -len(n))), "cases": h["cases"]}
+    hospitals = {s: {"slug": s, "name": HOSPITAL_DISPLAY.get(s) or max(h["names"], key=lambda n: (hospital_key(n) == s, not (n.islower() or n.isupper()), h["names"][n], -len(n))), "cases": h["cases"]}
                  for s, h in hospitals.items() if s}
     advocates = defaultdict(lambda: {"names": defaultdict(int), "cases": [], "sides": {}})
     for c in ordered:

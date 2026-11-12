@@ -62,6 +62,7 @@ class ProviderMatcher:
     only_doctor_re = re.compile(r"^(?:\W*\d*\W*)?(?:dr|doctors?)\b", re.IGNORECASE)  # a name that is only "Dr. So-and-so"
     # hospital names for hospital_names()
     hospital_word_re = re.compile(r"\b(?:hospitals?|nursing homes?|clinics?)\b", re.I)
+    through_re = re.compile(r"\b(?:through|thro'?|represented\s+by|rep\.?\s*by)\s+(?:its\s+)?(.*)$", re.I)
     hospital_split_re = re.compile(r"[,;–—/]|\bm\s*/\s*s\b\.?|\bc\s*/\s*o\b\.?|\b(?:of|at|and)\b|\(|\)", re.I)
     hospital_title_re = re.compile(r"^(?:the\b|dr\b\.?|(?:medical|managing|unit|chief|executive)?\s*"
                                    r"(?:administrator|administartor|superintendent|directors?|owners?|head|management|ceo|md)\b|[\s/.,&-])+", re.I)
@@ -100,6 +101,10 @@ class ProviderMatcher:
         'Dr.Tarun Patil, C/o Manipal Hospitals, Bangalore.' -> ['Manipal Hospitals']"""
         names = []
         for seg in self.hospital_split_re.split(party):
+            # "Karnataka Health Ltd through its St Johns Hospital": what comes before "through its" is not the hospital's name
+            t = self.through_re.search(seg)
+            if t and self.hospital_word_re.search(t.group(1)):
+                seg = t.group(1)
             m = self.hospital_word_re.search(seg)
             if not m:
                 continue
