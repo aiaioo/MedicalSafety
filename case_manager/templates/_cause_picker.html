@@ -25,6 +25,11 @@
 {% if cause_manage and not (g.user and g.user.is_guest) %}
 <button type="button" class="btn" id="renameCauseBtn" title="Rename this cause">Rename</button>
 <button type="button" class="btn" id="deleteCauseBtn" title="Delete this cause">Delete</button>
+<div class="cause-delete-confirm" id="causeDeleteConfirm" role="alert" hidden>
+  <span id="causeDeleteMsg"></span>
+  <button type="button" class="btn" id="causeDeleteYes">Delete</button>
+  <button type="button" class="btn" id="causeDeleteNo">Cancel</button>
+</div>
 <div class="modal-overlay" id="causeModal">
   <form class="modal" id="causeForm" autocomplete="off">
     <h3 id="causeModalTitle">New cause</h3>

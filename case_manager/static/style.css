@@ -1168,3 +1168,13 @@ a.cause-static { text-decoration: none; color: inherit; }
 .btn-danger-text { color: #b3261e; }
 .hearing-stage { font-size: 0.9em; color: var(--muted, #666); margin: 2px 0 6px; }
 .hearing-stage[hidden] { display: none; }
+
+/* Delete-cause confirmation on the Cases page: a red bar under the title bar. */
+.cause-delete-confirm {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 20; display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; background: #fdecea; color: #a12a1f; border-bottom: 1px solid #f1b7b0; font-size: 14px;
+}
+.cause-delete-confirm[hidden] { display: none; }
+.cause-delete-confirm span { flex: 1; }
+.cause-delete-confirm .btn { background: white; border-color: #e0a29b; color: #a12a1f; }
+#causeDeleteYes { background: #c0392b; border-color: #c0392b; color: white; }

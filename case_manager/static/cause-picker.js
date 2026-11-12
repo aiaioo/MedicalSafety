@@ -71,15 +71,30 @@
     });
 
     document.getElementById("renameCauseBtn").addEventListener("click", () => { if (current) openModal(current); });
-    document.getElementById("deleteCauseBtn").addEventListener("click", async () => {
+    // Delete asks for confirmation in a red bar under the title bar (not a browser popup);
+    // a refusal from the server (e.g. the cause still has cases) is shown there too.
+    const confirmEl = document.getElementById("causeDeleteConfirm");
+    const confirmMsg = document.getElementById("causeDeleteMsg");
+    const confirmYes = document.getElementById("causeDeleteYes");
+    const hideConfirm = () => { confirmEl.hidden = true; };
+    document.getElementById("causeDeleteNo").addEventListener("click", hideConfirm);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideConfirm(); });
+    document.getElementById("deleteCauseBtn").addEventListener("click", () => {
       if (!current) return;
-      if (!confirm(`Delete the cause "${picker.selectedOptions[0].textContent}"?`)) return;
+      confirmMsg.textContent = `Delete the cause "${picker.selectedOptions[0].textContent}"? This cannot be undone.`;
+      confirmYes.hidden = false;
+      confirmYes.disabled = false;
+      confirmEl.hidden = false;
+    });
+    confirmYes.addEventListener("click", async () => {
+      confirmYes.disabled = true;
       try {
         const res = await fetch(causeUrl(current), { method: "DELETE" });
         if (!res.ok) throw new Error(await errorText(res));
         location.reload();
       } catch (err) {
-        alert("Could not delete cause: " + err.message);
+        confirmMsg.textContent = "Could not delete cause: " + err.message;
+        confirmYes.hidden = true;
       }
     });
 
