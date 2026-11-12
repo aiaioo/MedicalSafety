@@ -124,7 +124,7 @@
   {# The same case tracker search box and "At a glance" analyses the other signed-in users see below the hero. #}
   <div class="public-case-tracker ct ct-public">
     <form method="get" action="{{ url_for('case_tracker.home') }}" class="search">
-      <input type="search" name="q" autocomplete="off" placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
+      <input type="search" name="q" autocomplete="off" data-suggest placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
       <button type="submit">Search</button>
     </form>
     {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
@@ -180,7 +180,7 @@
     <div class="public-hero-col public-case-tracker ct ct-public">
       {% if g.user and not g.user.is_guest %}
       <form method="get" action="{{ url_for('case_tracker.home') }}" class="search">
-        <input type="search" name="q" autocomplete="off" placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
+        <input type="search" name="q" autocomplete="off" data-suggest placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
         <button type="submit">Search</button>
       </form>
       {% endif %}
@@ -250,6 +250,27 @@
   {% endfor %}
   </div>
 </main>
+{% endif %}
+{% if case_tracker %}
+<script>
+  // Autocomplete for the case tracker search boxes, from the tracker's /suggest (same as its own search page).
+  document.querySelectorAll('input[data-suggest]').forEach((box, n) => {
+    const list = document.createElement('datalist');
+    list.id = 'ctSuggestions' + n;
+    box.setAttribute('list', list.id);
+    box.after(list);
+    let timer;
+    box.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          const r = await fetch('{{ url_for("case_tracker.suggest") }}?q=' + encodeURIComponent(box.value));
+          if (r.ok) list.replaceChildren(...(await r.json()).map(v => Object.assign(document.createElement('option'), {value: v})));
+        } catch (e) {}
+      }, 150);
+    });
+  });
+</script>
 {% endif %}
 </body>
 </html>
