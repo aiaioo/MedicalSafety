@@ -4502,6 +4502,9 @@ def _annexure_stream(payload, report_pdf=None, links=None, positions=None):
             out.add_blank_page(page_size=(w, h))
         report_pages = len(out.pages)
         front = _append_annexure(out, payload, opened)
+        if len(out.pages) % 2:  # always an even total, whatever the page-numbering options
+            w, h = _displayed_size(out.pages[-1])
+            out.add_blank_page(page_size=(w, h))
         for pno, key, rect in links or []:
             doc_id, page = key.rsplit(":", 1)
             target = (positions or {}).get((doc_id, int(page)))
@@ -4698,6 +4701,12 @@ def api_report_export(report_id):
                                   data.get("margins"), data.get("pageNumbers"), links)
 
     body = pdf_bytes
+    if links is None:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            if doc.page_count % 2:  # an even number of pages, so the report ends on the back of a sheet
+                last = doc[-1].rect
+                doc.new_page(-1, width=last.width, height=last.height)
+                body = doc.tobytes(garbage=4, deflate=True)
     if links is not None:
         try:
             body = _annexure_stream(payload, report_pdf=pdf_bytes, links=links, positions=positions)
