@@ -1,4 +1,5 @@
 import base64
+import collections
 import io
 import json
 import os
@@ -583,16 +584,60 @@ _pdfium_lock = threading.Lock()
 _heavy_lock = threading.Semaphore(1)
 
 
-def _pdfium_render_region(f, page, zoom, clip=None):
+# Open PDFium documents, kept between requests (guarded by _pdfium_lock): opening one means parsing the
+# whole PDF's page tree and cross-reference table, which for a large document cost more than drawing the
+# page. Uploaded PDFs never change, so an entry stays valid until its document is deleted (_pdfium_forget).
+# Each entry holds its own decrypting file, read lazily, so it costs little memory.
+_pdfium_docs = collections.OrderedDict()  # doc_id -> (file, PdfDocument)
+_PDFIUM_DOCS_MAX = 3
+
+
+def _pdfium_cached_doc(doc_id):
+    """The open PdfDocument for `doc_id`. The caller must hold _pdfium_lock."""
+    import pypdfium2 as pdfium
+    entry = _pdfium_docs.get(doc_id)
+    if entry is not None:
+        _pdfium_docs.move_to_end(doc_id)
+        return entry[1]
+    f = storage.open_document_pdf(doc_id)
+    try:
+        doc = pdfium.PdfDocument(f)
+    except Exception:
+        f.close()
+        raise
+    _pdfium_docs[doc_id] = (f, doc)
+    while len(_pdfium_docs) > _PDFIUM_DOCS_MAX:
+        _close_pdfium_entry(_pdfium_docs.popitem(last=False)[1])
+    return doc
+
+
+def _close_pdfium_entry(entry):
+    f, doc = entry
+    for closer in (doc.close, f.close):
+        try:
+            closer()
+        except Exception:
+            app.logger.warning("Closing a cached PDF failed", exc_info=True)
+
+
+def _pdfium_forget(doc_id):
+    with _pdfium_lock:
+        entry = _pdfium_docs.pop(doc_id, None)
+        if entry is not None:
+            _close_pdfium_entry(entry)
+
+
+def _pdfium_render_region(f, page, zoom, clip=None, doc_id=None):
     """Render 1-based `page` of the PDF in seekable file `f` with PDFium, reading only the parts of the
     file it needs. `clip` is (x, y, w, h) as fractions of the page, or None for the whole page; PDFium
     draws only that region, so a high-dpi snippet never allocates a whole high-dpi page. `zoom` is a
-    number (x 72 dpi) or a function of the region's width in points. Returns
+    number (x 72 dpi) or a function of the region's width in points. With `doc_id`, the document is
+    taken from the open-document cache instead of being opened from `f`. Returns
     (PIL image, (region x0, y0 in points), (page width, height in points), zoom used), or None if
     `page` is out of range. Raises if PDFium cannot read the file."""
     import pypdfium2 as pdfium
     with _pdfium_lock:
-        doc = pdfium.PdfDocument(f)
+        doc = _pdfium_cached_doc(doc_id) if doc_id else pdfium.PdfDocument(f)
         try:
             if not (1 <= page <= len(doc)):
                 return None
@@ -611,8 +656,15 @@ def _pdfium_render_region(f, page, zoom, clip=None):
                 return img, (x0, y0), (w, h), z
             finally:
                 pg.close()
+        except Exception:
+            if doc_id:  # don't keep a document that just failed
+                entry = _pdfium_docs.pop(doc_id, None)
+                if entry is not None:
+                    _close_pdfium_entry(entry)
+            raise
         finally:
-            doc.close()
+            if not doc_id:
+                doc.close()
 
 
 def _pdfium_page_sizes(f):
@@ -3264,15 +3316,17 @@ def api_delete_document(doc_id):
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 
     storage.delete_document(doc_id)
+    _pdfium_forget(doc_id)
+    _page_png_cache_forget(doc_id)
     return jsonify({"ok": True})
 
 
-def _render_region_png(f, page, zoom, annotations, clip=None, load_bytes=None):
+def _render_region_png(f, page, zoom, annotations, clip=None, load_bytes=None, doc_id=None, png_level=6):
     """PNG bytes of `page` (or the `clip` region of it) of the PDF in seekable file `f`, with the
     sanitized `annotations` drawn on. Returns None if the page is out of range. If PDFium cannot read the
     file, falls back to PyMuPDF on `load_bytes()` (the whole document in memory) so odd PDFs still work."""
     try:
-        got = _pdfium_render_region(f, page, zoom, clip)
+        got = _pdfium_render_region(f, page, zoom, clip, doc_id=doc_id)
     except Exception:
         app.logger.warning("PDFium could not render page %s; falling back to PyMuPDF", page, exc_info=True)
         return _fitz_render_region(load_bytes(), page, zoom, annotations, clip)
@@ -3280,7 +3334,7 @@ def _render_region_png(f, page, zoom, annotations, clip=None, load_bytes=None):
         return None
     img, origin, page_size, z = got
     buf = io.BytesIO()
-    img.save(buf, "PNG")
+    img.save(buf, "PNG", compress_level=png_level)
     if not annotations:
         return buf.getvalue()
     return _draw_annotations_on_png(buf.getvalue(), img.size, z, annotations, origin, page_size)
@@ -3317,6 +3371,45 @@ def _fitz_render_region(pdf_bytes, page, zoom, annotations, clip):
         return p.get_pixmap(matrix=fitz.Matrix(z, z), clip=rect).tobytes("png")
 
 
+# Recently rendered page images, in memory only (decrypted pages are never written to disk), so scrolling
+# back over a page, or reopening a document, doesn't render it again. Keyed by everything that changes
+# the picture (the annotations drawn are part of the key, so editing one never serves a stale image);
+# access to the document is checked before the lookup. Small, because the server has little memory.
+_PAGE_PNG_CACHE_MAX_BYTES = 48 * 1024 * 1024
+_page_png_cache = collections.OrderedDict()
+_page_png_cache_bytes = 0
+_page_png_cache_lock = threading.Lock()
+
+
+def _page_png_cache_get(key):
+    with _page_png_cache_lock:
+        png = _page_png_cache.get(key)
+        if png is not None:
+            _page_png_cache.move_to_end(key)
+        return png
+
+
+def _page_png_cache_put(key, png):
+    global _page_png_cache_bytes
+    if len(png) > _PAGE_PNG_CACHE_MAX_BYTES // 4:
+        return
+    with _page_png_cache_lock:
+        old = _page_png_cache.pop(key, None)
+        if old is not None:
+            _page_png_cache_bytes -= len(old)
+        _page_png_cache[key] = png
+        _page_png_cache_bytes += len(png)
+        while _page_png_cache_bytes > _PAGE_PNG_CACHE_MAX_BYTES:
+            _page_png_cache_bytes -= len(_page_png_cache.popitem(last=False)[1])
+
+
+def _page_png_cache_forget(doc_id):
+    global _page_png_cache_bytes
+    with _page_png_cache_lock:
+        for key in [k for k in _page_png_cache if k[0] == doc_id]:
+            _page_png_cache_bytes -= len(_page_png_cache.pop(key))
+
+
 @app.route("/api/doc/<doc_id>/render/<int:page>")
 def api_render(doc_id, page):
     raw_type = request.args.get("type", "pdf")
@@ -3327,13 +3420,19 @@ def api_render(doc_id, page):
     dpi = max(50, min(dpi, 600))
     mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
 
-    f, _ = _open_pdf(doc_id, raw_type)
+    f, _ = _open_pdf(doc_id, raw_type)  # also the access check; the render itself uses the open-document cache
     try:
         annotations = []
         if mode in ("blackouts", "all"):
             annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
-        png_bytes = _render_region_png(f, page, dpi / 72, annotations,
-                                       load_bytes=lambda: _get_pdf_bytes(doc_id, raw_type)[0])
+        cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str))
+        png_bytes = _page_png_cache_get(cache_key)
+        if png_bytes is None:
+            png_bytes = _render_region_png(f, page, dpi / 72, annotations,
+                                           load_bytes=lambda: _get_pdf_bytes(doc_id, raw_type)[0],
+                                           doc_id=doc_id, png_level=3)
+            if png_bytes is not None:
+                _page_png_cache_put(cache_key, png_bytes)
     finally:
         f.close()
     if png_bytes is None:
