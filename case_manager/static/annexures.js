@@ -215,7 +215,18 @@
       }
       if (padded) shown++; // the empty page counts towards the annexure's page positions
     }
-    if (lodSlot) lodSlot.replaceWith(listPage(lodRows));
+    if (lodSlot) {
+      const card = listPage(lodRows);
+      lodSlot.replaceWith(card);
+      // The PDF flows the list over A4 pages (953px of text area each) and pads it to an even number of them.
+      const pages = Math.max(1, Math.ceil((card.scrollHeight - 170) / 953));
+      if (pages % 2) {
+        const blank = document.createElement("div");
+        blank.className = "annex-list-page";
+        blank.innerHTML = '<span class="page-label">blank page (back of the List of Documents)</span>';
+        card.after(blank);
+      }
+    }
   }
   renderPages.version = 0;
 
