@@ -577,11 +577,18 @@ def _open_pdf(doc_id, raw_type, min_role="viewer"):
 # being rendered (and held in memory) at once, which is what keeps big documents cheap.
 _pdfium_lock = threading.Lock()
 
+# Whole-document work (the annotated-PDF download, building an annexure) has to hold entire documents in
+# memory, so only one such job runs at a time; everything else (viewing, snippets) stays cheap and concurrent.
+_heavy_lock = threading.Semaphore(1)
 
-def _pdfium_render_page(f, page, zoom):
-    """Render 1-based `page` of the PDF in seekable file `f` at `zoom` x 72 dpi with PDFium, reading
-    only the parts of the file it needs. Returns (PIL image, page width pt, page height pt), or None
-    if `page` is out of range. Raises if PDFium cannot read the file."""
+
+def _pdfium_render_region(f, page, zoom, clip=None):
+    """Render 1-based `page` of the PDF in seekable file `f` with PDFium, reading only the parts of the
+    file it needs. `clip` is (x, y, w, h) as fractions of the page, or None for the whole page; PDFium
+    draws only that region, so a high-dpi snippet never allocates a whole high-dpi page. `zoom` is a
+    number (x 72 dpi) or a function of the region's width in points. Returns
+    (PIL image, (region x0, y0 in points), (page width, height in points), zoom used), or None if
+    `page` is out of range. Raises if PDFium cannot read the file."""
     import pypdfium2 as pdfium
     with _pdfium_lock:
         doc = pdfium.PdfDocument(f)
@@ -591,7 +598,16 @@ def _pdfium_render_page(f, page, zoom):
             pg = doc[page - 1]
             try:
                 w, h = pg.get_size()
-                return pg.render(scale=zoom).to_pil(), w, h
+                x0, y0, x1, y1 = 0.0, 0.0, w, h
+                if clip is not None:
+                    cx, cy, cw, ch = clip
+                    x0, y0 = max(0.0, cx * w), max(0.0, cy * h)
+                    x1, y1 = min(w, min(cx + cw, 1.0) * w), min(h, min(cy + ch, 1.0) * h)
+                    if x1 <= x0 or y1 <= y0:
+                        raise ValueError("empty clip")
+                z = zoom(x1 - x0) if callable(zoom) else zoom
+                img = pg.render(scale=z, crop=(x0, h - y1, w - x1, y0)).to_pil()
+                return img, (x0, y0), (w, h), z
             finally:
                 pg.close()
         finally:
@@ -1331,9 +1347,7 @@ def annexure_ref_data(report_id):
     dn, pn = payload["docNumbers"], payload["pageNumbers"]
     refs, positions, shown, numbered, meta = {}, {}, 0, 0, {}
     for d in payload["documents"]:
-        pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
-            pages = list(annexure_selected_pages(d, src.page_count))
+        pages = list(annexure_selected_pages(d, _page_count(d["id"], d["type"])[0]))
         if not pages:
             continue
         number_docs = dn["enabled"]
@@ -1366,12 +1380,12 @@ def render_page_image(doc_id, filename):
     if not m:
         return None
     page = int(m.group(1))
-    with fitz.open(stream=storage.get_document_pdf_bytes(doc_id), filetype="pdf") as d:
-        if not (1 <= page <= d.page_count):
-            return None
-        p = d[page - 1]
-        draw_annotations_on_page(p, sanitize_annotations(storage.get_page_annotations(doc_id, page)), p.rect)
-        return p.get_pixmap(matrix=fitz.Matrix(PAGE_IMAGE_DPI / 72, PAGE_IMAGE_DPI / 72)).tobytes("png")
+    f = storage.open_document_pdf(doc_id)
+    try:
+        return _render_region_png(f, page, PAGE_IMAGE_DPI / 72, sanitize_annotations(storage.get_page_annotations(doc_id, page)),
+                                  load_bytes=lambda: storage.get_document_pdf_bytes(doc_id))
+    finally:
+        f.close()
 
 
 def read_media_snippet(doc_id, filename):
@@ -3252,6 +3266,56 @@ def api_delete_document(doc_id):
     return jsonify({"ok": True})
 
 
+def _render_region_png(f, page, zoom, annotations, clip=None, load_bytes=None):
+    """PNG bytes of `page` (or the `clip` region of it) of the PDF in seekable file `f`, with the
+    sanitized `annotations` drawn on. Returns None if the page is out of range. If PDFium cannot read the
+    file, falls back to PyMuPDF on `load_bytes()` (the whole document in memory) so odd PDFs still work."""
+    try:
+        got = _pdfium_render_region(f, page, zoom, clip)
+    except Exception:
+        app.logger.warning("PDFium could not render page %s; falling back to PyMuPDF", page, exc_info=True)
+        return _fitz_render_region(load_bytes(), page, zoom, annotations, clip)
+    if got is None:
+        return None
+    img, origin, page_size, z = got
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    if not annotations:
+        return buf.getvalue()
+    return _draw_annotations_on_png(buf.getvalue(), img.size, z, annotations, origin, page_size)
+
+
+def _draw_annotations_on_png(png, size, zoom, annotations, origin, page_size):
+    """Burn annotations into an already-rendered page image (or region of one). The image becomes the
+    only content of a small PyMuPDF page, laid out so the whole page's rectangle sits at `origin` within
+    it, so the existing drawing code (and, for a Share-link visitor, the redaction that wipes the pixels
+    under blackouts) runs unchanged without ever loading the document."""
+    px_w, px_h = size
+    page_rect = fitz.Rect(-origin[0], -origin[1], page_size[0] - origin[0], page_size[1] - origin[1])
+    with fitz.open() as d:
+        p = d.new_page(width=px_w / zoom, height=px_h / zoom)
+        p.insert_image(p.rect, stream=png)
+        draw_annotations_on_page(p, annotations, page_rect)
+        return p.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).tobytes("png")
+
+
+def _fitz_render_region(pdf_bytes, page, zoom, annotations, clip):
+    """The original whole-document renderer, kept as a fallback for a PDF that PDFium cannot read."""
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        if not (1 <= page <= d.page_count):
+            return None
+        p = d[page - 1]
+        pr = p.rect
+        draw_annotations_on_page(p, annotations, pr)
+        rect = pr
+        if clip is not None:
+            x, y, w, h = clip
+            rect = fitz.Rect(pr.x0 + x * pr.width, pr.y0 + y * pr.height,
+                             pr.x0 + min(x + w, 1.0) * pr.width, pr.y0 + min(y + h, 1.0) * pr.height) & pr
+        z = zoom(rect.width) if callable(zoom) else zoom
+        return p.get_pixmap(matrix=fitz.Matrix(z, z), clip=rect).tobytes("png")
+
+
 @app.route("/api/doc/<doc_id>/render/<int:page>")
 def api_render(doc_id, page):
     raw_type = request.args.get("type", "pdf")
@@ -3260,59 +3324,23 @@ def api_render(doc_id, page):
     except ValueError:
         dpi = 150
     dpi = max(50, min(dpi, 600))
-    zoom = dpi / 72
     mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
 
-    rendered = None
     f, _ = _open_pdf(doc_id, raw_type)
     try:
-        rendered = _pdfium_render_page(f, page, zoom)
-    except Exception:
-        app.logger.warning("PDFium could not render %s page %s; falling back to PyMuPDF", doc_id, page, exc_info=True)
-        rendered = False
-    finally:
-        f.close()
-
-    if rendered is None:
-        raise DocumentError("Page out of range", 404)
-    if rendered is False:
-        png_bytes = _render_page_fitz(doc_id, raw_type, page, zoom, mode)
-    else:
-        img, _w, _h = rendered
         annotations = []
         if mode in ("blackouts", "all"):
             annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
-        buf = io.BytesIO()
-        img.save(buf, "PNG")
-        png_bytes = _draw_annotations_on_png(buf.getvalue(), img.size, zoom, annotations) if annotations else buf.getvalue()
+        png_bytes = _render_region_png(f, page, dpi / 72, annotations,
+                                       load_bytes=lambda: _get_pdf_bytes(doc_id, raw_type)[0])
+    finally:
+        f.close()
+    if png_bytes is None:
+        raise DocumentError("Page out of range", 404)
 
     resp = Response(png_bytes, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"
     return resp
-
-
-def _draw_annotations_on_png(png, size, zoom, annotations):
-    """Burn annotations into an already-rendered page image. The image becomes the only content of a
-    one-page PyMuPDF document, so the existing drawing code (and, for a Share-link visitor, the
-    redaction that wipes the pixels under blackouts) runs unchanged on just this page."""
-    px_w, px_h = size
-    with fitz.open() as d:
-        p = d.new_page(width=px_w / zoom, height=px_h / zoom)
-        p.insert_image(p.rect, stream=png)
-        draw_annotations_on_page(p, annotations, p.rect)
-        return p.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).tobytes("png")
-
-
-def _render_page_fitz(doc_id, raw_type, page, zoom, mode):
-    """The original whole-document renderer, kept as a fallback for a PDF that PDFium cannot read."""
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        if not (1 <= page <= d.page_count):
-            raise DocumentError("Page out of range", 404)
-        p = d[page - 1]
-        if mode in ("blackouts", "all"):
-            draw_annotations_on_page(p, annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode), p.rect)
-        return p.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).tobytes("png")
 
 
 # ---------------------------------------------------------------------------
@@ -3360,32 +3388,29 @@ def refresh_page_snippets(doc_id, page, raw_type, raw_annotations):
     snippets = storage.list_snippets(doc_id, page=page)
     if not snippets:
         return 0
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="editor")
+    f, _ = _open_pdf(doc_id, raw_type, min_role="editor")
     annotations = sanitize_annotations(raw_annotations)
     refreshed = 0
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        if not (1 <= page <= d.page_count):
-            return 0
-        p = d[page - 1]
-        pr = p.rect
-        draw_annotations_on_page(p, annotations, pr)
+    try:
         for s in snippets:
             r = s["rect"]
-            clip = fitz.Rect(
-                pr.x0 + r["x"] * pr.width,
-                pr.y0 + r["y"] * pr.height,
-                pr.x0 + min(r["x"] + r["w"], 1.0) * pr.width,
-                pr.y0 + min(r["y"] + r["h"], 1.0) * pr.height,
-            ) & pr
-            dpi = 300
             old = storage.read_snippet_bytes(doc_id, s["filename"])
-            if old and clip.width > 0:
+
+            def zoom_for(clip_width_pt, old=old):
                 # Keep the resolution the snippet was originally extracted at.
-                dpi = max(72, min(round(fitz.Pixmap(old).width / clip.width * 72), 900))
-            zoom = dpi / 72
-            png_bytes = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip).tobytes("png")
+                dpi = 300
+                if old and clip_width_pt > 0:
+                    dpi = max(72, min(round(Image.open(io.BytesIO(old)).width / clip_width_pt * 72), 900))
+                return dpi / 72
+
+            png_bytes = _render_region_png(f, page, zoom_for, annotations, clip=(r["x"], r["y"], r["w"], r["h"]),
+                                           load_bytes=lambda: _get_pdf_bytes(doc_id, raw_type, min_role="editor")[0])
+            if png_bytes is None:
+                return 0
             storage.replace_snippet_image(doc_id, s, bool(annotations), png_bytes)
             refreshed += 1
+    finally:
+        f.close()
     return refreshed
 
 
@@ -3396,7 +3421,8 @@ def refresh_page_snippets(doc_id, page, raw_type, raw_annotations):
 @app.route("/api/doc/<doc_id>/snippet/<int:page>", methods=["POST"])
 def api_create_snippet(doc_id, page):
     raw_type = request.args.get("type", "pdf")
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type, min_role="editor")
+    check_doc_id(doc_id)
+    require_role("source", doc_id, "editor")  # before the body is looked at, as _open_pdf would
 
     body = request.get_json(silent=True) or {}
     try:
@@ -3414,21 +3440,14 @@ def api_create_snippet(doc_id, page):
 
     annotations = sanitize_annotations(body.get("annotations"))
 
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        if not (1 <= page <= d.page_count):
-            raise DocumentError("Page out of range", 404)
-        p = d[page - 1]
-        pr = p.rect
-        draw_annotations_on_page(p, annotations, pr)
-        clip = fitz.Rect(
-            pr.x0 + x * pr.width,
-            pr.y0 + y * pr.height,
-            pr.x0 + min(x + w, 1.0) * pr.width,
-            pr.y0 + min(y + h, 1.0) * pr.height,
-        ) & pr
-        zoom = dpi / 72
-        pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
-        png_bytes = pix.tobytes("png")
+    f, _ = _open_pdf(doc_id, raw_type, min_role="editor")
+    try:
+        png_bytes = _render_region_png(f, page, dpi / 72, annotations, clip=(x, y, w, h),
+                                       load_bytes=lambda: _get_pdf_bytes(doc_id, raw_type, min_role="editor")[0])
+    finally:
+        f.close()
+    if png_bytes is None:
+        raise DocumentError("Page out of range", 404)
 
     entry = storage.create_snippet(doc_id, page, {"x": x, "y": y, "w": w, "h": h}, bool(annotations), png_bytes,
                                   created_by=None if g.user.is_guest else g.user.id)
@@ -3439,34 +3458,36 @@ def api_create_snippet(doc_id, page):
 
 
 def _annotated_pdf_response(doc_id, annotated_only):
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    with _heavy_lock:
+        pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
 
-    data = storage.get_all_annotations(doc_id)
+        data = storage.get_all_annotations(doc_id)
 
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        annotated_pages = set()
-        for page_key, raw_anns in data.items():
-            try:
-                page_num = int(page_key)
-            except ValueError:
-                continue
-            if not (1 <= page_num <= d.page_count):
-                continue
-            annotations = sanitize_annotations(raw_anns)
-            if not annotations:
-                continue
-            p = d[page_num - 1]
-            draw_annotations_on_page(p, annotations, p.rect)
-            annotated_pages.add(page_num - 1)
-        if annotated_only:
-            # Pages a snippet was taken from count as annotated too.
-            for snip in storage.list_snippets(doc_id):
-                if 1 <= snip["page"] <= d.page_count:
-                    annotated_pages.add(snip["page"] - 1)
-            if not annotated_pages:
-                raise DocumentError("This document has no annotated or snippet pages.", 400)
-            d.select(sorted(annotated_pages))
-        annotated_pdf_bytes = d.tobytes(deflate=True)
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+            annotated_pages = set()
+            for page_key, raw_anns in data.items():
+                try:
+                    page_num = int(page_key)
+                except ValueError:
+                    continue
+                if not (1 <= page_num <= d.page_count):
+                    continue
+                annotations = sanitize_annotations(raw_anns)
+                if not annotations:
+                    continue
+                p = d[page_num - 1]
+                draw_annotations_on_page(p, annotations, p.rect)
+                annotated_pages.add(page_num - 1)
+            if annotated_only:
+                # Pages a snippet was taken from count as annotated too.
+                for snip in storage.list_snippets(doc_id):
+                    if 1 <= snip["page"] <= d.page_count:
+                        annotated_pages.add(snip["page"] - 1)
+                if not annotated_pages:
+                    raise DocumentError("This document has no annotated or snippet pages.", 400)
+                d.select(sorted(annotated_pages))
+            annotated_pdf_bytes = d.tobytes(deflate=True)
+        pdf_bytes = None  # the source copy isn't needed while the response is sent
 
     suffix = "annotated-pages" if annotated_only else "annotated"
     log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
@@ -4070,7 +4091,12 @@ def api_report_annexure(report_id):
 
 
 def _annexure_pdf_bytes(payload):
-    """The annexure payload rendered as one PDF (bytes)."""
+    """The annexure payload rendered as one PDF (bytes). Holds whole documents in memory, so one at a time."""
+    with _heavy_lock:
+        return _annexure_pdf_bytes_locked(payload)
+
+
+def _annexure_pdf_bytes_locked(payload):
     out = fitz.open()
     mode = guest_annotation_mode(payload["annotations"])
     first_pages = []  # index in `out` of each document's first page
@@ -4145,9 +4171,7 @@ def _annexure_list_rows(payload):
     rows = []
     shown = 0  # annexure pages laid out so far, across documents
     for d in payload["documents"]:
-        pdf_bytes, _ = _get_pdf_bytes(d["id"], d["type"])
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as src:
-            count = len(annexure_selected_pages(d, src.page_count))
+        count = len(annexure_selected_pages(d, _page_count(d["id"], d["type"])[0]))
         if count:
             text = (d["description"] or d["title"]).strip()
             rows.append((f"{doc_number_label(dn, len(rows))} - {text}" if dn["enabled"] else text,

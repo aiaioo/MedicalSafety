@@ -33,6 +33,7 @@ HTTP error shape they want; this module doesn't know about Flask.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import secrets
@@ -361,7 +362,11 @@ def _document_pdf_key(document_id: str) -> str:
 def get_document_pdf_bytes(document_id: str) -> bytes:
     """The document's whole PDF in memory. Only PDFs can be uploaded; a document of any other
     type is an error. Prefer open_document_pdf for anything that doesn't need every byte."""
-    return get_storage_backend().read_bytes(_document_pdf_key(document_id))
+    with get_storage_backend().open_read(_document_pdf_key(document_id)) as f:
+        buf = bytearray(f.seek(0, io.SEEK_END))
+        f.seek(0)
+        f.readinto(buf)  # decrypted straight into one buffer: no list of chunks, no second joined copy
+    return buf  # a bytearray: fitz.open(stream=...) and Response take it like bytes
 
 
 def open_document_pdf(document_id: str):
