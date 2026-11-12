@@ -437,7 +437,6 @@
 
     const img = document.createElement("img");
     img.alt = `Page ${pageNum} of ${docId}`;
-    img.loading = "lazy";
 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
@@ -523,7 +522,18 @@
       layout();
       redraw();
     });
-    img.src = renderUrlBase.replace("__PAGE__", pageNum) + "&dpi=150";
+    // The image is fetched only while the page is near the viewport (see imageObserver):
+    // setting src for every page up front queued hundreds of renders, so the pages being
+    // looked at waited behind ones nobody was near. Clearing src on a page that has not
+    // loaded yet, once it is far away, cancels its pending request.
+    const imgUrl = renderUrlBase.replace("__PAGE__", pageNum) + "&dpi=150";
+    controller.wantImage = (want) => {
+      if (want) {
+        if (!img.getAttribute("src")) img.src = imgUrl;
+      } else if (!img.complete && img.getAttribute("src")) {
+        img.removeAttribute("src");
+      }
+    };
 
     // ---- text box editing: a textarea laid over the box while typing ----
     function positionEditor() {
@@ -871,6 +881,7 @@
   function mountPages(desiredPageNums) {
     for (const controller of mounted.values()) {
       pageObserver.unobserve(controller.wrap);
+      imageObserver.unobserve(controller.wrap);
     }
     mounted.clear();
     container.innerHTML = "";
@@ -880,6 +891,7 @@
       mounted.set(p, controller);
       container.appendChild(controller.wrap);
       pageObserver.observe(controller.wrap);
+      imageObserver.observe(controller.wrap);
       controller.layout();
     }
     updateCurrentPageHighlight();
@@ -945,6 +957,18 @@
       if (best !== null) setCurrentPage(best);
     },
     { root: container, threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] }
+  );
+
+  // Fetch page images only for pages within about two screens of the visible area. Created
+  // with the other observers; mountPages (above) only runs after this file has finished loading.
+  const imageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const controller = mounted.get(parseInt(entry.target.dataset.page, 10));
+        if (controller && controller.wantImage) controller.wantImage(entry.isIntersecting);
+      }
+    },
+    { root: container, rootMargin: "200% 0px 200% 0px" }
   );
 
   function scrollToPage(p) {
