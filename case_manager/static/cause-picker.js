@@ -79,11 +79,25 @@
     const hideConfirm = () => { confirmEl.hidden = true; };
     document.getElementById("causeDeleteNo").addEventListener("click", hideConfirm);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideConfirm(); });
-    document.getElementById("deleteCauseBtn").addEventListener("click", () => {
+    document.getElementById("deleteCauseBtn").addEventListener("click", async () => {
       if (!current) return;
-      confirmMsg.textContent = `Delete the cause "${picker.selectedOptions[0].textContent}"? This cannot be undone.`;
-      confirmYes.hidden = false;
       confirmYes.disabled = false;
+      try {
+        // Ask first: a cause that can't be deleted (it has cases etc.) gets the reason, not a confirmation.
+        const res = await fetch(causeUrl(current) + "/delete-blocker");
+        if (!res.ok) throw new Error(await errorText(res));
+        const { reason } = await res.json();
+        if (reason) {
+          confirmMsg.textContent = reason;
+          confirmYes.hidden = true;
+        } else {
+          confirmMsg.textContent = `Delete the cause "${picker.selectedOptions[0].textContent}"? This cannot be undone.`;
+          confirmYes.hidden = false;
+        }
+      } catch (err) {
+        confirmMsg.textContent = "Could not delete cause: " + err.message;
+        confirmYes.hidden = true;
+      }
       confirmEl.hidden = false;
     });
     confirmYes.addEventListener("click", async () => {

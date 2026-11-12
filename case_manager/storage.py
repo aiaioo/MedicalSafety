@@ -1144,6 +1144,22 @@ def _relink_orphans(cur, gone_kind: str, gone_id: str, new_cause_id: str) -> Non
         )
 
 
+def cause_delete_blocker(cause_id: str, user_id: int) -> str | None:
+    """Why `delete_cause` would refuse right now (the same checks), or None if it would go ahead."""
+    with _cursor() as cur:
+        for sql, message in (
+            ("SELECT 1 FROM cases WHERE cause_id = %s LIMIT 1", "Cannot delete a cause that still has cases"),
+            ("SELECT 1 FROM allegations WHERE cause_id = %s LIMIT 1", "Cannot delete a cause that still has allegations"),
+        ):
+            cur.execute(sql, (cause_id,))
+            if cur.fetchone() is not None:
+                return message
+        cur.execute("SELECT COUNT(*) AS n FROM user_causes WHERE user_id = %s AND role IN ('owner', 'editor')", (user_id,))
+        if cur.fetchone()["n"] <= 1:
+            return "Cannot delete your last remaining cause"
+    return None
+
+
 def delete_cause(cause_id: str, fallback_cause_id: str, user_id: int) -> None:
     """Refused while the cause has cases or allegations, or is
     `user_id`'s last cause they can edit. Otherwise, in one transaction:

@@ -5119,6 +5119,15 @@ def api_cause(cause_id):
     return jsonify(data)
 
 
+@app.route("/api/cause/<cause_id>/delete-blocker")
+def api_cause_delete_blocker(cause_id):
+    """{"reason": why this cause can't be deleted right now, or null} -- so the UI can say so
+    instead of asking for a confirmation that would only be refused."""
+    check_report_id(cause_id)
+    require_role("cause", cause_id, "owner")
+    return jsonify({"reason": storage.cause_delete_blocker(cause_id, g.user.id)})
+
+
 # ---------------------------------------------------------------------------
 # API: global allegations (each optionally linked to one or more cases)
 # ---------------------------------------------------------------------------
