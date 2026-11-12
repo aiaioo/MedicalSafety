@@ -47,7 +47,6 @@
     }
 
     document.getElementById("causeCancel").addEventListener("click", closeModal);
-    modal.addEventListener("mousedown", (e) => { if (e.target === modal) closeModal(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modal.classList.contains("open")) closeModal(); });
 
     form.addEventListener("submit", async (e) => {

@@ -1179,5 +1179,7 @@ a.cause-static { text-decoration: none; color: inherit; }
 .cause-delete-confirm .btn { background: white; border-color: #e0a29b; color: #a12a1f; }
 #causeDeleteYes { background: #c0392b; border-color: #c0392b; color: white; }
 
-/* The create/rename-cause popup sits a little way down the window, clear of the browser's top bar. */
-#causeModal { align-items: flex-start; padding-top: 18vh; box-sizing: border-box; }
+/* The create/rename-cause popup is not modal: a small panel dropped under the title bar, with no dimmed backdrop. */
+#causeModal.modal-overlay { position: absolute; inset: auto; left: 16px; top: 100%; z-index: 200; background: none; display: none; }
+#causeModal.modal-overlay.open { display: block; }
+#causeModal .modal { margin-top: 6px; border: 1px solid #cfd4e0; }
