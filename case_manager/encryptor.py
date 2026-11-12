@@ -160,6 +160,84 @@ def _decrypt_stream(f, key=None):
         counter, cur = counter + 1, nxt
 
 
+def encrypt_stream(chunks, key=None):
+    """Yield the ciphertext file as byte pieces for an iterable/stream of plaintext
+    chunks, holding only a couple of 64 KB chunks in memory at a time."""
+    return _encrypt_chunks(chunks, key or key_manager.get_key())
+
+
+class DecryptedFile(io.RawIOBase):
+    """A read-only, seekable view of the plaintext of an encrypted file object.
+
+    The format is independent 64 KB AES-GCM chunks, so any byte range is read by decrypting only the
+    chunks that cover it. The whole file is never held in memory or decrypted to disk: at most
+    ``cache_chunks`` decrypted chunks are kept, and ``close`` drops them. ``raw`` must be a seekable
+    binary file (it is closed with this object).
+    """
+
+    def __init__(self, raw, key=None, cache_chunks=4):
+        super().__init__()
+        self._raw = raw
+        self._aead = AESGCM(key or key_manager.get_key())
+        self._cache_max = cache_chunks
+        self._cache = {}  # chunk index -> plaintext, oldest first
+        self._pos = 0
+        self._hdr = len(MAGIC) + _PREFIX_LEN
+        self._block = CHUNK_SIZE + _TAG
+        raw.seek(0)
+        header = raw.read(self._hdr)
+        if len(header) != self._hdr or not header.startswith(MAGIC):
+            raise InvalidToken("not an encryptor file")
+        self._prefix = header[len(MAGIC):]
+        total = raw.seek(0, io.SEEK_END)
+        body = total - self._hdr
+        if body < _TAG:
+            raise InvalidToken("wrong key or corrupted file")
+        self._nblocks = -(-body // self._block)
+        self._size = body - _TAG * self._nblocks
+
+    def readable(self): return True
+    def seekable(self): return True
+    def tell(self): return self._pos
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self._pos, io.SEEK_END: self._size}[whence]
+        self._pos = max(0, base + offset)
+        return self._pos
+
+    def _chunk(self, i):
+        got = self._cache.get(i)
+        if got is not None:
+            return got
+        self._raw.seek(self._hdr + i * self._block)
+        blob = self._raw.read(self._block)
+        try:
+            plain = self._aead.decrypt(_nonce(self._prefix, i, i == self._nblocks - 1), blob, None)
+        except InvalidTag:
+            raise InvalidToken("wrong key or corrupted file") from None
+        if len(self._cache) >= self._cache_max:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[i] = plain
+        return plain
+
+    def readinto(self, buf):
+        want = min(len(buf), max(0, self._size - self._pos))
+        done = 0
+        while done < want:
+            i, off = divmod(self._pos, CHUNK_SIZE)
+            piece = self._chunk(i)[off:off + want - done]
+            buf[done:done + len(piece)] = piece
+            done += len(piece)
+            self._pos += len(piece)
+        return done
+
+    def close(self):
+        if not self.closed:
+            self._cache.clear()
+            self._raw.close()
+        super().close()
+
+
 def decrypt_bytes(blob, key=None):
     """Decrypt bytes produced by encrypt_bytes / read from a .enc file, with
     the remembered key unless ``key`` is given."""

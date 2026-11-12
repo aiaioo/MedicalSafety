@@ -16,6 +16,7 @@ document was uploaded for -- see owner_dir_name().
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -79,6 +80,16 @@ class StorageBackend(ABC):
     @abstractmethod
     def write_bytes(self, key: str, data: bytes) -> None: ...
 
+    def write_stream(self, key: str, chunks) -> None:
+        """Write an iterable of byte chunks without joining them in memory first
+        (backends override this; the default does join, which is fine for small blobs)."""
+        self.write_bytes(key, b"".join(chunks))
+
+    def open_read(self, key: str):
+        """A seekable binary file object for the blob (close it when done). Backends
+        that can read lazily override this; the default loads the whole blob."""
+        return io.BytesIO(self.read_bytes(key))
+
     @abstractmethod
     def delete(self, key: str) -> None: ...
 
@@ -121,6 +132,21 @@ class LocalFilesystemStorage(StorageBackend):
         tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")
         tmp.write_bytes(data)
         tmp.replace(path)
+
+    def write_stream(self, key: str, chunks) -> None:
+        path = self._resolve(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")
+        try:
+            with open(tmp, "wb") as f:
+                for piece in chunks:
+                    f.write(piece)
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def open_read(self, key: str):
+        return open(self._resolve(key), "rb")
 
     def delete(self, key: str) -> None:
         self._resolve(key).unlink(missing_ok=True)
@@ -191,6 +217,13 @@ class EncryptedStorage(StorageBackend):
 
     def write_bytes(self, key: str, data: bytes) -> None:
         self.inner.write_bytes(self._enc_key(key), encryptor.encrypt_bytes(data))
+
+    def write_stream(self, key: str, chunks) -> None:
+        self.inner.write_stream(self._enc_key(key), encryptor.encrypt_stream(chunks))
+
+    def open_read(self, key: str):
+        """Plaintext, seekable, decrypted chunk by chunk on demand -- never whole."""
+        return encryptor.DecryptedFile(self.inner.open_read(self._enc_key(key)))
 
     def delete(self, key: str) -> None:
         self.inner.delete(self._enc_key(key))

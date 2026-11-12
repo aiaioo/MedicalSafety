@@ -3030,37 +3030,92 @@ def api_object_key_item(kind, key_id):
 # API: document upload
 # ---------------------------------------------------------------------------
 
+class _MultipartFile:
+    """Incrementally parses a multipart/form-data request body from the socket and exposes the
+    `file` part as (filename, chunk iterator), so an upload is never held whole in memory or spooled
+    to disk: each chunk can be encrypted and written as it arrives."""
+
+    READ = 64 * 1024
+
+    def __init__(self, req):
+        from werkzeug.sansio.multipart import MultipartDecoder
+        boundary = req.mimetype_params.get("boundary")
+        if req.mimetype != "multipart/form-data" or not boundary:
+            raise DocumentError("No file uploaded (expected multipart field 'file')", 400)
+        self._stream = req.stream
+        self._decoder = MultipartDecoder(boundary.encode("ascii", "ignore"), max_form_memory_size=1024 * 1024)
+        self._done = False
+
+    def _events(self):
+        from werkzeug.sansio.multipart import NeedData
+        while True:
+            event = self._decoder.next_event()
+            if isinstance(event, NeedData):
+                if self._done:
+                    raise DocumentError("Malformed upload", 400)
+                data = self._stream.read(self.READ)
+                self._decoder.receive_data(data or None)
+                self._done = not data
+                continue
+            yield event
+
+    def find_file(self, field="file"):
+        """Advance to the named file part; returns (filename, chunks) or (None, None)."""
+        from werkzeug.sansio.multipart import Data, Epilogue, File
+        events = self._events()
+        for event in events:
+            if isinstance(event, Epilogue):
+                return None, None
+            if isinstance(event, File) and event.name == field:
+                def chunks():
+                    for e in events:
+                        if isinstance(e, Data):
+                            if e.data:
+                                yield e.data
+                            if not e.more_data:
+                                return
+                        else:
+                            raise DocumentError("Malformed upload", 400)
+                return event.filename, chunks()
+        return None, None
+
+
+def _check_pdf_stream(f):
+    """Raises DocumentError unless the seekable file object holds a readable PDF with pages. Reads
+    only what it needs (the header, the cross-reference data and the page tree)."""
+    from pypdf import PdfReader
+    f.seek(0)
+    if b"%PDF-" not in f.read(1024):
+        raise DocumentError("File is not a valid PDF", 400)
+    try:
+        count = len(PdfReader(f, strict=False).pages)
+    except Exception as exc:
+        raise DocumentError(f"File is not a valid PDF: {exc}", 400) from exc
+    if count == 0:
+        raise DocumentError("PDF has no pages", 400)
+
+
 @app.route("/api/documents/upload", methods=["POST"])
 def api_upload_document():
-
-    f = request.files.get("file")
-    if f is None or not f.filename:
+    # Deliberately not request.files: that would hold the whole upload in memory. The body is read
+    # from the socket in small pieces and encrypted straight into storage (see _MultipartFile).
+    filename, chunks = _MultipartFile(request).find_file("file")
+    if not filename:
         raise DocumentError("No file uploaded (expected multipart field 'file')", 400)
 
-    ext = Path(f.filename).suffix.lower()
+    ext = Path(filename).suffix.lower()
     norm_type = UPLOAD_EXTENSIONS.get(ext)
     if norm_type is None:
         raise DocumentError(f"Unsupported file type {ext!r}. Upload a .pdf file.", 400)
 
-    data = f.read()
-    if not data:
-        raise DocumentError("Uploaded file is empty", 400)
-
-    try:
-        with fitz.open(stream=data, filetype="pdf") as d:
-            if d.page_count == 0:
-                raise DocumentError("PDF has no pages", 400)
-    except DocumentError:
-        raise
-    except Exception as exc:
-        raise DocumentError(f"File is not a valid PDF: {exc}", 400) from exc
-
-    stem = slugify_report_name(Path(f.filename).stem)
+    stem = slugify_report_name(Path(filename).stem)
     doc_id = stem
     while storage.document_exists(doc_id):
         doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
 
-    storage.create_document(doc_id, ext.lstrip("."), data, owner_id=g.user.id, link=default_cause_link())
+    storage.create_document_streaming(
+        doc_id, ext.lstrip("."), chunks, owner_id=g.user.id, link=default_cause_link(), validate=_check_pdf_stream,
+    )
 
     return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
 

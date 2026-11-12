@@ -292,6 +292,33 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
         _link(cur, "source", document_id, *link)
 
 
+def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id: int, link: tuple[str, str],
+                              validate=None) -> None:
+    """Like create_document, but the bytes arrive as an iterable of chunks and are encrypted as they
+    come, so the file is never held whole in memory (or on disk unencrypted). `validate`, if given,
+    is called with a seekable decrypting file object once everything is stored; if it raises, the
+    stored file is removed and nothing is registered."""
+    with _cursor() as cur:
+        owner = _cause_owner_dir(cur, link, owner_id)
+    backend = get_storage_backend()
+    key = document_storage_key(document_id, doc_type, owner)
+    backend.write_stream(key, chunks)
+    try:
+        if validate is not None:
+            with backend.open_read(key) as f:
+                validate(f)
+        with _cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
+                (document_id, doc_type, _enc_text(document_id), owner),
+            )
+            _grant(cur, owner_id, "source", document_id, "owner")
+            _link(cur, "source", document_id, *link)
+    except BaseException:
+        backend.delete(key)
+        raise
+
+
 def delete_document(document_id: str) -> None:
     """Removes a document's row plus its file (and any docx->pdf render
     cache entry). Refused while it has annotations or snippets, is linked
