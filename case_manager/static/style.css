@@ -1184,3 +1184,30 @@ a.cause-static { text-decoration: none; color: inherit; }
 #causeModal.modal-overlay { position: absolute; inset: auto; left: 16px; top: 100%; z-index: 200; background: none; display: none; }
 #causeModal.modal-overlay.open { display: block; }
 #causeModal .modal { margin-top: 6px; border: 1px solid #cfd4e0; }
+
+/* Sliding toggle switches in place of checkboxes (annexures, annotations, reports panels) */
+label.annex-toggle input[type="checkbox"],
+label.toggle-label #continuousToggle,
+.list-cascade-field input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none;
+  position: relative; display: inline-block; flex: none;
+  width: 30px; height: 17px; margin: 0 8px 0 0; padding: 0; border: 0;
+  border-radius: 999px; background: #c3c9d6; vertical-align: middle;
+  cursor: pointer; transition: background 0.15s;
+}
+label.annex-toggle input[type="checkbox"]::before,
+label.toggle-label #continuousToggle::before,
+.list-cascade-field input[type="checkbox"]::before {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
+}
+label.annex-toggle input[type="checkbox"]:checked,
+label.toggle-label #continuousToggle:checked,
+.list-cascade-field input[type="checkbox"]:checked { background: #2266dd; }
+label.annex-toggle input[type="checkbox"]:checked::before,
+label.toggle-label #continuousToggle:checked::before,
+.list-cascade-field input[type="checkbox"]:checked::before { transform: translateX(13px); }
+label.annex-toggle input[type="checkbox"]:focus-visible,
+label.toggle-label #continuousToggle:focus-visible,
+.list-cascade-field input[type="checkbox"]:focus-visible { outline: 2px solid #2266dd; outline-offset: 2px; }

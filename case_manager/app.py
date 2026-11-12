@@ -4097,9 +4097,9 @@ def annexure_page_range(start, end, pn):
 
 
 def annexure_doc_padding(count, pn):
-    """1 if a document of `count` pages gets an empty page after it (with "number alternate pages", so the next
-    document starts on the front of a sheet), else 0."""
-    return count % 2 if pn["position"] != "none" and pn.get("alternate") else 0
+    """1 if a document of `count` pages gets an empty page after it (so the next document starts on the front of
+    a sheet), else 0."""
+    return count % 2
 
 
 def annexure_selected_pages(d, page_count):

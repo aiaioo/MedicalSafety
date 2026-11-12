@@ -199,7 +199,7 @@
         container.appendChild(wrap);
         observer.observe(wrap);
       }
-      const padded = shown > firstIndex && pn.position !== "none" && pn.alternate && (shown - firstIndex) % 2 === 1;
+      const padded = shown > firstIndex && (shown - firstIndex) % 2 === 1;
       if (padded) {
         // an empty page, so the next document starts on the front of a sheet
         const last = container.lastElementChild;
