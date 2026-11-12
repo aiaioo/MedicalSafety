@@ -167,7 +167,8 @@
         bmp.close();
         items.push({ file, base: c, thumb: c, rot: 0 });
       } catch (e) {
-        failed.push(file.name);
+        console.error("Could not read image", file.name, e);
+        failed.push(`${file.name} (${(e && e.message) || e})`);
       }
     }
     setStatus(failed.length ? `Could not read: ${failed.join(", ")}` : "", failed.length > 0);
@@ -197,7 +198,8 @@
       items.push({ pdf, group: true, file, base: c, thumb: c, rot: 0 });
       setStatus("");
     } catch (e) {
-      failed.push(file.name);
+      console.error("Could not read PDF", file.name, e);
+      failed.push(`${file.name} (${(e && e.message) || e})`);
     }
   }
 
