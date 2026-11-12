@@ -1,10 +1,15 @@
-{#- Title-bar picker for the user's default cause (app.py's inject_cause_picker).
-    Choosing one makes it the default and reloads. Hidden when the account has
-    only one cause -- unless `cause_manage` is set (the Cases page), where it is
-    always shown and also offers "New cause…" (a popup), Rename and Delete.
-    (An open report doesn't include this: its cause is fixed, so reports.html
-    shows it as text.) -#}
-{% if picker_causes and (cause_manage or picker_causes|length > 1) %}
+{#- The cause the user is working in (app.py's inject_cause_picker). Causes are created and
+    selected only on the Cases page, which sets `cause_manage`: there it is a dropdown with
+    "New cause…" (a popup), Rename and Delete, and choosing one makes it the default and
+    reloads. Everywhere else it is just the current cause's name, shown when the account has
+    more than one cause. (An open report doesn't include this: its cause is fixed, so
+    reports.html shows it as text.) -#}
+{% if picker_causes and not cause_manage %}
+{% if picker_causes|length > 1 %}
+<span class="cause-label">Cause:</span>
+<a class="cause-picker cause-static" href="{{ url_for('cases_view') }}" title="Change the cause on the Cases page">{% for c in picker_causes %}{% if c.id == picker_current %}{{ c.title }}{% endif %}{% endfor %}</a>
+{% endif %}
+{% elif picker_causes %}
 <label class="cause-label" for="causePicker">Cause:</label>
 <select id="causePicker" class="cause-picker" title="Default cause"
         data-url="{{ url_for('api_default_cause') }}"
