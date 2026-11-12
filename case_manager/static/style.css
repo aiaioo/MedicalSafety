@@ -769,22 +769,6 @@ a.tag:hover { background: #d7deec; }
 .case-links-popover .case-link-row input { margin: 0; }
 .case-links-popover .empty { margin: 0; font-size: 12px; }
 
-/* ---- causes workspace: goal cards (title + description + linked cases,
-   reusing the .evidence-card shell and .case-links-inline popover above) ---- */
-.goal-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.goal-title-input {
-  border: 1px solid transparent; background: transparent; border-radius: 4px;
-  padding: 4px 6px; font-family: inherit; font-size: 14px; font-weight: 600; color: #1c1c1c;
-}
-.goal-title-input:hover { background: #f7f8fa; }
-.goal-title-input:focus { outline: none; background: white; border-color: #cfd4e0; }
-.goal-description-input {
-  display: block; width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent;
-  border-radius: 4px; padding: 4px 6px; font-size: 13px; color: #1c1c1c; resize: vertical; overflow-y: hidden; font-family: inherit; line-height: 1.4;
-}
-.goal-description-input:hover { background: #f7f8fa; }
-.goal-description-input:focus { outline: none; background: white; border-color: #cfd4e0; }
-
 /* ---- allegations: "Things to Prove" section (above the evidence columns;
    reuses the .evidence-card shell like the goal cards above) ---- */
 .to-prove-section { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid #e0e2e8; }
@@ -993,7 +977,7 @@ a.tag:hover { background: #d7deec; }
 /* Read-only cards/panes (see static/readonly-lock.js). */
 .ro-locked input[readonly], .ro-locked textarea[readonly] { background: #f6f7f9; color: #6b7280; }
 .ro-locked button:disabled, .ro-locked select:disabled { opacity: .45; cursor: not-allowed; }
-#casesApp .btn:disabled, #causesApp .btn:disabled, #allegationsApp .btn:disabled { opacity: .45; cursor: not-allowed; }
+#casesApp .btn:disabled, #allegationsApp .btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Annexure page for viewers: the right panel is read-only. */
 #app.annex-readonly .annex-grip { visibility: hidden; }
@@ -1117,9 +1101,6 @@ a.tag:hover { background: #d7deec; }
 .activity-action { font-weight: 600; white-space: nowrap; }
 .activity-detail, .activity-actor { color: #8a92a5; }
 .activity-pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 28px 0 8px; }
-
-/* A blank line between a cause's goals and its cases. */
-.cause-cases-head { margin-top: 1.5em; }
 
 /* ---- create document from images (static/images-to-pdf.js) ---- */
 .images-modal { width: 640px; max-height: 90vh; overflow-y: auto; }

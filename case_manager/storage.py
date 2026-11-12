@@ -1019,144 +1019,18 @@ def list_cause_title_templates() -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def save_cause_title_template(template_id: str, name: str, body: str) -> None:
+def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
+    """Creates or renames a cause. Pass `owner_id` when creating, to record
+    the creator's ownership in the same transaction."""
     with _cursor() as cur:
         cur.execute(
             """
-            INSERT INTO cause_title_templates (id, name, body) VALUES (%s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, body = EXCLUDED.body
+            INSERT INTO causes (id, title, created_at, updated_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated_at = EXCLUDED.updated_at
             """,
-            (template_id, name, body),
+            (cause_id, _enc_text(data["title"]), data["created_at"], data["updated_at"]),
         )
-
-
-def delete_cause_title_template(template_id: str) -> None:
-    with _cursor() as cur:
-        cur.execute("DELETE FROM cause_title_templates WHERE id = %s", (template_id,))
-        cur.execute("UPDATE cases SET cause_title_template_id = NULL WHERE cause_title_template_id = %s", (template_id,))
-
-
-def delete_case(case_id: str) -> None:
-    """Refused while the case has hearings or allegations. Reports/sources
-    associated only with this case move to its cause."""
-    with _cursor() as cur:
-        cur.execute("SELECT cause_id FROM cases WHERE id = %s FOR UPDATE", (case_id,))
-        row = cur.fetchone()
-        if row is None:
-            return
-        _refuse_if_any(cur, "SELECT 1 FROM hearings WHERE case_id = %s LIMIT 1", (case_id,),
-                       "Cannot delete a case that still has hearings")
-        _refuse_if_any(cur, "SELECT 1 FROM allegation_cases WHERE case_id = %s LIMIT 1", (case_id,),
-                       "Cannot delete a case that still has allegations")
-        _relink_orphans(cur, "case", case_id, row["cause_id"])
-        cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
-
-
-def count_allegations_by_case() -> dict:
-    with _cursor() as cur:
-        cur.execute("SELECT case_id, COUNT(*) AS n FROM allegation_cases GROUP BY case_id")
-        return {r["case_id"]: r["n"] for r in cur.fetchall()}
-
-
-def list_case_ids_by_cause(cause_id: str) -> list[str]:
-    with _cursor() as cur:
-        cur.execute("SELECT id FROM cases WHERE cause_id = %s", (cause_id,))
-        return [r["id"] for r in cur.fetchall()]
-
-
-# ---------------------------------------------------------------------------
-# Causes (+ goals, each optionally linked to cases)
-# ---------------------------------------------------------------------------
-
-_GOAL_QUERY = """
-    SELECT g.cause_id, g.id, g.title, g.description, g.position, g.created_by,
-           COALESCE(array_agg(gc.case_id ORDER BY gc.position) FILTER (WHERE gc.case_id IS NOT NULL), '{{}}') AS case_ids
-    FROM goals g
-    LEFT JOIN goal_cases gc ON gc.goal_id = g.id
-    {where}
-    GROUP BY g.cause_id, g.id, g.title, g.description, g.position, g.created_by
-    ORDER BY g.position
-"""
-
-
-def _goal_dict(row: dict) -> dict:
-    return {"id": row["id"], "title": _dec_text(row["title"]), "description": _dec_text(row["description"]),
-            "case_ids": list(row["case_ids"]), "creator_id": row["created_by"]}
-
-
-def list_causes(user_id: int) -> list[dict]:
-    """The causes this user has any role on, each carrying that "role"."""
-    with _cursor() as cur:
-        cur.execute(
-            """
-            SELECT c.id, c.title, c.description, c.created_at, c.updated_at, uc.role
-            FROM causes c JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s
-            """,
-            (user_id,),
-        )
-        cause_rows = cur.fetchall()
-        cur.execute(_GOAL_QUERY.format(where="WHERE g.cause_id = ANY(%s)"), ([c["id"] for c in cause_rows],))
-        goal_rows = cur.fetchall()
-    goals_by_cause: dict[str, list] = {}
-    for g in goal_rows:
-        goals_by_cause.setdefault(g["cause_id"], []).append(_goal_dict(g))
-    return [
-        {
-            "id": c["id"], "title": _dec_text(c["title"]), "description": _dec_text(c["description"]),
-            "goals": goals_by_cause.get(c["id"], []),
-            "role": c["role"],
-            "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"]),
-        }
-        for c in cause_rows
-    ]
-
-
-def cause_exists(cause_id: str) -> bool:
-    return _exists("causes", cause_id)
-
-
-def get_cause(cause_id: str) -> dict | None:
-    with _cursor() as cur:
-        cur.execute("SELECT title, description, created_at, updated_at FROM causes WHERE id = %s", (cause_id,))
-        row = cur.fetchone()
-        if row is None:
-            return None
-        cur.execute(_GOAL_QUERY.format(where="WHERE g.cause_id = %s"), (cause_id,))
-        goal_rows = cur.fetchall()
-    return {
-        "title": _dec_text(row["title"]), "description": _dec_text(row["description"]),
-        "goals": [_goal_dict(g) for g in goal_rows],
-        "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
-    }
-
-
-def save_cause(cause_id: str, data: dict, owner_id: int | None = None, actor_id: int | None = None) -> None:
-    """Creates or overwrites a cause. Pass `owner_id` when creating, to
-    record the creator's ownership in the same transaction. Goals not saved
-    before are recorded as added by `actor_id`; the others keep their creator."""
-    with _cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO causes (id, title, description, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description,
-                                            updated_at = EXCLUDED.updated_at
-            """,
-            (cause_id, _enc_text(data["title"]), _enc_text(data["description"]), data["created_at"], data["updated_at"]),
-        )
-        creators = _item_creators(cur, "goals", "cause_id", cause_id)
-        cur.execute("DELETE FROM goals WHERE cause_id = %s", (cause_id,))  # cascades to goal_cases
-        for position, goal in enumerate(data.get("goals") or []):
-            cur.execute(
-                "INSERT INTO goals (id, cause_id, title, description, position, created_by) VALUES (%s, %s, %s, %s, %s, %s)",
-                (goal["id"], cause_id, _enc_text(goal.get("title", "")), _enc_text(goal.get("description", "")), position,
-                 creators.get(goal["id"], actor_id)),
-            )
-            for case_position, case_id in enumerate(goal.get("case_ids") or []):
-                cur.execute(
-                    "INSERT INTO goal_cases (goal_id, case_id, position) VALUES (%s, %s, %s)",
-                    (goal["id"], case_id, case_position),
-                )
         if owner_id is not None:
             _grant(cur, owner_id, "cause", cause_id, "owner")
 
@@ -1185,7 +1059,7 @@ def _relink_orphans(cur, gone_kind: str, gone_id: str, new_cause_id: str) -> Non
 
 
 def delete_cause(cause_id: str, fallback_cause_id: str, user_id: int) -> None:
-    """Refused while the cause has goals, cases or allegations, or is
+    """Refused while the cause has cases or allegations, or is
     `user_id`'s last cause they can edit. Otherwise, in one transaction:
     reports/sources associated only with it move to `fallback_cause_id`,
     and so does `user_id`'s default if it was this cause."""
@@ -1193,8 +1067,6 @@ def delete_cause(cause_id: str, fallback_cause_id: str, user_id: int) -> None:
         cur.execute("SELECT 1 FROM users WHERE id = %s FOR UPDATE", (user_id,))  # serializes this user's cause deletes
         if not _lock(cur, "causes", cause_id):
             return
-        _refuse_if_any(cur, "SELECT 1 FROM goals WHERE cause_id = %s LIMIT 1", (cause_id,),
-                       "Cannot delete a cause that still has goals")
         _refuse_if_any(cur, "SELECT 1 FROM cases WHERE cause_id = %s LIMIT 1", (cause_id,),
                        "Cannot delete a cause that still has cases")
         _refuse_if_any(cur, "SELECT 1 FROM allegations WHERE cause_id = %s LIMIT 1", (cause_id,),
@@ -1216,7 +1088,7 @@ def create_general_cause(user_id: int) -> str:
     cause. Returns its id."""
     now = datetime.now(timezone.utc).isoformat()
     cause_id = f"general-{uuid.uuid4().hex[:6]}"
-    save_cause(cause_id, {"title": "General", "description": "", "goals": [],
+    save_cause(cause_id, {"title": "General",
                           "created_at": now, "updated_at": now}, owner_id=user_id)
     set_default_cause(user_id, cause_id)
     return cause_id

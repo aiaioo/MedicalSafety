@@ -1,15 +1,38 @@
-{#- Title-bar picker (hidden when the account has only one cause) for the user's default cause (app.py's inject_cause_picker).
-    Choosing one makes it the default and reloads. (An open report doesn't
-    include this: its cause is fixed, so reports.html shows it as text.) -#}
-{% if picker_causes and picker_causes|length > 1 %}
+{#- Title-bar picker for the user's default cause (app.py's inject_cause_picker).
+    Choosing one makes it the default and reloads. Hidden when the account has
+    only one cause -- unless `cause_manage` is set (the Cases page), where it is
+    always shown and also offers "New cause…" (a popup), Rename and Delete.
+    (An open report doesn't include this: its cause is fixed, so reports.html
+    shows it as text.) -#}
+{% if picker_causes and (cause_manage or picker_causes|length > 1) %}
 <label class="cause-label" for="causePicker">Cause:</label>
 <select id="causePicker" class="cause-picker" title="Default cause"
         data-url="{{ url_for('api_default_cause') }}"
-        data-reload="1">
+        data-reload="1"{% if cause_manage %}
+        data-causes-url="{{ url_for('api_causes') }}"
+        data-cause-url-base="{{ url_for('api_cause', cause_id='__ID__') }}"{% endif %}>
   {% if not picker_current %}<option value="" selected disabled>Select a cause</option>{% endif %}
   {% for c in picker_causes %}
   <option value="{{ c.id }}"{% if c.id == picker_current %} selected{% endif %}>{{ c.title }}</option>
   {% endfor %}
+  {% if cause_manage and not (g.user and g.user.is_guest) %}<option value="__new__">＋ New cause…</option>{% endif %}
 </select>
+{% if cause_manage and not (g.user and g.user.is_guest) %}
+<button type="button" class="btn" id="renameCauseBtn" title="Rename this cause">Rename</button>
+<button type="button" class="btn" id="deleteCauseBtn" title="Delete this cause">Delete</button>
+<div class="modal-overlay" id="causeModal">
+  <form class="modal" id="causeForm" autocomplete="off">
+    <h3 id="causeModalTitle">New cause</h3>
+    <label class="modal-field">Title
+      <input type="text" id="causeTitleInput" maxlength="300" required>
+    </label>
+    <p class="modal-hint" id="causeModalError" style="color:#c0392b" hidden></p>
+    <div class="modal-actions">
+      <button type="button" id="causeCancel">Cancel</button>
+      <button type="submit" id="causeSave">Create</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 <script src="{{ url_for('static', filename='cause-picker.js') }}"></script>
 {% endif %}

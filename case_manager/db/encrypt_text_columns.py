@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """One-off: encrypt, in place, the free-text columns of cases, hearings,
-case parties, causes, goals, allegations, evidence and "to prove" items,
+case parties, causes, allegations, evidence and "to prove" items,
 plus the titles/descriptions of documents and the names of reports.
 
 Each non-empty value becomes 'enc1:<base64 ciphertext>' (storage._enc_text);
@@ -34,8 +34,7 @@ TABLES = {
     "cases": ("name", "court", "case_number", "summary", "court_location", "cause_title_doc"),
     "hearings": ("hearing_date", "title", "summary"),
     "case_parties": ("name",),
-    "causes": ("title", "description"),
-    "goals": ("title", "description"),
+    "causes": ("title",),
     "allegations": ("title", "description"),
     "allegation_evidence": ("text",),
     "allegation_to_prove": ("title", "summary"),

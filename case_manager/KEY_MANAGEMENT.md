@@ -105,7 +105,7 @@ text, using a sub-key derived from the master key
 | Report body | `reports.doc_enc` | encrypted JSON blob (thumbnail kept in its own column) |
 | Report images | report image table | encrypted bytes |
 | Annotation shapes | `document_annotations.shapes_enc` | encrypted JSON blob |
-| Case, cause, hearing, party, goal and allegation text | respective tables | `enc1:` text |
+| Case, cause, hearing, party and allegation text | respective tables | `enc1:` text |
 | User email and full name | `users` | `enc1:` text, email also looked up via `email_hash` |
 | Profile photos | `users` | encrypted bytes |
 | Rate-limit keys / IPs | signup/unlock attempt tables | blind index |

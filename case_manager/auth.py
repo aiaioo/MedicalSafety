@@ -80,7 +80,6 @@ KEYED_PAGES = {
     "documents_view": ("report", "report"),
     "annexures_view": ("annexure", "report"),
     "allegations_view": ("allegation", "allegation"),
-    "causes_view": ("cause", "cause"),
     "cases_view": ("case", "case"),
 }
 KEY_LENGTH = 32

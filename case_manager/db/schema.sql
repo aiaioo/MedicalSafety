@@ -18,7 +18,7 @@
 --   snippets/<id>__<type>.json         -> snippets
 --   reports/<id>.json                  -> reports
 --   cases/<id>.json                    -> cases, hearings, hearing_documents
---   causes/<id>.json, _last_used.json  -> causes, goals, goal_cases, app_settings
+--   causes/<id>.json, _last_used.json  -> causes, app_settings
 --   allegations/<id>.json,
 --   allegations/allegation_order.json  -> allegations, allegation_evidence,
 --                                          allegation_to_prove,
@@ -105,13 +105,11 @@ CREATE TABLE reports (
 );
 
 -- ===========================================================================
--- Causes workspace: a cause holds an ordered list of goals; a goal can link
--- to zero or more cases (many-to-many).
+-- Causes: just a title, picked from a dropdown on the Cases page.
 -- ===========================================================================
 CREATE TABLE causes (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -167,22 +165,6 @@ CREATE TABLE hearing_documents (
 );
 CREATE INDEX hearing_documents_hearing_id_idx ON hearing_documents (hearing_id);
 CREATE INDEX hearing_documents_document_id_idx ON hearing_documents (document_id);
-
-CREATE TABLE goals (
-    id           TEXT PRIMARY KEY,
-    cause_id     TEXT NOT NULL REFERENCES causes(id) ON DELETE CASCADE,
-    title        TEXT NOT NULL DEFAULT '',
-    description  TEXT NOT NULL DEFAULT '',
-    position     INTEGER NOT NULL DEFAULT 0        -- preserves the goals list's display order within a cause
-);
-CREATE INDEX goals_cause_id_idx ON goals (cause_id);
-
-CREATE TABLE goal_cases (
-    goal_id   TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
-    case_id   TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-    position  INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (goal_id, case_id)
-);
 
 -- ===========================================================================
 -- Allegations: a title/description plus three sub-lists --

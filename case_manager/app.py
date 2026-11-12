@@ -983,32 +983,6 @@ def sanitize_hearings(raw, allowed_doc_ids):
 
 
 # ---------------------------------------------------------------------------
-# Causes workspace: a cause is just a title/description (see
-# api_causes below) holding an ordered list of goals. Each goal is likewise
-# only a title/description, plus an optional set of linked case ids -- the
-# same many-to-many shape allegations use for their case links, so a goal
-# can pertain to zero or more cases.
-# ---------------------------------------------------------------------------
-CAUSE_MAX_GOAL_ITEMS = 300
-
-
-def sanitize_goals(raw, allowed_case_ids):
-    if not isinstance(raw, list):
-        return []
-    out = []
-    for item in raw[:CAUSE_MAX_GOAL_ITEMS]:
-        if not isinstance(item, dict):
-            continue
-        out.append({
-            "id": _sanitize_item_id(item.get("id")),
-            "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
-            "description": _sanitize_text(item.get("description"), ALLEGATION_MAX_TEXT_CHARS),
-            "case_ids": sanitize_case_ids(item.get("case_ids"), allowed_case_ids),
-        })
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Baking annotations into a snippet render
 # ---------------------------------------------------------------------------
 
@@ -2883,11 +2857,6 @@ def allegations_view():
     return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_items())
 
 
-@app.route("/causes")
-def causes_view():
-    return render_template("causes.html", default_cause_id=storage.get_default_cause(g.user.id) or "", can_create=not g.user.is_guest)
-
-
 ACTIVITY_KIND_LABELS = {"cause": "Cause", "case": "Case", "allegation": "Allegation", "report": "Report", "source": "Document"}
 
 
@@ -3066,7 +3035,7 @@ def api_collaboration_access(collaboration_id):
 
 # kind -> (page path, query parameter) of the URL a key opens
 KEY_PAGE_URLS = {
-    "cause": ("causes_view", "cause"),
+    "cause": ("cases_view", "cause"),
     "case": ("cases_view", "case"),
     "allegation": ("allegations_view", "allegation"),
     "report": ("documents_view", "report"),
@@ -5080,10 +5049,8 @@ def _doc_has_text(node):
 
 
 # ---------------------------------------------------------------------------
-# API: causes, each holding an ordered list of goals (see sanitize_goals
-# above). A cause can only be deleted once it has no goals, and the UI only
-# offers to delete a goal once it has no linked cases -- mirroring the
-# case/hearing deletion rules just above.
+# API: causes -- just a title each (managed from the Cases page's cause
+# dropdown). A cause can only be deleted once it has no cases or allegations.
 # ---------------------------------------------------------------------------
 
 @app.route("/api/causes", methods=["GET", "POST"])
@@ -5094,8 +5061,6 @@ def api_causes():
             items.append({
                 "id": cause["id"],
                 "title": cause["title"] or cause["id"],
-                "description": cause["description"],
-                "goal_count": len(cause["goals"]),
                 "role": cause["role"],
                 "created_at": cause["created_at"],
                 "updated_at": cause["updated_at"],
@@ -5110,14 +5075,8 @@ def api_causes():
 
     cause_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
-    data = {
-        "title": title,
-        "description": _sanitize_text(body.get("description"), ALLEGATION_MAX_TEXT_CHARS),
-        "goals": [],
-        "created_at": now,
-        "updated_at": now,
-    }
-    storage.save_cause(cause_id, data, owner_id=g.user.id, actor_id=acting_user_id())
+    data = {"title": title, "created_at": now, "updated_at": now}
+    storage.save_cause(cause_id, data, owner_id=g.user.id)
     return jsonify({"id": cause_id, **data})
 
 
@@ -5131,7 +5090,7 @@ def api_cause(cause_id):
 
     if request.method == "GET":
         log_activity("view", "cause", cause_id)
-        return jsonify({**attach_item_creators(existing, ("goals",)), "role": role})
+        return jsonify({**existing, "role": role})
 
     if request.method == "DELETE":
         # Another cause takes over as the default (if this was it) and as the
@@ -5152,15 +5111,10 @@ def api_cause(cause_id):
 
     data = {
         "title": title,
-        "description": _sanitize_text(body.get("description", existing.get("description", "")), ALLEGATION_MAX_TEXT_CHARS),
-        "goals": sanitize_goals(
-            body.get("goals", existing.get("goals", [])),
-            linkable_ids("case", (cid for goal in existing.get("goals", []) for cid in goal["case_ids"])),
-        ),
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    storage.save_cause(cause_id, data, actor_id=acting_user_id())
+    storage.save_cause(cause_id, data)
     log_activity("save", "cause", cause_id)
     return jsonify(data)
 
