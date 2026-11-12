@@ -78,6 +78,7 @@
             <option value="rectangle">Rectangle</option>
           </select>
         </label>
+        <label class="annex-toggle"><input type="checkbox" id="pageNumberAlternateInput"> Number alternate pages</label>
         <div class="modal-field">Page number colour
           <div class="color-pop-wrap">
             <button type="button" class="color-pick-btn" id="pageNumberColorBtn" aria-haspopup="true" aria-expanded="false">Color <span class="color-current" id="pageNumberColorCurrent"></span></button>
@@ -86,7 +87,7 @@
             </div>
           </div>
         </div>
-        <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Counts pages of the whole annexure.</p>
+        <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Counts pages of the whole annexure. With "Number alternate pages", only the front (recto) of each sheet is numbered, and the first document starts on a front page.</p>
       </div>
       <h3 class="annex-section-divider">Document numbers</h3>
       <label class="annex-toggle"><input type="checkbox" id="docNumberEnabled"> Number the documents</label>

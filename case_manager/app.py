@@ -151,8 +151,10 @@ def sanitize_page_numbers(raw, fallback=None):
         if not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
             color = REPORT_DEFAULT_PAGE_NUMBERS["color"]
 
+    alternate = raw.get("alternate") if isinstance(raw, dict) and "alternate" in raw else fallback.get("alternate", False)
+
     return {"position": position, "skip": skip, "first": first, "font": font, "fontSize": font_size,
-            "shape": shape, "color": color.lower()}
+            "shape": shape, "color": color.lower(), "alternate": alternate is True}
 
 # Annexure document numbers: an optional "<name> <prefix><n>" label (e.g.
 # "Annexure P-1") stamped in the top margin of each annexed document's first
@@ -1890,6 +1892,17 @@ def _flatten_json_text(node):
     return "".join(_flatten_json_text(c) for c in node.get("content") or [])
 
 
+def page_number_label(i, pn):
+    """The number shown on page index `i` (0-based) of the numbered pages, or None if that page carries none.
+    With pn["alternate"] only every other page (the even indexes, the rectos of a double-sided print) is numbered,
+    the first at or after the start page; the numbers run on without gaps."""
+    skip = pn["skip"]
+    if not pn.get("alternate"):
+        return i - skip + pn["first"] if i >= skip else None
+    lo = skip + skip % 2
+    return (i - lo) // 2 + pn["first"] if i >= lo and i % 2 == 0 else None
+
+
 def stamp_page_numbers(doc, pn, m):
     """Draws page numbers onto the already-built PDF `doc`, from page index
     pn["skip"] on (numbered from 1), centred vertically in the header or
@@ -1910,9 +1923,12 @@ def stamp_page_numbers(doc, pn, m):
     css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {color}; margin: 0; text-align: center;"
     box_h = fs * 1.6
     for i in range(pn["skip"], doc.page_count):
+        number = page_number_label(i, pn)
+        if number is None:
+            continue
         page = doc[i]
         r = page.rect
-        label = str(i - pn["skip"] + pn["first"])
+        label = str(number)
         box_w = max(box_h, fitz.get_text_length(label, fontsize=fs) + fs * 0.6) if pn["shape"] != "none" else fitz.get_text_length(label, fontsize=fs)
         left, right = r.x0 + m["left"], r.x1 - m["right"]
         x0 = {"left": left, "center": (left + right - box_w) / 2, "right": right - box_w}[horiz]
@@ -2456,8 +2472,9 @@ def _docx_apply_page_numbers(doc, page_numbers):
 
 
 def _docx_new_unnumbered_section(doc):
-    """Starts a new page in a section with an empty header and footer, so the report's page numbers stop."""
-    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    """Starts a new section on the next odd (front) page, with an empty header and footer so the report's page
+    numbers stop; Word adds the blank page before it when needed."""
+    section = doc.add_section(WD_SECTION.ODD_PAGE)
     section.header.is_linked_to_previous = False
     section.footer.is_linked_to_previous = False
     return section
@@ -4066,6 +4083,13 @@ def annexure_page_range(start, end, pn):
     """The page numbers shown on annexure pages `start`..`end` (0-based, inclusive), as "a-b"; "-" if none is numbered."""
     skip, first = (pn["skip"], pn["first"]) if pn["position"] != "none" else (0, 1)
     lo = max(start, skip)
+    if pn["position"] != "none" and pn.get("alternate"):
+        lo += lo % 2          # only the even (recto) pages carry a number
+        end -= end % 2
+        if lo > end:
+            return "-"
+        a, b = page_number_label(lo, pn), page_number_label(end, pn)
+        return str(a) if a == b else f"{a}-{b}"
     if lo > end:
         return "-"
     a, b = lo - skip + first, end - skip + first
@@ -4237,17 +4261,22 @@ def list_of_documents_html(ctx, rows):
 
 
 def list_of_documents_pdf(ctx, rows):
-    """The List of Documents as an (unnumbered) A4 PDF, flowing onto more pages as needed."""
+    """The List of Documents as an (unnumbered) A4 PDF, flowing onto more pages as needed, with an
+    empty page added at the end if it came to an odd number, so what follows starts on the front of a sheet."""
     mediabox = fitz.paper_rect("a4")
     where = mediabox + (64, 64, -64, -64)
     story = fitz.Story(html=list_of_documents_html(ctx, rows))
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
-    more = 1
+    more, count = 1, 0
     while more:
         device = writer.begin_page(mediabox)
         more, _ = story.place(where)
         story.draw(device)
+        writer.end_page()
+        count += 1
+    if count % 2:
+        writer.begin_page(mediabox)
         writer.end_page()
     writer.close()
     return buf.getvalue()
@@ -4394,7 +4423,7 @@ def _append_annexure(out, payload, opened):
     count = len(out.pages) - base
     stamped = set()
     if pn["position"] != "none":
-        stamped |= set(range(pn["skip"], count))
+        stamped |= {i for i in range(pn["skip"], count) if page_number_label(i, pn) is not None}
     if dn["enabled"]:
         stamped |= set(first_pages)
     if stamped:
@@ -4458,6 +4487,10 @@ def _annexure_stream(payload, report_pdf=None, links=None, positions=None):
     try:
         out = pikepdf.open(io.BytesIO(report_pdf)) if report_pdf is not None else pikepdf.new()
         opened.append(out)
+        if report_pdf is not None and len(out.pages) % 2:
+            # The annexure starts on the front of a sheet when printed double-sided.
+            w, h = _displayed_size(out.pages[-1])
+            out.add_blank_page(page_size=(w, h))
         report_pages = len(out.pages)
         front = _append_annexure(out, payload, opened)
         for pno, key, rect in links or []:
@@ -4613,6 +4646,9 @@ def _report_with_annexure_whole(pdf_bytes, payload, links, positions, total):
     for a source PDF that qpdf cannot open)."""
     annex_bytes = _annexure_pdf_bytes_whole(payload)
     with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
+        if merged.page_count % 2:
+            last = merged[-1].rect  # the annexure starts on the front of a sheet when printed double-sided
+            merged.new_page(-1, width=last.width, height=last.height)
         report_pages = merged.page_count
         front = annex.page_count - total  # the List of Documents, ahead of the annexed pages
         merged.insert_pdf(annex)

@@ -16,6 +16,7 @@
   const pnFont = document.getElementById("pageNumberFontInput");
   const pnSize = document.getElementById("pageNumberFontSizeInput");
   const pnShape = document.getElementById("pageNumberShapeInput");
+  const pnAlternate = document.getElementById("pageNumberAlternateInput");
   const lodEnabled = document.getElementById("listOfDocumentsEnabled");
   const dnEnabled = document.getElementById("docNumberEnabled");
   const dnName = document.getElementById("docNumberNameInput");
@@ -23,7 +24,7 @@
   const dnFirst = document.getElementById("docNumberFirstInput");
   const NUMBER_BAND_PT = 46; // header/footer band the number sits in; matches ANNEXURE_PAGE_NUMBER_BAND in app.py
 
-  let state = { documents: [], available: [], annotations: "none", pageNumbers: { position: "top-center", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "circle", color: "#777777" }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 }, listOfDocuments: { enabled: true, causeTitleHtml: "", causeFont: "", causeFontSize: 0, location: "" } };
+  let state = { documents: [], available: [], annotations: "none", pageNumbers: { position: "top-center", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "circle", color: "#777777", alternate: false }, docNumbers: { enabled: true, name: "Annexure", prefix: "", first: 1 }, listOfDocuments: { enabled: true, causeTitleHtml: "", causeFont: "", causeFontSize: 0, location: "" } };
   const infoCache = new Map(); // "id|type" -> Promise of /info pages
   let observer = null;
   let dragId = null;
@@ -71,11 +72,27 @@
     return Array.from({ length: pageCount }, (_, i) => i + 1);
   }
 
+  // The number on annexure page index i (0-based), or null if it carries none; mirrors page_number_label in app.py.
+  function pageNumberAt(i) {
+    const pn = state.pageNumbers;
+    const first = pn.first || 1;
+    if (!pn.alternate) return i >= pn.skip ? i - pn.skip + first : null;
+    const lo = pn.skip + (pn.skip % 2);
+    return i >= lo && i % 2 === 0 ? (i - lo) / 2 + first : null;
+  }
+
   // The page numbers shown on annexure pages first..last (0-based, inclusive); mirrors annexure_page_range in app.py.
   function pageRange(first, last) {
     const pn = state.pageNumbers;
     const [skip, start] = pn.position !== "none" ? [pn.skip, pn.first || 1] : [0, 1];
-    const lo = Math.max(first, skip);
+    let lo = Math.max(first, skip);
+    if (pn.position !== "none" && pn.alternate) { // only the even (recto) pages carry a number
+      lo += lo % 2;
+      last -= last % 2;
+      if (lo > last) return "-";
+      const a = pageNumberAt(lo), b = pageNumberAt(last);
+      return a === b ? String(a) : `${a}-${b}`;
+    }
     if (lo > last) return "-";
     const a = lo - skip + start, b = last - skip + start;
     return a === b ? String(a) : `${a}-${b}`;
@@ -148,7 +165,8 @@
         wrap.innerHTML = `<span class="page-label">${esc(d.title)} &middot; page ${n}</span>` +
           `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}${state.annotations !== "none" ? "&annotations=" + state.annotations : ""}">`;
         shown++;
-        if (pn.position !== "none" && shown > pn.skip) {
+        const pageNo = pn.position !== "none" ? pageNumberAt(shown - 1) : null;
+        if (pageNo !== null) {
           const scale = parseFloat(wrap.style.width) / dim.width; // px per pt
           const label = document.createElement("span");
           label.className = `page-number-label page-number-${pn.position}`;
@@ -157,7 +175,7 @@
             `font-family:${pn.font},Arial,sans-serif;font-size:${pn.fontSize * scale}px;color:${pn.color};z-index:1`;
           const num = document.createElement("span");
           num.className = "page-number-outline";
-          num.textContent = shown - pn.skip + (pn.first || 1) - 1;
+          num.textContent = pageNo;
           if (pn.shape !== "none") {
             const h = pn.fontSize * 1.6 * scale;
             num.style.cssText = `height:${h}px;min-width:${h}px;line-height:${h}px;padding:0 ${pn.fontSize * 0.3 * scale}px;` +
@@ -329,6 +347,7 @@
     pnFont.value = pn.font;
     pnSize.value = pn.fontSize;
     pnShape.value = pn.shape;
+    pnAlternate.checked = !!pn.alternate;
     markSelectedSwatch();
     const dn = state.docNumbers;
     dnEnabled.checked = dn.enabled;
@@ -356,7 +375,7 @@
     pnStart.classList.toggle("invalid", !(start >= 1 && start <= 51));
     pnSize.classList.toggle("invalid", !(size >= 6 && size <= 72));
     if (!ok) return false;
-    state.pageNumbers = { position: pnPosition.value, skip: start - 1, first, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color };
+    state.pageNumbers = { position: pnPosition.value, skip: start - 1, first, font: pnFont.value, fontSize: size, shape: pnShape.value, color: state.pageNumbers.color, alternate: pnAlternate.checked };
     return commit();
   }
   function readDocNumbers(typing) {
@@ -407,7 +426,7 @@
   }
   [dnEnabled, dnName].forEach((el) => autosave(el, readDocNumbers, false));
   [dnPrefix, dnFirst].forEach((el) => autosave(el, readDocNumbers, true));
-  [pnPosition, pnFont, pnShape].forEach((el) => autosave(el, readPageNumbers, false));
+  [pnPosition, pnFont, pnShape, pnAlternate].forEach((el) => autosave(el, readPageNumbers, false));
   [pnStart, pnFirst, pnSize].forEach((el) => autosave(el, readPageNumbers, true));
 
   function render(pagesToo) {
