@@ -3494,9 +3494,9 @@ def _annotated_pdf_bytes_whole(doc_id, annotated_only):
     return annotated_pdf_bytes
 
 
-def _burn_annotations_into_page(src, index, annotations):
-    """Draws `annotations` onto page `index` of the (lazily read) pikepdf document `src`, in place. Only
-    that one page is handed to PyMuPDF -- as a one-page PDF -- so the existing drawing and (for a
+def _annotated_single_page(src, index, annotations):
+    """A one-page pikepdf document: page `index` of the (lazily read) pikepdf document `src` with
+    `annotations` burned in. Only that one page is handed to PyMuPDF, so the existing drawing and (for a
     Share-link visitor) redaction code is reused without loading the rest of the document."""
     import pikepdf
     one = pikepdf.new()
@@ -3509,18 +3509,22 @@ def _burn_annotations_into_page(src, index, annotations):
         if p.rotation:
             p.remove_rotation()  # annotations are fractions of the page as displayed, so draw on it unrotated
         draw_annotations_on_page(p, annotations, p.rect)
-        done = d.tobytes()
-    new = pikepdf.open(io.BytesIO(done))
+        done = d.tobytes(garbage=3, deflate=True)
+    return pikepdf.open(io.BytesIO(done))
+
+
+def _burn_annotations_into_page(src, index, annotations):
+    """Draws `annotations` onto page `index` of the pikepdf document `src`, in place."""
+    new = _annotated_single_page(src, index, annotations)
     src.pages.insert(index, new.pages[0])
     del src.pages[index + 1]
     new.close()
 
 
-def _stream_pikepdf(pdf, *to_close):
+def _stream_pikepdf(pdf):
     """Yields the bytes of saving `pdf` as it is written, so a big PDF is never assembled in memory. qpdf
-    pulls each page's data out of the (lazily decrypted) source as it writes, so memory stays near
-    constant; saving runs in a worker thread feeding a small bounded queue, which also gives backpressure
-    when the client is slow. `to_close` objects are closed when the stream ends or the client goes away."""
+    pulls page data out of its sources as it writes; saving runs in a worker thread feeding a small
+    bounded queue, which also gives backpressure when the client is slow."""
     q = queue.Queue(maxsize=8)
     finished = object()
     stop = threading.Event()
@@ -3583,11 +3587,36 @@ def _stream_pikepdf(pdf, *to_close):
             except queue.Empty:
                 pass
         worker.join()
-        for obj in to_close:
-            try:
-                obj.close()
-            except Exception:
-                pass
+
+
+class _PdfStream:
+    """A response body that streams a pikepdf document and, when the response ends for any reason (finished,
+    client gone, or never started), closes everything it was built from and releases `release`."""
+
+    def __init__(self, pdf, to_close=(), release=None):
+        self.pdf, self._to_close, self._release = pdf, list(to_close), release
+        self._gen = None
+        self._closed = False
+
+    def __iter__(self):
+        self._gen = _stream_pikepdf(self.pdf)
+        return self._gen
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self._gen is not None:
+                self._gen.close()
+        finally:
+            for obj in self._to_close:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+            if self._release is not None:
+                self._release()
 
 
 def _annotated_pdf_response(doc_id, annotated_only):
@@ -3643,7 +3672,7 @@ def _annotated_pdf_response(doc_id, annotated_only):
         raise
 
     log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
-    resp = Response(_stream_pikepdf(src, src, f), mimetype="application/pdf")
+    resp = Response(_PdfStream(src, [src, f]), mimetype="application/pdf")
     resp.headers.update(headers)
     return resp
 
@@ -4241,8 +4270,161 @@ def api_report_annexure(report_id):
     return jsonify(_annexure_payload(report_id, saved))
 
 
+class _NeedWholeDocument(Exception):
+    """qpdf could not open one of the source PDFs; the caller falls back to the whole-document builder."""
+
+
+def _displayed_size(page):
+    """(width, height) in points of pikepdf page `page` as displayed: its crop box, turned by /Rotate."""
+    x0, y0, x1, y1 = (float(v) for v in page.cropbox)
+    w, h = abs(x1 - x0), abs(y1 - y0)
+    return (h, w) if int(page.obj.get("/Rotate", 0)) % 180 else (w, h)
+
+
+def _append_annexure(out, payload, opened):
+    """Appends the annexure's pages to the pikepdf document `out` -- annotations burned in, page and document
+    numbers stamped, the List of Documents in front -- and returns how many List of Documents pages it added.
+    Pages are copied straight from each source (opened lazily from its decrypting reader), so only the pages
+    the annexure includes are ever in memory, never whole source documents. Every pikepdf object and file it
+    opens goes on `opened`, for the caller to close once `out` is saved. Raises _NeedWholeDocument if qpdf
+    cannot open a source."""
+    import pikepdf
+    mode = guest_annotation_mode(payload["annotations"])
+    base = len(out.pages)
+    first_pages = []  # index among the annexure's pages of each document's first page
+    spans = []  # (document, first, last index among the annexure's pages) of each document with pages
+    for d in payload["documents"]:
+        f, _ = _open_pdf(d["id"], d["type"])
+        try:
+            src = pikepdf.open(f)
+        except Exception as exc:
+            f.close()
+            raise _NeedWholeDocument() from exc
+        opened.extend([src, f])
+        pages = annexure_selected_pages(d, len(src.pages))
+        to_draw = {}
+        if mode != "none" and pages:
+            for n, raw_anns in storage.get_all_annotations(d["id"]).items():
+                if n.isdigit():
+                    drawn = annexure_annotations_to_draw(raw_anns, mode)
+                    if drawn:
+                        to_draw[int(n)] = drawn
+        if pages:
+            here = len(out.pages) - base
+            first_pages.append(here)
+            spans.append((d, here, here + len(pages) - 1))
+        for p in pages:
+            if p in to_draw:
+                one = _annotated_single_page(src, p - 1, to_draw[p])
+                opened.append(one)
+                out.pages.append(one.pages[0])
+            else:
+                out.pages.append(src.pages[p - 1])
+
+    pn, dn = payload["pageNumbers"], payload["docNumbers"]
+    band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
+    count = len(out.pages) - base
+    stamped = set()
+    if pn["position"] != "none":
+        stamped |= set(range(pn["skip"], count))
+    if dn["enabled"]:
+        stamped |= set(first_pages)
+    if stamped:
+        # The numbers are drawn on blank pages the size of the pages they belong to (by the same code as
+        # always), then laid over those pages: their own content is never rewritten, and what they share
+        # (fonts, images) stays shared.
+        with fitz.open() as ov:
+            for i in range(count):
+                w, h = _displayed_size(out.pages[base + i])
+                ov.new_page(width=w, height=h)
+            stamp_page_numbers(ov, pn, band)
+            stamp_doc_numbers(ov, dn, pn, band, first_pages)
+            overlay = pikepdf.open(io.BytesIO(ov.tobytes(garbage=4, deflate=True)))  # duplicate fonts merged
+        opened.append(overlay)
+        for i in sorted(stamped):
+            out.pages[base + i].add_overlay(overlay.pages[i])
+
+    front = 0
+    if payload["listOfDocuments"]["enabled"]:
+        # Added after the stamping, so its pages stay unnumbered and the annexure's numbering is unchanged.
+        rows = []
+        for n, (d, first, last) in enumerate(spans):
+            text = (d["description"] or d["title"]).strip()
+            rows.append((f"{doc_number_label(dn, n)} - {text}" if dn["enabled"] else text, annexure_page_range(first, last, pn)))
+        with fitz.open(stream=list_of_documents_pdf(payload["listOfDocuments"], rows), filetype="pdf") as lod_doc:
+            lod = pikepdf.open(io.BytesIO(lod_doc.tobytes(garbage=4, deflate=True)))
+        opened.append(lod)
+        for k, pg in enumerate(lod.pages):
+            out.pages.insert(base + k, pg)
+        front = len(lod.pages)
+    return front
+
+
+def _add_goto_link(out, from_page, rect, to_page):
+    """A link on page index `from_page` of `out`, over `rect` (PyMuPDF page coordinates: origin top left),
+    that jumps to the top of page index `to_page`."""
+    import pikepdf
+    page = out.pages[from_page]
+    x0, y0, x1, y1 = (float(v) for v in page.mediabox)
+    height = y1 - y0
+    target = out.pages[to_page]
+    top = float(target.mediabox[3])
+    link = pikepdf.Dictionary(
+        Type=pikepdf.Name.Annot, Subtype=pikepdf.Name.Link, Border=pikepdf.Array([0, 0, 0]),
+        Rect=pikepdf.Array([x0 + rect.x0, y0 + height - rect.y1, x0 + rect.x1, y0 + height - rect.y0]),
+        Dest=pikepdf.Array([target.obj, pikepdf.Name.XYZ, 0, top, None]),
+    )
+    if "/Annots" not in page.obj:
+        page.obj.Annots = out.make_indirect(pikepdf.Array())
+    page.obj.Annots.append(out.make_indirect(link))
+
+
+def _annexure_stream(payload, report_pdf=None, links=None, positions=None):
+    """A streamed response body (a _PdfStream) for the annexure -- appended after `report_pdf` (bytes) when
+    given, with `links` ((page index in the report, "<document id>:<page>", rect)) turned into jumps to the
+    annexed pages. Holds _heavy_lock until the body is closed, since the pages being copied are in memory
+    until the PDF has been sent. Raises _NeedWholeDocument (lock released) if qpdf can't read a source."""
+    import pikepdf
+    _heavy_lock.acquire()
+    opened = []
+    try:
+        out = pikepdf.open(io.BytesIO(report_pdf)) if report_pdf is not None else pikepdf.new()
+        opened.append(out)
+        report_pages = len(out.pages)
+        front = _append_annexure(out, payload, opened)
+        for pno, key, rect in links or []:
+            doc_id, page = key.rsplit(":", 1)
+            target = (positions or {}).get((doc_id, int(page)))
+            if target is not None:
+                _add_goto_link(out, pno, rect, report_pages + front + target)
+    except BaseException:
+        for obj in opened:
+            try:
+                obj.close()
+            except Exception:
+                pass
+        _heavy_lock.release()
+        raise
+    return _PdfStream(out, opened, release=_heavy_lock.release)
+
+
 def _annexure_pdf_bytes(payload):
-    """The annexure payload rendered as one PDF (bytes). Holds whole documents in memory, so one at a time."""
+    """The annexure payload rendered as one PDF (bytes), for the Word export, which turns its pages into images."""
+    try:
+        stream = _annexure_stream(payload)
+    except _NeedWholeDocument:
+        return _annexure_pdf_bytes_whole(payload)
+    try:
+        buf = io.BytesIO()
+        stream.pdf.save(buf)
+        return buf.getvalue()
+    finally:
+        stream.close()
+
+
+def _annexure_pdf_bytes_whole(payload):
+    """The original whole-document builder, kept as the fallback for a PDF qpdf cannot open. Holds whole
+    documents in memory, so one at a time."""
     with _heavy_lock:
         return _annexure_pdf_bytes_locked(payload)
 
@@ -4306,10 +4488,14 @@ def api_report_annexure_export(report_id):
     payload = _annexure_payload(report_id, saved)
     if not payload["documents"]:
         raise DocumentError("The annexure is empty — add a document before downloading", 400)
-    data = _annexure_pdf_bytes(payload)
+    try:
+        body = _annexure_stream(payload)  # streamed: the PDF is never assembled whole in memory
+    except _NeedWholeDocument:
+        app.logger.warning("qpdf could not open a source of report %s's annexure; building it in memory", report_id, exc_info=True)
+        body = _annexure_pdf_bytes_whole(payload)
 
     log_activity("download", "report", report_id, "Annexure PDF")
-    resp = Response(data, mimetype="application/pdf")
+    resp = Response(body, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", report["name"] or report_id).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}-annexure.pdf"'
@@ -4354,6 +4540,23 @@ def api_report_annexure_list_docx(report_id):
     return resp
 
 
+def _report_with_annexure_whole(pdf_bytes, payload, links, positions, total):
+    """The report PDF with the annexure merged in and its snippet links added, all in memory (the fallback
+    for a source PDF that qpdf cannot open)."""
+    annex_bytes = _annexure_pdf_bytes_whole(payload)
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
+        report_pages = merged.page_count
+        front = annex.page_count - total  # the List of Documents, ahead of the annexed pages
+        merged.insert_pdf(annex)
+        for pno, key, rect in links:
+            doc_id, page = key.rsplit(":", 1)
+            target = positions.get((doc_id, int(page)))
+            if target is not None:
+                merged[pno].insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": report_pages + front + target,
+                                         "to": fitz.Point(0, 0)})
+        return merged.tobytes(garbage=4, deflate=True)
+
+
 @app.route("/api/report/<report_id>/export")
 def api_report_export(report_id):
     check_report_id(report_id)
@@ -4378,22 +4581,16 @@ def api_report_export(report_id):
     pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, links is not None, meta)),
                                   data.get("margins"), data.get("pageNumbers"), links)
 
+    body = pdf_bytes
     if links is not None:
-        annex_bytes = _annexure_pdf_bytes(payload)
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
-            report_pages = merged.page_count
-            front = annex.page_count - total  # the List of Documents, ahead of the annexed pages
-            merged.insert_pdf(annex)
-            for pno, key, rect in links:
-                doc_id, page = key.rsplit(":", 1)
-                target = positions.get((doc_id, int(page)))
-                if target is not None:
-                    merged[pno].insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": report_pages + front + target,
-                                             "to": fitz.Point(0, 0)})
-            pdf_bytes = merged.tobytes(garbage=4, deflate=True)
+        try:
+            body = _annexure_stream(payload, report_pdf=pdf_bytes, links=links, positions=positions)
+        except _NeedWholeDocument:
+            app.logger.warning("qpdf could not open a source of report %s's annexure; building it in memory", report_id, exc_info=True)
+            body = _report_with_annexure_whole(pdf_bytes, payload, links, positions, total)
 
     log_activity("download", "report", report_id, "PDF" + (" with annexures" if payload else ""))
-    resp = Response(pdf_bytes, mimetype="application/pdf")
+    resp = Response(body, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
     resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
