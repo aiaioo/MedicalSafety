@@ -84,7 +84,8 @@ HOSPITAL_ALIASES = {
     "sumeet-jaiswal-arka-hospital": "arka-hospital",
     "sudhamani-jayanagar-general-hospital": "jayanagar-general-hospital",
     "sowmya-dinesh-hr-ssm-hospital": "ssm-hospital",
-    "satish-l-sparsh-super-speciality-hospital": "sparsh-hospital",
+    "satish-l-sparsh-hospital": "sparsh-hospital",
+    "yenapoya-hospital": "yenepoya-hospital",
     "sinam-inaoton-singha-st-martha-hospital": "st-martha-hospital",
 }
 
@@ -99,7 +100,7 @@ def hospital_tokens(name):
     """The words that identify a hospital, with the spelling differences that do not matter removed: case,
     punctuation and apostrophes ("St. John's" = "St Johns" = "ST.JOHN'S"), a possessive or plural s on a saint's
     name ("St Philomenas" = "St Philomena"), "Saint" = "St", "Hospitals" = "Hospital", "Medical College
-    Hospital" = "Hospital", "M/s", "Ltd"/"Pvt", and what comes before "through its"."""
+    Hospital" = "Hospital", "(Multi/Super) Speciality Hospital" = "Hospital", "M/s", "Ltd"/"Pvt", and what comes before "through its"."""
     s = name.lower()
     t = re.search(r"\b(?:through|thro'?)\s+(?:its\s+)?(.*)$", s)
     if t and re.search(r"\bhospitals?\b", t.group(1)):
@@ -110,10 +111,12 @@ def hospital_tokens(name):
     s = re.sub(r"['\u2019`]s\b", "", s)  # "John's" -> "John"
     s = re.sub(r"['\u2019`]", "", s)
     s = re.sub(r"\bsaint\b", "st", s)
+    s = re.sub(r"\bappolo\b", "apollo", s)  # a common misspelling
     s = re.sub(r"\bst\.?(?=[a-z])", "st ", s)  # "St.John" -> "St John"
     s = re.sub(r"[^a-z0-9]+", " ", s)
     s = re.sub(r"\bhospitals\b", "hospital", s)
     s = re.sub(r"\b(?:limited|ltd|pvt|private)\b", "", s)
+    s = re.sub(r"\b(?:(?:multi|super)\s*)*(?:speciality|specialty|specility|sepeciality|speciallity)\s+(?=hospital\b)", "", s)  # "Super Speciality Hospital" = "Hospital"
     s = re.sub(r"\bmedical college\s+(?:and\s+)?hospital\b", "hospital", s)
     s = re.sub(r"\b(st) (\w{3,}?)s\b", r"\1 \2", s)  # a saint's name with a stray s: "st johns" -> "st john"
     return s.split()
@@ -214,7 +217,7 @@ def case_advocates(rows):
 
 def analytics(cases, all_years=None):
     """Numbers for the front page's panel, from the cases shown: per court the count of each outcome, and the
-    most-named hospitals."""
+    ten hospitals named in most cases."""
     per_court = {}
     for c in cases:
         row = per_court.setdefault(c["court"], {"label": c["court_label"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
@@ -233,12 +236,13 @@ def analytics(cases, all_years=None):
         row["dismissed_pct"] = round(100 * row["dismissed"] / closed) if closed else None
         row["decided_pct"] = round(100 * (row["disposed"] + row["allowed"]) / closed) if closed else None
     hospitals = defaultdict(lambda: [0, ""])
+    best_names = load("all")["hospitals"]  # each hospital's best spelling, as the hospitals list shows it
     for c in cases:
         for slug, n in c["hospitals"].items():
             if slug:
                 hospitals[slug][0] += 1
-                hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or hospitals[slug][1] or n
-    top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), reverse=True)[:5]
+                hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug, {}).get("name") or hospitals[slug][1] or n
+    top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:10]
     by_year = {}
     for c in all_years or cases:
         row = by_year.setdefault(c["year"], {"year": c["year"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})

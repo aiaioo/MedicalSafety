@@ -19,10 +19,11 @@
   {% endfor %}
   {% if stats.top_hospitals %}
     <div>
-      <h3>Most often named</h3>
+      <h3>Top 10 hospitals <span class="muted">by cases</span></h3>
       <ol class="tophosp">
         {% for n, name, slug in stats.top_hospitals %}<li><a href="{{ url_for('case_tracker.hospital', slug=slug) }}">{{ name }}</a> <span class="muted">{{ n }}</span></li>{% endfor %}
       </ol>
+      <p class="tophosp-all"><a href="{{ url_for('case_tracker.hospitals') }}">View all hospitals &rarr;</a></p>
     </div>
   {% endif %}
   </div>
