@@ -734,6 +734,7 @@
           <input type="date" class="hearing-date-input" lang="en-GB" title="Hearing date">
           <input type="text" class="hearing-title-input" placeholder="Hearing title (e.g. First hearing)" maxlength="300">
         </div>
+        <div class="hearing-stage" hidden>Stage: <span class="hearing-stage-text"></span></div>
         <textarea class="hearing-summary-input" rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
         <label class="hearing-order-text" hidden>Order text <span class="hearing-order-source">(from the case tracker; updated automatically)</span>
           <textarea class="hearing-order-text-input" rows="2" readonly></textarea>
@@ -742,6 +743,12 @@
       </div>
       <button type="button" class="card-delete-btn" title="Delete">✕</button>
       ${creatorLabel(hearing)}`;
+
+    const stage = (detailCase.hearing_stages || {})[hearing.date];
+    if (stage) {
+      card.querySelector(".hearing-stage-text").textContent = stage;
+      card.querySelector(".hearing-stage").hidden = false;
+    }
 
     function flushHearingField(el) {
       flushSaveOnEnter(el, "detail:" + detailCase.id, detailCase.id, () => ({
@@ -1003,7 +1010,7 @@
     const nextEl = caseDetailEl.querySelector("#nextHearing");
     if (isIsoDate(detailCase.next_hearing)) {
       const [y, m, d] = detailCase.next_hearing.split("-");
-      nextEl.textContent = `Next hearing: ${d}/${m}/${y}`;
+      nextEl.textContent = `Next hearing: ${d}/${m}/${y}` + (detailCase.next_stage ? ` (${detailCase.next_stage})` : "");
       nextEl.hidden = false;
     }
 

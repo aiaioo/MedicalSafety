@@ -4811,12 +4811,18 @@ def sync_case_with_tracker(case_id, case, role):
         return case
 
 
-def tracker_next_hearing(case) -> str:
-    """The date the case tracker says the case is next listed for (ISO), or "" when it is unknown, already past, or the case is not in it."""
+def tracker_extras(case) -> dict:
+    """What the case tracker says that the case does not store, to show beside the hearings: "next_hearing" (the date the case is
+    next listed for, ISO; "" when unknown, already past, or the case is not in the tracker), "next_stage" (what that hearing is
+    for) and "hearing_stages" ({date: what the hearing was listed for})."""
     known = _tracker_case(case["case_number"], with_court=False) if case.get("case_number") else None
-    nxt = (known or {}).get("next_hearing", "")
+    known = known or {}
+    nxt = known.get("next_hearing", "")
     today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date().isoformat()  # the courts' day (IST)
-    return nxt if nxt >= today else ""  # a date that has passed is not "next"
+    if nxt < today:  # a date that has passed is not "next"
+        nxt = ""
+    return {"next_hearing": nxt, "next_stage": known.get("next_stage", "") if nxt else "",
+            "hearing_stages": {h["date"]: h["stage"] for h in known.get("hearings", []) if h.get("stage")}}
 
 
 def tracker_hearings_on_offer(case, role) -> int:
@@ -4937,7 +4943,7 @@ def api_case_tracker_hearings(case_id):
     log_activity("save", "case", case_id)
     case = storage.get_case(case_id)
     return jsonify({**attach_item_creators(case, ("hearings",)), "role": role, "tracker_hearings_on_offer": 0,
-                    "next_hearing": tracker_next_hearing(case)})
+                    **tracker_extras(case)})
 
 
 @app.route("/api/allegation-case/<case_id>/hearings", methods=["DELETE"])
@@ -4969,7 +4975,7 @@ def api_allegation_case(case_id):
         existing = sync_case_with_tracker(case_id, existing, role)
         return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role,
                         "tracker_hearings_on_offer": tracker_hearings_on_offer(existing, role),
-                        "next_hearing": tracker_next_hearing(existing)})
+                        **tracker_extras(existing)})
 
     if request.method == "DELETE":
         storage.delete_case(case_id)

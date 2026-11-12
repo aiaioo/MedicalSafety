@@ -518,6 +518,15 @@ def suggest_cases(q, limit=10):
             for *_, c in sorted(hits, key=lambda h: h[:3])[:limit]]
 
 
+def stage_label(tags, text=""):
+    """A hearing's stage for display: its tags ("cross_examination, arguments") as words, else the start of the listing text."""
+    words = [t.strip().replace("_", " ") for t in (tags or "").split(",") if t.strip()]
+    if words:
+        out = ", ".join(words)
+        return out[:1].upper() + out[1:]
+    return ((text or "").split(" -- ")[0].strip())[:120]
+
+
 def case_prefill(number, with_court=True):
     """What the tracker knows of the case with this number (spelt any way that _number_key makes equal), for filling in
     a case of the case manager, or None if it is not in the tracker:
@@ -549,18 +558,26 @@ def case_prefill(number, with_court=True):
         for t in text:
             if t not in day["texts"]:
                 day["texts"].append(t)
-    hearings = [{"date": d["date"], "title": d["title"] or "Hearing", "order_text": "\n".join(d["texts"])} for d in days.values()]
+    stages = {}  # what each day was listed for
+    for h in sorted(c["hearings"], key=lambda h: (h["hearing_date"], h["hearing_time"])):
+        st = stage_label(h.get("purpose_tags"), h.get("purpose_text"))
+        if h["hearing_date"] and st:
+            stages.setdefault(h["hearing_date"], st)
+    hearings = [{"date": d["date"], "title": d["title"] or "Hearing", "order_text": "\n".join(d["texts"]),
+                 "stage": stages.get(d["date"], "")} for d in days.values()]
     # The next hearing: the date the latest hearing says the case is posted to (from the court's record, else the portal history).
     held = [h for h in c["hearings"] if h["hearing_date"]]
     latest = max(held, key=lambda h: (h["hearing_date"], h["hearing_time"]), default=None)
-    next_hearing = ""
+    next_hearing, next_stage = "", ""
     if latest:
         next_hearing = latest.get("next_date") or (latest.get("history") or {}).get("next") or ""
         if next_hearing <= latest["hearing_date"]:
             next_hearing = ""
+        else:
+            next_stage = stage_label(latest.get("next_stage_tags"))
     return {"case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
             "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings,
-            "next_hearing": next_hearing}
+            "next_hearing": next_hearing, "next_stage": next_stage}
 
 
 @bp.route("/suggest")

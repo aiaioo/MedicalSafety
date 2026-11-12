@@ -1185,3 +1185,5 @@ a.tag:hover { background: #d7deec; }
 .hearing-head-actions { display: inline-flex; gap: 8px; }
 .hearing-head-actions .btn[hidden] { display: none; }
 .btn-danger-text { color: #b3261e; }
+.hearing-stage { font-size: 0.9em; color: var(--muted, #666); margin: 2px 0 6px; }
+.hearing-stage[hidden] { display: none; }
