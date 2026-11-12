@@ -1178,3 +1178,6 @@ a.cause-static { text-decoration: none; color: inherit; }
 .cause-delete-confirm span { flex: 1; }
 .cause-delete-confirm .btn { background: white; border-color: #e0a29b; color: #a12a1f; }
 #causeDeleteYes { background: #c0392b; border-color: #c0392b; color: white; }
+
+/* The create/rename-cause popup sits a little way down the window, clear of the browser's top bar. */
+#causeModal { align-items: flex-start; padding-top: 18vh; box-sizing: border-box; }
