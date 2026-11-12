@@ -1157,3 +1157,29 @@ a.tag:hover { background: #d7deec; }
 .image-thumb .image-thumb-split { position: absolute; right: 3px; bottom: 3px; font-size: 11px; padding: 1px 6px;
   border: 1px solid #cfd4e0; border-radius: 4px; background: #fff; cursor: pointer; }
 .image-thumb .image-thumb-split:disabled { opacity: 0.4; cursor: default; }
+
+/* New-case form on the cases page: the case number box and the case tracker's suggestions under it */
+.new-case-form { position: relative; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #d5dbe6; border-radius: 8px; background: #f7f9fc; }
+.new-case-form .modal-field { margin: 0 0 6px; }
+.new-case-form .modal-field input { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; }
+.new-case-hint { margin: 4px 0 8px; font-size: 12px; color: #5a6780; }
+.new-case-actions { display: flex; gap: 8px; }
+.suggest-list { position: absolute; left: 12px; right: 12px; z-index: 20; margin: -4px 0 0; padding: 0; list-style: none; max-height: 280px; overflow-y: auto;
+  background: #fff; border: 1px solid #b9c3d6; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+.suggest-list li { padding: 6px 10px; cursor: pointer; font-size: 13px; }
+.suggest-list li:hover, .suggest-list li.active { background: #e7eefa; }
+.suggest-court { margin-left: 6px; font-size: 11px; color: #46536b; background: #e3e8f1; border-radius: 3px; padding: 0 5px; }
+.suggest-parties { display: block; font-size: 12px; color: #5a6780; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* "Pull in hearings from the case tracker" offer, and a hearing's read-only order text from the tracker */
+.tracker-offer { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 0 0 12px; padding: 10px 12px;
+  border: 1px solid #b6d4f5; border-radius: 8px; background: #eef5fd; font-size: 13px; color: #2f4468; }
+.tracker-offer[hidden] { display: none; }
+.hearing-order-text { display: block; margin-top: 8px; font-size: 12px; color: #5a6780; }
+.hearing-order-text[hidden] { display: none; }
+.hearing-order-source { font-weight: normal; color: #8a92a5; }
+.hearing-order-text-input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px 8px; font: inherit; font-size: 13px; color: #2c3547;
+  background: #f4f6fa; border: 1px solid #e0e5ee; border-radius: 6px; resize: none; }
+.hearing-head-actions { display: inline-flex; gap: 8px; }
+.hearing-head-actions .btn[hidden] { display: none; }
+.btn-danger-text { color: #b3261e; }

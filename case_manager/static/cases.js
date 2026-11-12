@@ -388,13 +388,115 @@
     }
   }
 
-  addCaseBtn.addEventListener("click", async () => {
-    addCaseBtn.disabled = true;
+  // "+ New case" opens a form that asks for the case number (required). Cases in the case tracker are
+  // suggested as it is typed; the server fills the new case in from the tracker when the number is one of its
+  // (and otherwise just titles it "KMC case", "CPA case" or a placeholder).
+  const newCaseForm = document.getElementById("newCaseForm");
+  const newCaseNumber = document.getElementById("newCaseNumber");
+  const newCaseList = document.getElementById("newCaseSuggestions");
+  const newCaseHint = document.getElementById("newCaseHint");
+  const suggestUrl = appEl.dataset.suggestUrl;
+  const defaultHint = newCaseHint.textContent;
+  let suggestions = [];
+  let activeSuggestion = -1;
+  let suggestTimer = null;
+  let suggestSeq = 0;
+
+  function closeSuggestions() {
+    newCaseList.hidden = true;
+    newCaseNumber.setAttribute("aria-expanded", "false");
+    activeSuggestion = -1;
+  }
+
+  function renderSuggestions() {
+    newCaseList.innerHTML = "";
+    suggestions.forEach((s, i) => {
+      const li = document.createElement("li");
+      li.setAttribute("role", "option");
+      li.className = i === activeSuggestion ? "active" : "";
+      li.innerHTML = `<strong>${escapeHtml(s.case_number)}</strong> <span class="suggest-court">${escapeHtml(s.court)}</span>` +
+        (s.parties ? `<span class="suggest-parties">${escapeHtml(s.parties)}</span>` : "");
+      // mousedown, not click: it must act before the input loses focus and the list is closed
+      li.addEventListener("mousedown", (e) => { e.preventDefault(); pickSuggestion(i); });
+      newCaseList.appendChild(li);
+    });
+    newCaseList.hidden = suggestions.length === 0;
+    newCaseNumber.setAttribute("aria-expanded", suggestions.length ? "true" : "false");
+  }
+
+  function pickSuggestion(i) {
+    const s = suggestions[i];
+    if (!s) return;
+    newCaseNumber.value = s.case_number;
+    newCaseHint.textContent = `In the case tracker (${s.court}${s.parties ? ": " + s.parties : ""}): its court, parties and hearings will be filled in.`;
+    closeSuggestions();
+  }
+
+  async function fetchSuggestions() {
+    const q = newCaseNumber.value.trim();
+    const seq = ++suggestSeq;
+    if (q.length < 2 || !suggestUrl) { suggestions = []; renderSuggestions(); return; }
+    try {
+      const res = await fetch(suggestUrl + "?q=" + encodeURIComponent(q));
+      if (!res.ok || seq !== suggestSeq) return;  // a newer keystroke has superseded this one
+      suggestions = await res.json();
+      activeSuggestion = -1;
+      renderSuggestions();
+      const exact = suggestions.find((s) => s.case_number.toLowerCase() === q.toLowerCase());
+      newCaseHint.textContent = exact
+        ? `In the case tracker (${exact.court}${exact.parties ? ": " + exact.parties : ""}): its court, parties and hearings will be filled in.`
+        : defaultHint;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function openNewCaseForm() {
+    newCaseForm.hidden = false;
+    newCaseNumber.value = "";
+    newCaseHint.textContent = defaultHint;
+    suggestions = [];
+    renderSuggestions();
+    newCaseNumber.focus();
+  }
+
+  function closeNewCaseForm() {
+    newCaseForm.hidden = true;
+    closeSuggestions();
+  }
+
+  newCaseNumber.addEventListener("input", () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(fetchSuggestions, 200);
+  });
+  newCaseNumber.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!suggestions.length) return;
+      e.preventDefault();
+      activeSuggestion = (activeSuggestion + (e.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+      renderSuggestions();
+    } else if (e.key === "Enter" && activeSuggestion >= 0) {
+      e.preventDefault();  // choose the highlighted suggestion; a second Enter creates the case
+      pickSuggestion(activeSuggestion);
+    } else if (e.key === "Escape") {
+      if (!newCaseList.hidden) closeSuggestions(); else closeNewCaseForm();
+    }
+  });
+  newCaseNumber.addEventListener("blur", () => setTimeout(closeSuggestions, 100));
+  document.getElementById("newCaseCancel").addEventListener("click", closeNewCaseForm);
+  addCaseBtn.addEventListener("click", openNewCaseForm);
+
+  newCaseForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const caseNumber = newCaseNumber.value.trim();
+    if (!caseNumber) { newCaseNumber.focus(); return; }
+    const createBtn = document.getElementById("newCaseCreate");
+    createBtn.disabled = true;
     try {
       const res = await fetch(casesUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Untitled case" }),
+        body: JSON.stringify({ case_number: caseNumber }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -410,19 +512,20 @@
         case_number: data.case_number,
         summary: data.summary,
         allegation_count: 0,
-        hearing_count: 0,
+        hearing_count: (data.hearings || []).length,
         role: "owner", owner_name: "You",
         created_at: data.created_at,
         updated_at: data.updated_at,
       });
+      closeNewCaseForm();
       renderCaseList();
       selectCase(data.id);
       const card = caseListEl.querySelector(`.case-card[data-id="${data.id}"]`);
       if (card) setTimeout(() => card.querySelector(".allegation-title-input").focus(), 0);
-    } catch (e) {
-      setStatus("Could not create case: " + e.message, true);
+    } catch (err) {
+      setStatus("Could not create case: " + err.message, true);
     } finally {
-      addCaseBtn.disabled = false;
+      createBtn.disabled = false;
     }
   });
 
@@ -632,6 +735,9 @@
           <input type="text" class="hearing-title-input" placeholder="Hearing title (e.g. First hearing)" maxlength="300">
         </div>
         <textarea class="hearing-summary-input" rows="2" placeholder="What happened at this hearing…" maxlength="10000"></textarea>
+        <label class="hearing-order-text" hidden>Order text <span class="hearing-order-source">(from the case tracker; updated automatically)</span>
+          <textarea class="hearing-order-text-input" rows="2" readonly></textarea>
+        </label>
         <div class="hearing-doc-lists"></div>
       </div>
       <button type="button" class="card-delete-btn" title="Delete">✕</button>
@@ -660,6 +766,13 @@
       saveDetail();
     });
     flushHearingField(titleEl);
+
+    if (hearing.order_text) {
+      card.querySelector(".hearing-order-text").hidden = false;
+      const orderEl = card.querySelector(".hearing-order-text-input");
+      orderEl.value = hearing.order_text;
+      autoGrowOnAttach(orderEl);
+    }
 
     const summaryEl = card.querySelector(".hearing-summary-input");
     summaryEl.value = hearing.summary;
@@ -709,8 +822,25 @@
     saveDetail();
   }
 
+  // "Delete all hearings" is for a pull of the wrong case's hearings: offered while hearings are there from a pull and
+  // the user has not edited a hearing card since (the server keeps the same flag: hearings_edited).
+  function hearingsSnapshot() {
+    return JSON.stringify((detailCase.hearings || []).map((h) => [h.id, h.date, h.title, h.summary,
+      (h.submitted_docs || []).map((d) => d.doc_id), (h.received_docs || []).map((d) => d.doc_id)]));
+  }
+
+  function updateDeleteAllButton() {
+    const btn = caseDetailEl.querySelector("#deleteAllHearingsBtn");
+    if (btn) btn.hidden = !detailCase || !detailCase.hearings.length || !canEdit(detailCase.role)
+      || detailCase.tracker_dates == null || !!detailCase.hearings_edited;
+  }
+
   function saveDetail() {
     if (!detailCase) return;
+    if (!detailCase.hearings_edited && hearingsSnapshot() !== detailCase.hearingsSnapshot) {
+      detailCase.hearings_edited = true;
+      updateDeleteAllButton();
+    }
     scheduleSave("detail:" + detailCase.id, detailCase.id, {
       court: detailCase.court,
       case_number: detailCase.case_number,
@@ -724,6 +854,7 @@
     c.court = detailCase.court;
     c.case_number = detailCase.case_number;
     c.hearing_count = detailCase.hearings.length;
+    updateDeleteAllButton();
     const card = caseListEl.querySelector(`.case-card[data-id="${c.id}"]`);
     if (!card) return;
     card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
@@ -766,10 +897,49 @@
       </div>
       <div class="allegations-column-head">
         <h2>Hearings</h2>
-        <button type="button" class="btn" id="addHearingBtn">+ Add hearing</button>
+        <span class="hearing-head-actions">
+          <button type="button" class="btn btn-danger-text" id="deleteAllHearingsBtn" hidden>Delete all hearings</button>
+          <button type="button" class="btn" id="addHearingBtn">+ Add hearing</button>
+        </span>
+      </div>
+      <div class="tracker-offer" id="trackerOffer" hidden>
+        <span><strong id="trackerOfferCount"></strong> in the case tracker. Pull them in as hearing cards; after that they are kept up to date automatically.
+          Cards you have already made for a date are not duplicated, and what you have written on them is never changed.</span>
+        <button type="button" class="btn" id="pullTrackerBtn">Pull in hearings from the case tracker</button>
       </div>
       <p class="empty hearing-empty" style="display:none">No hearings yet.</p>
       <div class="evidence-list hearing-list"></div>`;
+
+    const offerEl = caseDetailEl.querySelector("#trackerOffer");
+    if (detailCase.tracker_hearings_on_offer > 0 && canEdit(detailCase.role)) {
+      const n = detailCase.tracker_hearings_on_offer;
+      caseDetailEl.querySelector("#trackerOfferCount").textContent = `${n} hearing${n === 1 ? "" : "s"}`;
+      offerEl.hidden = false;
+      const pullBtn = caseDetailEl.querySelector("#pullTrackerBtn");
+      pullBtn.addEventListener("click", async () => {
+        pullBtn.disabled = true;
+        try {
+          // what has been typed goes to the server first, so the pull is made on the newest copy
+          const key = "detail:" + detailCase.id;
+          if (saveTimers[key]) {
+            clearTimeout(saveTimers[key]);
+            saveTimers[key] = null;
+            await savePartial(detailCase.id, { court: detailCase.court, case_number: detailCase.case_number, hearings: detailCase.hearings });
+          }
+          const res = await fetch(`${caseUrl(detailCase.id)}/tracker-hearings`, { method: "POST" });
+          if (!res.ok) throw new Error(await res.text());
+          const data = await res.json();
+          detailCase = { id: detailCase.id, ...data };
+          detailCase.hearings = Array.isArray(data.hearings) ? data.hearings : [];
+          detailCase.hearings.forEach(migrateLegacyHearingDate);
+          updateSelectedCaseMeta();
+          renderDetail();
+        } catch (err) {
+          setStatus("Could not pull in the hearings: " + err.message, true);
+          pullBtn.disabled = false;
+        }
+      });
+    }
 
     const courtInput = caseDetailEl.querySelector("#courtInput");
     courtInput.value = detailCase.court;
@@ -796,6 +966,31 @@
       case_number: detailCase.case_number,
       hearings: detailCase.hearings,
     }));
+
+    // For a case that had the wrong hearings pulled in (or the wrong case number): clears them all, and lets the tracker be pulled again.
+    const deleteAllBtn = caseDetailEl.querySelector("#deleteAllHearingsBtn");
+    detailCase.hearingsSnapshot = hearingsSnapshot();  // what the hearing cards were when shown; a later difference is the user's edit
+    updateDeleteAllButton();
+    deleteAllBtn.addEventListener("click", async () => {
+      const n = detailCase.hearings.length;
+      if (!window.confirm(`Delete all ${n} hearing${n === 1 ? "" : "s"} of this case, with what you have written on them and the documents linked to them? This cannot be undone.`)) return;
+      deleteAllBtn.disabled = true;
+      try {
+        const key = "detail:" + detailCase.id;
+        if (saveTimers[key]) { clearTimeout(saveTimers[key]); saveTimers[key] = null; }  // a pending save would put the hearings back
+        const res = await fetch(`${caseUrl(detailCase.id)}/hearings`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        detailCase = { id: detailCase.id, ...data };
+        detailCase.hearings = Array.isArray(data.hearings) ? data.hearings : [];
+        updateSelectedCaseMeta();
+        renderDetail();
+        setStatus("Deleted all hearings");
+      } catch (err) {
+        setStatus("Could not delete the hearings: " + err.message, true);
+        deleteAllBtn.disabled = false;
+      }
+    });
 
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
       const hearing = { id: genId(), date: "", title: "", summary: "", submitted_docs: [], received_docs: [], creator_name: "You" };

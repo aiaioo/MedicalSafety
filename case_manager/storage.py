@@ -780,6 +780,7 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
             "date": _dec_text(h["hearing_date"]),
             "title": _dec_text(h["title"]),
             "summary": _dec_text(h["summary"]),
+            "order_text": _dec_text(h["order_text"]),
             "creator_id": h["created_by"],
             "submitted_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "submitted"],
             "received_docs": [_hearing_doc_dict(l) for l in links if l["direction"] == "received"],
@@ -801,6 +802,8 @@ def _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles=None) -> list[
             "cause_title_font_size": c["cause_title_font_size"],
             "cause_title_one_line_parties": c["cause_title_one_line_parties"],
             "cause_title_doc": _dec_text(c["cause_title_doc"]),
+            "tracker_dates": json.loads(c_dates) if (c_dates := _dec_text(c["tracker_dates"])) else None,  # None: the tracker's hearings have not been pulled in
+            "hearings_edited": c["hearings_edited"],
             "hearings": hearings_by_case.get(c["id"], []),
             **({"role": roles[c["id"]]} if roles else {}),
             "created_at": _iso(c["created_at"]),
@@ -823,7 +826,7 @@ def list_cases(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT c.id, c.name, c.cause_id, c.court, c.case_number, c.summary, c.court_location, c.case_role, c.party_in_person,
-                   c.cause_title_template_id, c.cause_title_font, c.cause_title_font_size, c.cause_title_one_line_parties, c.cause_title_doc, c.created_at, c.updated_at, uc.role
+                   c.cause_title_template_id, c.cause_title_font, c.cause_title_font_size, c.cause_title_one_line_parties, c.cause_title_doc, c.tracker_dates, c.hearings_edited, c.created_at, c.updated_at, uc.role
             FROM cases c JOIN eff_user_cases uc ON uc.case_id = c.id AND uc.user_id = %s
             """,
             (user_id,),
@@ -831,7 +834,7 @@ def list_cases(user_id: int) -> list[dict]:
         case_rows = cur.fetchall()
         case_ids = [c["id"] for c in case_rows]
         cur.execute(
-            "SELECT id, case_id, hearing_date, title, summary, created_by FROM hearings WHERE case_id = ANY(%s) ORDER BY position",
+            "SELECT id, case_id, hearing_date, title, summary, order_text, created_by FROM hearings WHERE case_id = ANY(%s) ORDER BY position",
             (case_ids,),
         )
         hearing_rows = cur.fetchall()
@@ -851,13 +854,13 @@ def get_case(case_id: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             "SELECT id, name, cause_id, court, case_number, summary, court_location, case_role, party_in_person, cause_title_template_id,"
-            " cause_title_font, cause_title_font_size, cause_title_one_line_parties, cause_title_doc, created_at, updated_at FROM cases WHERE id = %s",
+            " cause_title_font, cause_title_font_size, cause_title_one_line_parties, cause_title_doc, tracker_dates, hearings_edited, created_at, updated_at FROM cases WHERE id = %s",
             (case_id,),
         )
         case_row = cur.fetchone()
         if case_row is None:
             return None
-        cur.execute("SELECT id, case_id, hearing_date, title, summary, created_by FROM hearings WHERE case_id = %s ORDER BY position", (case_id,))
+        cur.execute("SELECT id, case_id, hearing_date, title, summary, order_text, created_by FROM hearings WHERE case_id = %s ORDER BY position", (case_id,))
         hearing_rows = cur.fetchall()
         cur.execute(_HEARING_DOC_JOIN + " JOIN hearings h ON h.id = hd.hearing_id WHERE h.case_id = %s ORDER BY hd.position", (case_id,))
         doc_link_rows = cur.fetchall()
@@ -876,8 +879,8 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None, actor_id: i
             """
             INSERT INTO cases (id, cause_id, name, court, case_number, summary, court_location, case_role, party_in_person,
                                cause_title_template_id, cause_title_font, cause_title_font_size, cause_title_one_line_parties, cause_title_doc,
-                               created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                               tracker_dates, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 cause_id = EXCLUDED.cause_id, name = EXCLUDED.name, court = EXCLUDED.court,
                 case_number = EXCLUDED.case_number, summary = EXCLUDED.summary,
@@ -890,6 +893,7 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None, actor_id: i
              _enc_text(data["summary"]), _enc_text(data.get("court_location", "")), data.get("case_role", "Complainant"), bool(data.get("party_in_person", False)), data.get("cause_title_template_id"),
              data.get("cause_title_font", ""), data.get("cause_title_font_size", 0),
              bool(data.get("cause_title_one_line_parties", False)), _enc_text(data.get("cause_title_doc")),
+             _enc_text(json.dumps(data["tracker_dates"])) if data.get("tracker_dates") else "",  # (not changed by a later save: see ON CONFLICT)
              data["created_at"], data["updated_at"]),
         )
         # Like hearings below, but only when the caller sent a parties list
@@ -910,9 +914,9 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None, actor_id: i
         cur.execute("DELETE FROM hearings WHERE case_id = %s", (case_id,))  # cascades to hearing_documents
         for position, hearing in enumerate(data.get("hearings") or []):
             cur.execute(
-                "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary, order_text, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (hearing["id"], case_id, position, _enc_text(hearing.get("date", "")), _enc_text(hearing.get("title", "")),
-                 _enc_text(hearing.get("summary", "")), creators.get(hearing["id"], actor_id)),
+                 _enc_text(hearing.get("summary", "")), _enc_text(hearing.get("order_text", "")), creators.get(hearing["id"], actor_id)),
             )
             for direction, key in (("submitted", "submitted_docs"), ("received", "received_docs")):
                 for doc_position, doc_item in enumerate(hearing.get(key) or []):
@@ -922,6 +926,49 @@ def save_case(case_id: str, data: dict, owner_id: int | None = None, actor_id: i
                     )
         if owner_id is not None:
             _grant(cur, owner_id, "case", case_id, "owner")
+
+
+def apply_tracker_hearings(case_id: str, hearings: list[dict], tracker_dates: list[str], edited: bool | None = None) -> None:
+    """Brings a case's hearings up to date with the case tracker's, touching nothing the user wrote. `hearings` is the case's
+    whole list in its new order: a hearing already held gets only its order_text (and place in the list) written, a new
+    one (an id not yet stored) is inserted with no creator; `tracker_dates` replaces the dates the tracker has been
+    consulted about (even if none: it marks the hearings as pulled in, so they are kept in sync from then on), and, unless
+    `edited` is None, whether the user has edited a hearing since the pull. Does not rewrite the case's other fields, its hearings' documents or any hearing it doesn't list."""
+    with _cursor() as cur:
+        cur.execute("SELECT 1 FROM cases WHERE id = %s FOR UPDATE", (case_id,))
+        cur.execute("SELECT id FROM hearings WHERE case_id = %s", (case_id,))
+        stored = {r["id"] for r in cur.fetchall()}
+        for position, h in enumerate(hearings):
+            if h["id"] in stored:
+                cur.execute("UPDATE hearings SET position = %s, order_text = %s WHERE id = %s AND case_id = %s",
+                            (position, _enc_text(h.get("order_text", "")), h["id"], case_id))
+            else:
+                cur.execute(
+                    "INSERT INTO hearings (id, case_id, position, hearing_date, title, summary, order_text) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (h["id"], case_id, position, _enc_text(h.get("date", "")), _enc_text(h.get("title", "")),
+                     _enc_text(h.get("summary", "")), _enc_text(h.get("order_text", ""))))
+        cur.execute("UPDATE cases SET tracker_dates = %s WHERE id = %s", (_enc_text(json.dumps(sorted(tracker_dates))), case_id))
+        if edited is not None:
+            cur.execute("UPDATE cases SET hearings_edited = %s WHERE id = %s", (edited, case_id))
+
+
+def delete_all_hearings(case_id: str) -> None:
+    """Removes every hearing of the case (their document links go with them) and forgets any pull from the case tracker."""
+    with _cursor() as cur:
+        cur.execute("DELETE FROM hearings WHERE case_id = %s", (case_id,))  # cascades to hearing_documents
+        cur.execute("UPDATE cases SET tracker_dates = '', hearings_edited = false WHERE id = %s", (case_id,))
+
+
+def mark_hearings_edited(case_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE cases SET hearings_edited = true WHERE id = %s AND NOT hearings_edited", (case_id,))
+
+
+def reset_tracker_dates(case_id: str) -> None:
+    """Forgets that the case's hearings were pulled in from the case tracker (its number has changed), so that the user is
+    offered the pull again."""
+    with _cursor() as cur:
+        cur.execute("UPDATE cases SET tracker_dates = '', hearings_edited = false WHERE id = %s", (case_id,))
 
 
 def list_cause_title_templates() -> list[dict]:

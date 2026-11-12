@@ -111,7 +111,8 @@ def hospital_tokens(name):
     s = re.sub(r"['\u2019`]s\b", "", s)  # "John's" -> "John"
     s = re.sub(r"['\u2019`]", "", s)
     s = re.sub(r"\bsaint\b", "st", s)
-    s = re.sub(r"\bappolo\b", "apollo", s)  # a common misspelling
+    s = re.sub(r"\bappolo\b", "apollo", s)  # common misspellings
+    s = re.sub(r"\bcloumbia\b", "columbia", s)
     s = re.sub(r"\bst\.?(?=[a-z])", "st ", s)  # "St.John" -> "St John"
     s = re.sub(r"[^a-z0-9]+", " ", s)
     s = re.sub(r"\bhospitals\b", "hospital", s)
@@ -487,6 +488,70 @@ def front_page_stats():
     left out."""
     shown = [c for c in load("all")["ordered"] if c.get("label") != "not_medical"]
     return analytics(shown, shown)
+
+
+def _number_key(s):
+    """A case number as one comparable string, ignoring case, punctuation, spaces and leading zeros:
+    'KMC/ENQ/01/2027' and 'kmc enq 1 2027' both give 'kmcenq12027'."""
+    return "".join(id_tokens(s or ""))
+
+
+def _tracker_cases():
+    """Every case in the tracker (both courts), the way the front page counts them: cases labelled not_medical are left out."""
+    return [c for c in load("all")["ordered"] if c.get("label") != "not_medical"]
+
+
+def _parties_line(c):
+    first = lambda names: (names[0] if names else "").strip()
+    return " v. ".join(p for p in (first(c["complainants"]), first(c["respondents"])) if p)
+
+
+def suggest_cases(q, limit=10):
+    """Case numbers in the tracker containing `q` (for the case manager's new-case box): [{"case_number", "court", "parties"}],
+    those that start with it first, then the shortest, newest numbers."""
+    key = _number_key(q)
+    if len(key) < 2:
+        return []
+    hits = [(not _number_key(c["enquiry_id"]).startswith(key), len(c["enquiry_id"]), i, c)
+            for i, c in enumerate(_tracker_cases()) if key in _number_key(c["enquiry_id"])]
+    return [{"case_number": c["enquiry_id"], "court": c["court_label"], "parties": _parties_line(c)}
+            for *_, c in sorted(hits, key=lambda h: h[:3])[:limit]]
+
+
+def case_prefill(number, with_court=True):
+    """What the tracker knows of the case with this number (spelt any way that _number_key makes equal), for filling in
+    a case of the case manager, or None if it is not in the tracker:
+    {"case_number", "court_label" ("KMC" / "CPA"), "court", "complainants", "respondents",
+     "hearings": [{"date", "title", "order_text"}]} -- one entry per hearing day, oldest first, whose order_text is what the
+    tracker records of the day (outcome or order, then the next date). `with_court=False` skips finding the court's full
+    name (a database read for a consumer case) when only the hearings are wanted."""
+    key = _number_key(number)
+    c = next((c for c in _tracker_cases() if _number_key(c["enquiry_id"]) == key), None) if key else None
+    if c is None:
+        return None
+    court = ""
+    if with_court:
+        if c["court"] == "kmc":
+            court = "Karnataka Medical Council"
+        else:
+            commission = ((storage.load_case_document(c["case_key"], "status.json") or {}).get("filedInComissionName") or "").strip()
+            court = ("Karnataka State Consumer Disputes Redressal Commission" if commission.upper() in ("", "KARNATAKA")
+                     else f"{commission} District Consumer Disputes Redressal Commission")
+    days = {}  # a day can have more than one list entry: they become one hearing
+    for h in sorted(c["hearings"], key=lambda h: (h["hearing_date"], h["hearing_time"])):
+        if not h["hearing_date"]:
+            continue
+        text = [x for x in (h.get("outcome_text"), h.get("record")) if x]
+        if h.get("next_date"):
+            text.append(f"Next hearing: {h['next_date']}")
+        day = days.setdefault(h["hearing_date"], {"date": h["hearing_date"], "title": "", "texts": []})
+        day["title"] = day["title"] or (h.get("purpose_text") or "").split(" -- ")[0].strip()
+        for t in text:
+            if t not in day["texts"]:
+                day["texts"].append(t)
+    hearings = [{"date": d["date"], "title": d["title"] or "Hearing", "order_text": "\n".join(d["texts"])} for d in days.values()]
+    return {"case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
+            "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings}
 
 
 @bp.route("/suggest")

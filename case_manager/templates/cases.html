@@ -11,6 +11,7 @@
 <div id="casesApp"
      data-can-create="{{ '1' if can_create else '' }}"
      data-cases-url="{{ url_for('api_allegation_cases') }}"
+     data-suggest-url="{{ url_for('api_case_tracker_suggest') }}"
      data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
      data-allegations-url-base="{{ url_for('allegations_view') }}"
      data-case-details-url-base="{{ url_for('case_details_view') }}"
@@ -33,6 +34,18 @@
           <h2>Cases</h2>
           <button type="button" class="btn" id="addCaseBtn" {{ 'disabled' if not can_create }}>+ New case</button>
         </div>
+        <form id="newCaseForm" class="new-case-form" autocomplete="off" hidden>
+          <label class="modal-field">Case number (required)
+            <input type="text" id="newCaseNumber" maxlength="100" required
+                   placeholder="e.g. KMC/ENQ/108/2025 or DC/525/CC/103/2026" role="combobox" aria-expanded="false" aria-controls="newCaseSuggestions">
+          </label>
+          <ul id="newCaseSuggestions" class="suggest-list" role="listbox" hidden></ul>
+          <p class="new-case-hint" id="newCaseHint">Cases in the case tracker are suggested as you type, and their court, parties and hearings are filled in.</p>
+          <div class="new-case-actions">
+            <button type="submit" class="btn" id="newCaseCreate">Create case</button>
+            <button type="button" class="btn" id="newCaseCancel">Cancel</button>
+          </div>
+        </form>
         <p class="empty" id="caseListEmpty" style="display:none">No cases yet. Add one to get started.</p>
         <div class="allegation-list" id="caseList"></div>
       </aside>

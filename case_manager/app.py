@@ -840,6 +840,9 @@ def sanitize_hearing_doc_list(raw, allowed_doc_ids):
     return out
 
 
+HEARING_MAX_ORDER_TEXT_CHARS = 20000
+
+
 def sanitize_hearings(raw, allowed_doc_ids):
     if not isinstance(raw, list):
         return []
@@ -852,6 +855,8 @@ def sanitize_hearings(raw, allowed_doc_ids):
             "date": _sanitize_text(item.get("date"), CASE_MAX_DATE_CHARS),
             "title": _sanitize_text(item.get("title"), ALLEGATION_MAX_TITLE_CHARS),
             "summary": _sanitize_text(item.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
+            # the case tracker's text; only the server's own sync sets it (a saved case keeps what is stored)
+            "order_text": _sanitize_text(item.get("order_text"), HEARING_MAX_ORDER_TEXT_CHARS),
             "submitted_docs": sanitize_hearing_doc_list(item.get("submitted_docs"), allowed_doc_ids),
             "received_docs": sanitize_hearing_doc_list(item.get("received_docs"), allowed_doc_ids),
         })
@@ -4079,6 +4084,112 @@ def api_source_documents():
     return jsonify(list_source_docs())
 
 
+CONSUMER_NUMBER_RE = re.compile(r"(?:DC|SC|NC)/|/(?:CC|FA|RP|EA|RA|MA)/", re.I)  # a consumer commission's case numbers
+
+
+def _tracker_case(case_number, with_court=True) -> dict | None:
+    """What the case tracker holds about the case with this number, or None (not in it, or the tracker is not
+    mounted or fails: a new case is then just made without the details)."""
+    if case_tracker_viewer is None:
+        return None
+    try:
+        return case_tracker_viewer.case_prefill(case_number, with_court=with_court)
+    except Exception:
+        app.logger.exception("case tracker lookup of %r", case_number)
+        return None
+
+
+def _hearings_by_user(hearings):
+    """What the user can change on hearing cards (everything but the tracker's order text), to tell whether a save changed them."""
+    return [(h["id"], h.get("date", ""), h.get("title", ""), h.get("summary", ""),
+             tuple(d["doc_id"] for d in h.get("submitted_docs", [])), tuple(d["doc_id"] for d in h.get("received_docs", [])))
+            for h in hearings]
+
+
+def merge_tracker_hearings(hearings, tracker_hearings, synced_dates):
+    """The case's hearing cards brought up to date with the case tracker's hearings. Returns (cards, tracker dates, changed).
+    A tracker hearing on a date that already has a card (one the user made, or one made from the tracker before) only sets
+    that card's order_text: no second card, and nothing the user wrote (date, title, summary, documents) is touched. A date
+    with no card gets a new one (title from the tracker, empty summary), placed among the dated cards -- unless the tracker
+    was consulted about that date before (it is in `synced_dates`), which means the user deleted that card, and it stays
+    deleted. Cards the tracker has nothing for are left as they are."""
+    cards = [dict(h) for h in hearings]
+    by_date = {}
+    for h in cards:
+        if h.get("date"):
+            by_date.setdefault(h["date"], h)
+    synced = set(synced_dates)
+    changed = False
+    for t in tracker_hearings:
+        day, text = t["date"], t["order_text"][:HEARING_MAX_ORDER_TEXT_CHARS]
+        card = by_date.get(day)
+        if card is not None:
+            if card.get("order_text", "") != text:
+                card["order_text"] = text
+                changed = True
+        elif day not in synced:
+            card = {"id": uuid.uuid4().hex[:12], "date": day, "title": t["title"], "summary": "", "order_text": text,
+                    "submitted_docs": [], "received_docs": []}
+            cards.insert(next((i for i, h in enumerate(cards) if (h.get("date") or "") > day), len(cards)), card)
+            by_date[day] = card
+            changed = True
+        synced.add(day)
+    return cards, sorted(synced), changed or synced != set(synced_dates)
+
+
+def sync_case_with_tracker(case_id, case, role):
+    """Once the user has pulled the tracker's hearings into a case (api_case_tracker_hearings), they are kept up to date: this
+    refreshes the case's hearing cards from the tracker when the case is opened (see merge_tracker_hearings), if the user
+    may edit it and its number is still one the tracker knows; returns the case as it now is."""
+    if ROLE_RANK[role] < ROLE_RANK["editor"] or not case.get("case_number") or case.get("tracker_dates") is None:
+        return case
+    known = _tracker_case(case["case_number"], with_court=False)
+    if not known:
+        return case
+    cards, dates, changed = merge_tracker_hearings(case.get("hearings", []), known["hearings"], case.get("tracker_dates", []))
+    if not changed:
+        return case
+    try:
+        storage.apply_tracker_hearings(case_id, cards, dates)
+        return storage.get_case(case_id) or case
+    except Exception:
+        app.logger.exception("refreshing case %s from the case tracker", case_id)
+        return case
+
+
+def tracker_hearings_on_offer(case, role) -> int:
+    """How many hearings the case tracker has for a case whose hearings the user has not pulled in yet (0: nothing to offer,
+    because they have been, the case is not in the tracker, or the user cannot edit the case)."""
+    if ROLE_RANK[role] < ROLE_RANK["editor"] or not case.get("case_number") or case.get("tracker_dates") is not None:
+        return 0
+    known = _tracker_case(case["case_number"], with_court=False)
+    return len(known["hearings"]) if known else 0
+
+
+def default_case_name(case_number, known) -> str:
+    """A title for a new case made from its number alone: "KMC case" or "CPA case" (the consumer commissions), by what the
+    tracker says or else by how the number looks; otherwise a placeholder to complete."""
+    if known:
+        return f"{known['court_label']} case"
+    if case_number.upper().startswith("KMC"):
+        return "KMC case"
+    if CONSUMER_NUMBER_RE.search(case_number):
+        return "CPA case"
+    return "Case before the ..."
+
+
+@app.route("/api/case-tracker/suggest")
+def api_case_tracker_suggest():
+    """Case numbers in the case tracker that contain ?q= (for the new-case box); signed-in accounts only, like the tracker."""
+    if case_tracker_viewer is None or g.user is None or g.user.is_guest:
+        return jsonify([])
+    try:
+        return jsonify(case_tracker_viewer.suggest_cases(request.args.get("q", "")))
+    except Exception:
+        app.logger.exception("case tracker suggestions")
+        return jsonify([])
+
+
 @app.route("/api/allegation-cases", methods=["GET", "POST"])
 def api_allegation_cases():
     if request.method == "GET":
@@ -4108,9 +4219,15 @@ def api_allegation_cases():
         return jsonify(attach_owners("case", items))
 
     body = request.get_json(silent=True) or {}
-    name = str(body.get("name") or "").strip()[:200]
-    if not name:
-        raise DocumentError("A case name is required", 400)
+    case_number = _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS)
+    if not case_number:
+        raise DocumentError("A case number is required", 400)
+    # A case the case tracker knows (by number, however it is spelt) is filled in from it: its canonical number,
+    # court, parties and hearings.
+    known = _tracker_case(case_number)
+    if known:
+        case_number = known["case_number"]
+    name = str(body.get("name") or "").strip()[:200] or default_case_name(case_number, known)
 
     # A case's cause is mandatory: an explicit cause_id wins (the user must
     # be able to edit that cause), else fall back to whichever cause they
@@ -4125,16 +4242,55 @@ def api_allegation_cases():
     data = {
         "name": name,
         "cause_id": cause_id,
-        "court": _sanitize_text(body.get("court"), CASE_MAX_COURT_CHARS),
-        "case_number": _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS),
+        "court": _sanitize_text(body.get("court") or (known or {}).get("court"), CASE_MAX_COURT_CHARS),
+        "case_number": case_number,
         "summary": _sanitize_text(body.get("summary"), ALLEGATION_MAX_TEXT_CHARS),
         **sanitize_cause_title_settings({}, {}),
-        "hearings": [],
+        "parties": sanitize_parties(
+            [{"side": "complainant", "name": n} for n in (known or {}).get("complainants", [])]
+            + [{"side": "respondent", "name": n} for n in (known or {}).get("respondents", [])], []),
+        "hearings": [],  # the tracker's hearings are pulled in when the user asks: see api_case_tracker_hearings
         "created_at": now,
         "updated_at": now,
     }
     storage.save_case(case_id, data, owner_id=g.user.id, actor_id=acting_user_id())
     return jsonify({"id": case_id, **data})
+
+
+@app.route("/api/allegation-case/<case_id>/tracker-hearings", methods=["POST"])
+def api_case_tracker_hearings(case_id):
+    """The "Pull in hearings from the case tracker" button: adds the tracker's hearings to the case's hearing cards (a card
+    the user already made for a date only gets its order text) and from then on they are kept in sync when the case is
+    opened (sync_case_with_tracker). Returns the case as GET does."""
+    check_report_id(case_id)
+    role = require_role("case", case_id, "editor")
+    existing = storage.get_case(case_id)
+    if existing is None:
+        raise DocumentError(f"No case with id {case_id!r}", 404)
+    known = _tracker_case(existing["case_number"], with_court=False) if existing.get("case_number") else None
+    if known is None:
+        raise DocumentError("This case is not in the case tracker", 404)
+    cards, dates, _ = merge_tracker_hearings(existing.get("hearings", []), known["hearings"], existing.get("tracker_dates") or [])
+    storage.apply_tracker_hearings(case_id, cards, dates, edited=False)  # not edited since this pull: "Delete all hearings" is on offer
+    log_activity("save", "case", case_id)
+    case = storage.get_case(case_id)
+    return jsonify({**attach_item_creators(case, ("hearings",)), "role": role, "tracker_hearings_on_offer": 0})
+
+
+@app.route("/api/allegation-case/<case_id>/hearings", methods=["DELETE"])
+def api_case_delete_hearings(case_id):
+    """The "Delete all hearings" button, for a case that had the wrong hearings pulled in: removes every hearing card (with the
+    documents linked to them -- the documents themselves stay) and forgets the tracker pull, so the case is offered it again.
+    Returns the case as GET does."""
+    check_report_id(case_id)
+    role = require_role("case", case_id, "editor")
+    if storage.get_case(case_id) is None:
+        raise DocumentError(f"No case with id {case_id!r}", 404)
+    storage.delete_all_hearings(case_id)
+    log_activity("save", "case", case_id, "deleted all hearings")
+    case = sync_case_with_tracker(case_id, storage.get_case(case_id), role)  # (not pulled any more: only works out the offer)
+    return jsonify({**attach_item_creators(case, ("hearings",)), "role": role,
+                    "tracker_hearings_on_offer": tracker_hearings_on_offer(case, role)})
 
 
 @app.route("/api/allegation-case/<case_id>", methods=["GET", "POST", "DELETE"])
@@ -4147,7 +4303,9 @@ def api_allegation_case(case_id):
 
     if request.method == "GET":
         log_activity("view", "case", case_id)
-        return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role})
+        existing = sync_case_with_tracker(case_id, existing, role)
+        return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role,
+                        "tracker_hearings_on_offer": tracker_hearings_on_offer(existing, role)})
 
     if request.method == "DELETE":
         storage.delete_case(case_id)
@@ -4187,7 +4345,15 @@ def api_allegation_case(case_id):
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    # The order text belongs to the case tracker's sync: whatever a client sends back is dropped for what is stored.
+    stored_order_text = {h["id"]: h.get("order_text", "") for h in existing.get("hearings", [])}
+    for h in data["hearings"]:
+        h["order_text"] = stored_order_text.get(h["id"], "")
     storage.save_case(case_id, data, actor_id=acting_user_id())
+    if data["case_number"] != existing.get("case_number"):
+        storage.reset_tracker_dates(case_id)  # another case: its tracker hearings are not the ones pulled in
+    elif _hearings_by_user(data["hearings"]) != _hearings_by_user(existing.get("hearings", [])):
+        storage.mark_hearings_edited(case_id)  # the user is working on the hearing cards: they have the right case
     log_activity("save", "case", case_id)
     return jsonify(data)
 
