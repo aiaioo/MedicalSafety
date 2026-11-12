@@ -1389,7 +1389,7 @@ def annexure_ref_data(report_id):
             info["pages"].setdefault(p, {"pos": shown + i, "number": number})
             texts.setdefault(p, label if number == "-" else f"{label}, page {number}")
             positions.setdefault((d["id"], p), shown + i)
-        shown += len(pages)
+        shown += len(pages) + annexure_doc_padding(len(pages), pn)
     return refs, positions, shown, meta
 
 
@@ -4096,6 +4096,12 @@ def annexure_page_range(start, end, pn):
     return str(a) if a == b else f"{a}-{b}"
 
 
+def annexure_doc_padding(count, pn):
+    """1 if a document of `count` pages gets an empty page after it (with "number alternate pages", so the next
+    document starts on the front of a sheet), else 0."""
+    return count % 2 if pn["position"] != "none" and pn.get("alternate") else 0
+
+
 def annexure_selected_pages(d, page_count):
     """The 1-based source pages of annexed document `d` that the annexure includes."""
     if d["page_mode"] == "all":
@@ -4417,6 +4423,9 @@ def _append_annexure(out, payload, opened):
                 out.pages.append(one.pages[0])
             else:
                 out.pages.append(src.pages[p - 1])
+        if pages and annexure_doc_padding(len(pages), payload["pageNumbers"]):
+            w, h = _displayed_size(out.pages[-1])
+            out.add_blank_page(page_size=(w, h))
 
     pn, dn = payload["pageNumbers"], payload["docNumbers"]
     band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
@@ -4549,6 +4558,9 @@ def _annexure_pdf_bytes_locked(payload):
                     spans.append((d, out.page_count, out.page_count + len(pages) - 1))
                 for p in pages:
                     out.insert_pdf(src, from_page=p - 1, to_page=p - 1)
+                if pages and annexure_doc_padding(len(pages), payload["pageNumbers"]):
+                    last = out[-1].rect
+                    out.new_page(-1, width=last.width, height=last.height)
         pn = payload["pageNumbers"]
         band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
         stamp_page_numbers(out, pn, band)
@@ -4614,7 +4626,7 @@ def _annexure_list_rows(payload):
             text = (d["description"] or d["title"]).strip()
             rows.append((f"{doc_number_label(dn, len(rows))} - {text}" if dn["enabled"] else text,
                          annexure_page_range(shown, shown + count - 1, pn)))
-            shown += count
+            shown += count + annexure_doc_padding(count, pn)
     return rows
 
 

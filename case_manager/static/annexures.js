@@ -199,10 +199,21 @@
         container.appendChild(wrap);
         observer.observe(wrap);
       }
+      const padded = shown > firstIndex && pn.position !== "none" && pn.alternate && (shown - firstIndex) % 2 === 1;
+      if (padded) {
+        // an empty page, so the next document starts on the front of a sheet
+        const last = container.lastElementChild;
+        const blank = document.createElement("div");
+        blank.className = "page-wrap";
+        blank.style.cssText = `width:${last.style.width};aspect-ratio:${last.style.aspectRatio};max-width:100%;background:white`;
+        blank.innerHTML = '<span class="page-label">blank page (back of the last page)</span>';
+        container.appendChild(blank);
+      }
       if (shown > firstIndex) {
         const text = (d.description || d.title).trim();
         lodRows.push([dn.enabled ? `${dn.name} ${dn.prefix}${dn.first + lodRows.length} - ${text}` : text, pageRange(firstIndex, shown - 1)]);
       }
+      if (padded) shown++; // the empty page counts towards the annexure's page positions
     }
     if (lodSlot) lodSlot.replaceWith(listPage(lodRows));
   }
