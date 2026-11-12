@@ -522,18 +522,41 @@
       layout();
       redraw();
     });
-    // The image is fetched only while the page is near the viewport (see imageObserver):
-    // setting src for every page up front queued hundreds of renders, so the pages being
-    // looked at waited behind ones nobody was near. Clearing src on a page that has not
-    // loaded yet, once it is far away, cancels its pending request.
+    // The image is fetched only while the page is near the viewport (see imageObserver), and
+    // through a small queue (see pumpImages): the server renders one page at a time and keeps
+    // rendering requests the browser has already cancelled, so firing a request for every page
+    // scrolled past made the page you stop on wait behind all of them.
     const imgUrl = renderUrlBase.replace("__PAGE__", pageNum) + "&dpi=150";
+    controller.imgState = "idle"; // idle | pending | loading | done
+    controller.startImage = () => {
+      controller.imgState = "loading";
+      img.src = imgUrl;
+    };
     controller.wantImage = (want) => {
-      if (want) {
-        if (!img.getAttribute("src")) img.src = imgUrl;
-      } else if (!img.complete && img.getAttribute("src")) {
-        img.removeAttribute("src");
+      if (want && controller.imgState === "idle") {
+        controller.imgState = "pending";
+        pendingImages.add(controller);
+        pumpImages();
+      } else if (!want) {
+        if (controller.imgState === "pending") {
+          controller.imgState = "idle";
+          pendingImages.delete(controller);
+        } else if (controller.imgState === "loading") {
+          img.removeAttribute("src"); // cancels the request
+          controller.imgState = "idle";
+          imagesInFlight--;
+          pumpImages();
+        }
       }
     };
+    const imageSettled = (ok) => {
+      if (controller.imgState !== "loading") return;
+      controller.imgState = ok ? "done" : "idle";
+      imagesInFlight--;
+      pumpImages();
+    };
+    img.addEventListener("load", () => imageSettled(true));
+    img.addEventListener("error", () => imageSettled(false));
 
     // ---- text box editing: a textarea laid over the box while typing ----
     function positionEditor() {
@@ -884,6 +907,8 @@
       imageObserver.unobserve(controller.wrap);
     }
     mounted.clear();
+    pendingImages.clear();
+    imagesInFlight = 0;
     container.innerHTML = "";
     selected = null; // ephemeral UI state; not worth preserving across a remount
     for (const p of desiredPageNums) {
@@ -961,6 +986,29 @@
 
   // Fetch page images only for pages within about two screens of the visible area. Created
   // with the other observers; mountPages (above) only runs after this file has finished loading.
+  const pendingImages = new Set();
+  let imagesInFlight = 0;
+  const MAX_IMAGES_IN_FLIGHT = 3;
+  function pumpImages() {
+    while (imagesInFlight < MAX_IMAGES_IN_FLIGHT && pendingImages.size) {
+      const cr = container.getBoundingClientRect();
+      const mid = cr.top + cr.height / 2;
+      let best = null,
+        bestDist = Infinity;
+      for (const c of pendingImages) {
+        const r = c.wrap.getBoundingClientRect();
+        const d = Math.abs(r.top + r.height / 2 - mid);
+        if (d < bestDist) {
+          bestDist = d;
+          best = c;
+        }
+      }
+      pendingImages.delete(best);
+      imagesInFlight++;
+      best.startImage();
+    }
+  }
+
   const imageObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -968,7 +1016,7 @@
         if (controller && controller.wantImage) controller.wantImage(entry.isIntersecting);
       }
     },
-    { root: container, rootMargin: "200% 0px 200% 0px" }
+    { root: container, rootMargin: "100% 0px 100% 0px" }
   );
 
   function scrollToPage(p) {
