@@ -1019,6 +1019,92 @@ def list_cause_title_templates() -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
+def save_cause_title_template(template_id: str, name: str, body: str) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO cause_title_templates (id, name, body) VALUES (%s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, body = EXCLUDED.body
+            """,
+            (template_id, name, body),
+        )
+
+
+def delete_cause_title_template(template_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("DELETE FROM cause_title_templates WHERE id = %s", (template_id,))
+        cur.execute("UPDATE cases SET cause_title_template_id = NULL WHERE cause_title_template_id = %s", (template_id,))
+
+
+def delete_case(case_id: str) -> None:
+    """Refused while the case has hearings or allegations. Reports/sources
+    associated only with this case move to its cause."""
+    with _cursor() as cur:
+        cur.execute("SELECT cause_id FROM cases WHERE id = %s FOR UPDATE", (case_id,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        _refuse_if_any(cur, "SELECT 1 FROM hearings WHERE case_id = %s LIMIT 1", (case_id,),
+                       "Cannot delete a case that still has hearings")
+        _refuse_if_any(cur, "SELECT 1 FROM allegation_cases WHERE case_id = %s LIMIT 1", (case_id,),
+                       "Cannot delete a case that still has allegations")
+        _relink_orphans(cur, "case", case_id, row["cause_id"])
+        cur.execute("DELETE FROM cases WHERE id = %s", (case_id,))
+
+
+def count_allegations_by_case() -> dict:
+    with _cursor() as cur:
+        cur.execute("SELECT case_id, COUNT(*) AS n FROM allegation_cases GROUP BY case_id")
+        return {r["case_id"]: r["n"] for r in cur.fetchall()}
+
+
+def list_case_ids_by_cause(cause_id: str) -> list[str]:
+    with _cursor() as cur:
+        cur.execute("SELECT id FROM cases WHERE cause_id = %s", (cause_id,))
+        return [r["id"] for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Causes (a title each)
+# ---------------------------------------------------------------------------
+
+def list_causes(user_id: int) -> list[dict]:
+    """The causes this user has any role on, each carrying that "role"."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.title, c.created_at, c.updated_at, uc.role
+            FROM causes c JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s
+            """,
+            (user_id,),
+        )
+        cause_rows = cur.fetchall()
+    return [
+        {
+            "id": c["id"], "title": _dec_text(c["title"]),
+            "role": c["role"],
+            "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"]),
+        }
+        for c in cause_rows
+    ]
+
+
+def cause_exists(cause_id: str) -> bool:
+    return _exists("causes", cause_id)
+
+
+def get_cause(cause_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT title, created_at, updated_at FROM causes WHERE id = %s", (cause_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+    return {
+        "title": _dec_text(row["title"]),
+        "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"]),
+    }
+
+
 def save_cause(cause_id: str, data: dict, owner_id: int | None = None) -> None:
     """Creates or renames a cause. Pass `owner_id` when creating, to record
     the creator's ownership in the same transaction."""
