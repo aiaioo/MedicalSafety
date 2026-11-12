@@ -1180,6 +1180,8 @@ a.tag:hover { background: #d7deec; }
 .hearing-order-source { font-weight: normal; color: #8a92a5; }
 .hearing-order-text-input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px 8px; font: inherit; font-size: 13px; color: #2c3547;
   background: #f4f6fa; border: 1px solid #e0e5ee; border-radius: 6px; resize: none; }
+.next-hearing { margin-left: auto; margin-right: 12px; font-weight: 600; align-self: center; }
+.next-hearing[hidden] { display: none; }
 .hearing-head-actions { display: inline-flex; gap: 8px; }
 .hearing-head-actions .btn[hidden] { display: none; }
 .btn-danger-text { color: #b3261e; }

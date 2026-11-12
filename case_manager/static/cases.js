@@ -806,6 +806,12 @@
     return card;
   }
 
+  // Latest hearing first. Undated hearings (e.g. a just-added blank one) stay at the top; ties keep their order.
+  function sortHearingsLatestFirst(hearings) {
+    const key = (h) => (isIsoDate(h.date) ? h.date : "9999-99-99");
+    hearings.sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0));
+  }
+
   function renderHearingList() {
     const listEl = caseDetailEl.querySelector(".hearing-list");
     const emptyEl = caseDetailEl.querySelector(".hearing-empty");
@@ -897,6 +903,7 @@
       </div>
       <div class="allegations-column-head">
         <h2>Hearings</h2>
+        <span class="next-hearing" id="nextHearing" hidden></span>
         <span class="hearing-head-actions">
           <button type="button" class="btn btn-danger-text" id="deleteAllHearingsBtn" hidden>Delete all hearings</button>
           <button type="button" class="btn" id="addHearingBtn">+ Add hearing</button>
@@ -932,6 +939,7 @@
           detailCase = { id: detailCase.id, ...data };
           detailCase.hearings = Array.isArray(data.hearings) ? data.hearings : [];
           detailCase.hearings.forEach(migrateLegacyHearingDate);
+          sortHearingsLatestFirst(detailCase.hearings);
           updateSelectedCaseMeta();
           renderDetail();
         } catch (err) {
@@ -992,9 +1000,16 @@
       }
     });
 
+    const nextEl = caseDetailEl.querySelector("#nextHearing");
+    if (isIsoDate(detailCase.next_hearing)) {
+      const [y, m, d] = detailCase.next_hearing.split("-");
+      nextEl.textContent = `Next hearing: ${d}/${m}/${y}`;
+      nextEl.hidden = false;
+    }
+
     caseDetailEl.querySelector("#addHearingBtn").addEventListener("click", () => {
       const hearing = { id: genId(), date: "", title: "", summary: "", submitted_docs: [], received_docs: [], creator_name: "You" };
-      detailCase.hearings.push(hearing);
+      detailCase.hearings.unshift(hearing);
       renderHearingList();
       updateSelectedCaseMeta();
       saveDetail();
@@ -1019,6 +1034,7 @@
       detailCase = { id, ...data };
       if (!Array.isArray(detailCase.hearings)) detailCase.hearings = [];
       detailCase.hearings.forEach(migrateLegacyHearingDate);
+      sortHearingsLatestFirst(detailCase.hearings);
       renderDetail();
     } catch (e) {
       caseDetailEl.innerHTML = `<p class="empty">Failed to load case: ${escapeHtml(e.message)}</p>`;

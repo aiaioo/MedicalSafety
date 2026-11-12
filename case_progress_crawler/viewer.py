@@ -522,7 +522,7 @@ def case_prefill(number, with_court=True):
     """What the tracker knows of the case with this number (spelt any way that _number_key makes equal), for filling in
     a case of the case manager, or None if it is not in the tracker:
     {"case_number", "court_label" ("KMC" / "CPA"), "court", "complainants", "respondents",
-     "hearings": [{"date", "title", "order_text"}]} -- one entry per hearing day, oldest first, whose order_text is what the
+     "hearings": [{"date", "title", "order_text"}], "next_hearing" (ISO date or "")} -- one entry per hearing day, oldest first, whose order_text is what the
     tracker records of the day (outcome or order, then the next date). `with_court=False` skips finding the court's full
     name (a database read for a consumer case) when only the hearings are wanted."""
     key = _number_key(number)
@@ -550,8 +550,17 @@ def case_prefill(number, with_court=True):
             if t not in day["texts"]:
                 day["texts"].append(t)
     hearings = [{"date": d["date"], "title": d["title"] or "Hearing", "order_text": "\n".join(d["texts"])} for d in days.values()]
+    # The next hearing: the date the latest hearing says the case is posted to (from the court's record, else the portal history).
+    held = [h for h in c["hearings"] if h["hearing_date"]]
+    latest = max(held, key=lambda h: (h["hearing_date"], h["hearing_time"]), default=None)
+    next_hearing = ""
+    if latest:
+        next_hearing = latest.get("next_date") or (latest.get("history") or {}).get("next") or ""
+        if next_hearing <= latest["hearing_date"]:
+            next_hearing = ""
     return {"case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
-            "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings}
+            "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings,
+            "next_hearing": next_hearing}
 
 
 @bp.route("/suggest")

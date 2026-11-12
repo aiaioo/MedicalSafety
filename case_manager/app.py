@@ -4811,6 +4811,12 @@ def sync_case_with_tracker(case_id, case, role):
         return case
 
 
+def tracker_next_hearing(case) -> str:
+    """The date the case tracker says the case is next listed for (ISO), or "" when it is unknown (or the case is not in it)."""
+    known = _tracker_case(case["case_number"], with_court=False) if case.get("case_number") else None
+    return (known or {}).get("next_hearing", "")
+
+
 def tracker_hearings_on_offer(case, role) -> int:
     """How many hearings the case tracker has for a case whose hearings the user has not pulled in yet (0: nothing to offer,
     because they have been, the case is not in the tracker, or the user cannot edit the case)."""
@@ -4928,7 +4934,8 @@ def api_case_tracker_hearings(case_id):
     storage.apply_tracker_hearings(case_id, cards, dates, edited=False)  # not edited since this pull: "Delete all hearings" is on offer
     log_activity("save", "case", case_id)
     case = storage.get_case(case_id)
-    return jsonify({**attach_item_creators(case, ("hearings",)), "role": role, "tracker_hearings_on_offer": 0})
+    return jsonify({**attach_item_creators(case, ("hearings",)), "role": role, "tracker_hearings_on_offer": 0,
+                    "next_hearing": tracker_next_hearing(case)})
 
 
 @app.route("/api/allegation-case/<case_id>/hearings", methods=["DELETE"])
@@ -4959,7 +4966,8 @@ def api_allegation_case(case_id):
         log_activity("view", "case", case_id)
         existing = sync_case_with_tracker(case_id, existing, role)
         return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role,
-                        "tracker_hearings_on_offer": tracker_hearings_on_offer(existing, role)})
+                        "tracker_hearings_on_offer": tracker_hearings_on_offer(existing, role),
+                        "next_hearing": tracker_next_hearing(existing)})
 
     if request.method == "DELETE":
         storage.delete_case(case_id)
