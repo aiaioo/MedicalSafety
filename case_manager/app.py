@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import os
+import queue
 import re
 import sys
 import threading
@@ -3457,7 +3458,8 @@ def api_create_snippet(doc_id, page):
     return jsonify(result)
 
 
-def _annotated_pdf_response(doc_id, annotated_only):
+def _annotated_pdf_bytes_whole(doc_id, annotated_only):
+    """The original implementation: the whole document in PyMuPDF. Kept as the fallback for a PDF qpdf cannot open."""
     with _heavy_lock:
         pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
 
@@ -3489,11 +3491,160 @@ def _annotated_pdf_response(doc_id, annotated_only):
             annotated_pdf_bytes = d.tobytes(deflate=True)
         pdf_bytes = None  # the source copy isn't needed while the response is sent
 
+    return annotated_pdf_bytes
+
+
+def _burn_annotations_into_page(src, index, annotations):
+    """Draws `annotations` onto page `index` of the (lazily read) pikepdf document `src`, in place. Only
+    that one page is handed to PyMuPDF -- as a one-page PDF -- so the existing drawing and (for a
+    Share-link visitor) redaction code is reused without loading the rest of the document."""
+    import pikepdf
+    one = pikepdf.new()
+    one.pages.append(src.pages[index])
+    buf = io.BytesIO()
+    one.save(buf)
+    one.close()
+    with fitz.open(stream=buf.getvalue(), filetype="pdf") as d:
+        p = d[0]
+        if p.rotation:
+            p.remove_rotation()  # annotations are fractions of the page as displayed, so draw on it unrotated
+        draw_annotations_on_page(p, annotations, p.rect)
+        done = d.tobytes()
+    new = pikepdf.open(io.BytesIO(done))
+    src.pages.insert(index, new.pages[0])
+    del src.pages[index + 1]
+    new.close()
+
+
+def _stream_pikepdf(pdf, *to_close):
+    """Yields the bytes of saving `pdf` as it is written, so a big PDF is never assembled in memory. qpdf
+    pulls each page's data out of the (lazily decrypted) source as it writes, so memory stays near
+    constant; saving runs in a worker thread feeding a small bounded queue, which also gives backpressure
+    when the client is slow. `to_close` objects are closed when the stream ends or the client goes away."""
+    q = queue.Queue(maxsize=8)
+    finished = object()
+    stop = threading.Event()
+
+    class Writer(io.RawIOBase):
+        def __init__(self):
+            super().__init__()
+            self.buf = bytearray()
+
+        def writable(self):
+            return True
+
+        def _put(self, item):
+            while True:
+                if stop.is_set():
+                    raise BrokenPipeError("client went away")
+                try:
+                    q.put(item, timeout=0.5)
+                    return
+                except queue.Full:
+                    pass
+
+        def write(self, data):
+            self.buf += data
+            if len(self.buf) >= 64 * 1024:
+                self._put(bytes(self.buf))
+                self.buf.clear()
+            return len(data)
+
+        def flush_all(self):
+            if self.buf:
+                self._put(bytes(self.buf))
+                self.buf.clear()
+
+    def work():
+        try:
+            w = Writer()
+            pdf.save(w)
+            w.flush_all()
+            q.put(finished)
+        except BaseException as exc:  # reaches the consumer below; a stopped stream just ends
+            if not stop.is_set():
+                q.put(exc)
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    try:
+        while True:
+            item = q.get()
+            if item is finished:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        stop.set()
+        while worker.is_alive():  # unblock a writer waiting on a full queue
+            try:
+                q.get(timeout=0.1)
+            except queue.Empty:
+                pass
+        worker.join()
+        for obj in to_close:
+            try:
+                obj.close()
+            except Exception:
+                pass
+
+
+def _annotated_pdf_response(doc_id, annotated_only):
+    raw_type = request.args.get("type", "pdf")
     suffix = "annotated-pages" if annotated_only else "annotated"
+    headers = {"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{doc_id}-{suffix}.pdf"'}
+
+    f, _ = _open_pdf(doc_id, raw_type)
+    src = None
+    try:
+        import pikepdf
+        src = pikepdf.open(f)
+    except Exception:
+        app.logger.warning("qpdf could not open %s; building the annotated PDF in memory", doc_id, exc_info=True)
+        f.close()
+        with _heavy_lock:
+            data = _annotated_pdf_bytes_whole(doc_id, annotated_only)
+        log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
+        resp = Response(data, mimetype="application/pdf")
+        resp.headers.update(headers)
+        return resp
+
+    try:
+        page_count = len(src.pages)
+        annotated = {}  # 0-based page index -> sanitized annotations
+        for page_key, raw_anns in storage.get_all_annotations(doc_id).items():
+            try:
+                page_num = int(page_key)
+            except ValueError:
+                continue
+            if 1 <= page_num <= page_count:
+                annotations = sanitize_annotations(raw_anns)
+                if annotations:
+                    annotated[page_num - 1] = annotations
+        keep = None
+        if annotated_only:
+            # Pages a snippet was taken from count as annotated too.
+            keep = set(annotated)
+            for snip in storage.list_snippets(doc_id):
+                if 1 <= snip["page"] <= page_count:
+                    keep.add(snip["page"] - 1)
+            if not keep:
+                raise DocumentError("This document has no annotated or snippet pages.", 400)
+        for index, annotations in annotated.items():
+            _burn_annotations_into_page(src, index, annotations)
+        if keep is not None:
+            for index in reversed(range(page_count)):
+                if index not in keep:
+                    del src.pages[index]
+    except BaseException:
+        src.close()
+        f.close()
+        raise
+
     log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
-    resp = Response(annotated_pdf_bytes, mimetype="application/pdf")
-    resp.headers["Cache-Control"] = "no-store"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}-{suffix}.pdf"'
+    resp = Response(_stream_pikepdf(src, src, f), mimetype="application/pdf")
+    resp.headers.update(headers)
     return resp
 
 
