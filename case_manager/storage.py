@@ -348,16 +348,26 @@ def delete_document(document_id: str) -> None:
     get_storage_backend().delete(document_storage_key(document_id, doc_type, owner))
 
 
-def get_document_pdf_bytes(document_id: str) -> bytes:
-    """The document's PDF bytes, straight from storage. Only PDFs can be
-    uploaded; a document of any other type is an error."""
+def _document_pdf_key(document_id: str) -> str:
     location = _document_location(document_id)
     if location is None:
         raise StorageError(f"No document with id {document_id!r}")
     doc_type, owner = location
     if doc_type != "pdf":
         raise StorageError(f"Document {document_id!r} is a .{doc_type} file; only PDFs are supported")
-    return get_storage_backend().read_bytes(document_storage_key(document_id, "pdf", owner))
+    return document_storage_key(document_id, "pdf", owner)
+
+
+def get_document_pdf_bytes(document_id: str) -> bytes:
+    """The document's whole PDF in memory. Only PDFs can be uploaded; a document of any other
+    type is an error. Prefer open_document_pdf for anything that doesn't need every byte."""
+    return get_storage_backend().read_bytes(_document_pdf_key(document_id))
+
+
+def open_document_pdf(document_id: str):
+    """The document's PDF as a seekable binary file object (close it when done). It is decrypted
+    chunk by chunk as it is read, so a large document is never held whole in memory."""
+    return get_storage_backend().open_read(_document_pdf_key(document_id))
 
 
 # ---------------------------------------------------------------------------

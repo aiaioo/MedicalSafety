@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape, unescape
@@ -556,6 +557,55 @@ def _get_pdf_bytes(doc_id, raw_type, min_role="viewer"):
         return storage.get_document_pdf_bytes(doc_id), norm_type
     except storage.StorageError as exc:
         raise DocumentError(str(exc), 500) from exc
+
+
+def _open_pdf(doc_id, raw_type, min_role="viewer"):
+    """Like _get_pdf_bytes, but returns (file, norm_type) with `file` a seekable binary file that
+    decrypts on demand instead of the whole PDF in memory. The caller closes it."""
+    check_doc_id(doc_id)
+    norm_type = normalize_type(raw_type)
+    require_role("source", doc_id, min_role)
+    if storage.get_document_type(doc_id) is None:
+        raise DocumentError(f"No document with id {doc_id!r}", 404)
+    try:
+        return storage.open_document_pdf(doc_id), norm_type
+    except storage.StorageError as exc:
+        raise DocumentError(str(exc), 500) from exc
+
+
+# PDFium is not thread-safe, so every use of it is serialised. That also caps how many pages are
+# being rendered (and held in memory) at once, which is what keeps big documents cheap.
+_pdfium_lock = threading.Lock()
+
+
+def _pdfium_render_page(f, page, zoom):
+    """Render 1-based `page` of the PDF in seekable file `f` at `zoom` x 72 dpi with PDFium, reading
+    only the parts of the file it needs. Returns (PIL image, page width pt, page height pt), or None
+    if `page` is out of range. Raises if PDFium cannot read the file."""
+    import pypdfium2 as pdfium
+    with _pdfium_lock:
+        doc = pdfium.PdfDocument(f)
+        try:
+            if not (1 <= page <= len(doc)):
+                return None
+            pg = doc[page - 1]
+            try:
+                w, h = pg.get_size()
+                return pg.render(scale=zoom).to_pil(), w, h
+            finally:
+                pg.close()
+        finally:
+            doc.close()
+
+
+def _pdfium_page_sizes(f):
+    import pypdfium2 as pdfium
+    with _pdfium_lock:
+        doc = pdfium.PdfDocument(f)
+        try:
+            return [doc.get_page_size(i) for i in range(len(doc))]
+        finally:
+            doc.close()
 
 
 def slugify_report_name(name):
@@ -2608,6 +2658,28 @@ def api_account_password():
     return jsonify({"ok": True})
 
 
+def _page_count(doc_id, raw_type):
+    """(number of pages, normalized type) without loading the whole document."""
+    f, norm_type = _open_pdf(doc_id, raw_type)
+    try:
+        import pypdfium2 as pdfium
+        with _pdfium_lock:
+            doc = pdfium.PdfDocument(f)
+            try:
+                return len(doc), norm_type
+            finally:
+                doc.close()
+    except DocumentError:
+        raise
+    except Exception:
+        app.logger.warning("PDFium could not read %s; falling back to PyMuPDF", doc_id, exc_info=True)
+    finally:
+        f.close()
+    pdf_bytes, norm_type = _get_pdf_bytes(doc_id, raw_type)
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        return d.page_count, norm_type
+
+
 @app.route("/annotations")
 def page_view():
     doc_id = request.args.get("doc", "")
@@ -2621,9 +2693,7 @@ def page_view():
     except ValueError:
         raise DocumentError("page must be an integer", 400)
 
-    pdf_bytes, norm_type = _get_pdf_bytes(doc_id, raw_type)
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        page_count = d.page_count
+    page_count, norm_type = _page_count(doc_id, raw_type)
     if page_count == 0:
         raise DocumentError("Document has no pages", 400)
     page = max(1, min(page, page_count))
@@ -3126,10 +3196,20 @@ def api_upload_document():
 
 @app.route("/api/doc/<doc_id>/info")
 def api_doc_info(doc_id):
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    f, _ = _open_pdf(doc_id, request.args.get("type", "pdf"))
     log_activity("view", "source", doc_id)
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        pages = [{"width": p.rect.width, "height": p.rect.height} for p in d]
+    sizes = None
+    try:
+        sizes = _pdfium_page_sizes(f)
+    except Exception:
+        app.logger.warning("PDFium could not read %s; falling back to PyMuPDF", doc_id, exc_info=True)
+    finally:
+        f.close()
+    if sizes is None:
+        pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+            sizes = [(p.rect.width, p.rect.height) for p in d]
+    pages = [{"width": w, "height": h} for w, h in sizes]
     return jsonify({"page_count": len(pages), "pages": pages})
 
 
@@ -3174,27 +3254,65 @@ def api_delete_document(doc_id):
 
 @app.route("/api/doc/<doc_id>/render/<int:page>")
 def api_render(doc_id, page):
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    raw_type = request.args.get("type", "pdf")
     try:
         dpi = int(request.args.get("dpi", 150))
     except ValueError:
         dpi = 150
     dpi = max(50, min(dpi, 600))
+    zoom = dpi / 72
+    mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
 
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
-        if not (1 <= page <= d.page_count):
-            raise DocumentError("Page out of range", 404)
-        zoom = dpi / 72
-        p = d[page - 1]
-        mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
+    rendered = None
+    f, _ = _open_pdf(doc_id, raw_type)
+    try:
+        rendered = _pdfium_render_page(f, page, zoom)
+    except Exception:
+        app.logger.warning("PDFium could not render %s page %s; falling back to PyMuPDF", doc_id, page, exc_info=True)
+        rendered = False
+    finally:
+        f.close()
+
+    if rendered is None:
+        raise DocumentError("Page out of range", 404)
+    if rendered is False:
+        png_bytes = _render_page_fitz(doc_id, raw_type, page, zoom, mode)
+    else:
+        img, _w, _h = rendered
+        annotations = []
         if mode in ("blackouts", "all"):
-            draw_annotations_on_page(p, annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode), p.rect)
-        pix = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-        png_bytes = pix.tobytes("png")
+            annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        png_bytes = _draw_annotations_on_png(buf.getvalue(), img.size, zoom, annotations) if annotations else buf.getvalue()
 
     resp = Response(png_bytes, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _draw_annotations_on_png(png, size, zoom, annotations):
+    """Burn annotations into an already-rendered page image. The image becomes the only content of a
+    one-page PyMuPDF document, so the existing drawing code (and, for a Share-link visitor, the
+    redaction that wipes the pixels under blackouts) runs unchanged on just this page."""
+    px_w, px_h = size
+    with fitz.open() as d:
+        p = d.new_page(width=px_w / zoom, height=px_h / zoom)
+        p.insert_image(p.rect, stream=png)
+        draw_annotations_on_page(p, annotations, p.rect)
+        return p.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).tobytes("png")
+
+
+def _render_page_fitz(doc_id, raw_type, page, zoom, mode):
+    """The original whole-document renderer, kept as a fallback for a PDF that PDFium cannot read."""
+    pdf_bytes, _ = _get_pdf_bytes(doc_id, raw_type)
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+        if not (1 <= page <= d.page_count):
+            raise DocumentError("Page out of range", 404)
+        p = d[page - 1]
+        if mode in ("blackouts", "all"):
+            draw_annotations_on_page(p, annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode), p.rect)
+        return p.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).tobytes("png")
 
 
 # ---------------------------------------------------------------------------
@@ -3374,9 +3492,19 @@ def api_download_original(doc_id):
     # visitor is unidentified.
     if g.user.is_guest:
         raise DocumentError("The original PDF can't be downloaded through a Share link", 403)
-    pdf_bytes, _ = _get_pdf_bytes(doc_id, request.args.get("type", "pdf"))
+    f, _ = _open_pdf(doc_id, request.args.get("type", "pdf"))
     log_activity("download", "source", doc_id, "Original PDF")
-    resp = Response(pdf_bytes, mimetype="application/pdf")
+
+    def stream():  # decrypted a few chunks at a time, never the whole file
+        try:
+            while chunk := f.read(256 * 1024):
+                yield chunk
+        finally:
+            f.close()
+
+    resp = Response(stream(), mimetype="application/pdf")
+    resp.headers["Content-Length"] = str(f.seek(0, io.SEEK_END))
+    f.seek(0)
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}.pdf"'
     return resp
