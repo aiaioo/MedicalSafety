@@ -7,6 +7,7 @@
   const openBtn = document.getElementById("imagesOpen");
   const modal = document.getElementById("imagesModal");
   if (!openBtn || !modal) return;
+  const dialog = modal.querySelector("[data-tools-src]");  // the inner .modal carries the PDF library URLs
   const grid = document.getElementById("imagesGrid");
   const emptyHint = document.getElementById("imagesEmpty");
   const input = document.getElementById("imagesInput");
@@ -179,7 +180,7 @@
   function loadPdfTools() {
     toolsPromise = toolsPromise || new Promise((resolve, reject) => {
       const s = document.createElement("script");
-      s.src = modal.dataset.toolsSrc;
+      s.src = dialog.dataset.toolsSrc;
       s.onload = () => resolve(window.PdfTools);
       s.onerror = () => { toolsPromise = null; reject(new Error("Could not load the PDF library")); };
       document.head.appendChild(s);
@@ -192,7 +193,7 @@
     try {
       const tools = await loadPdfTools();
       setStatus(`Reading ${file.name}…`);
-      const pdf = await tools.openPdf(file, modal.dataset.workerSrc);
+      const pdf = await tools.openPdf(file, dialog.dataset.workerSrc);
       pdfs.push(pdf);
       const c = await pdf.thumb(0, THUMB);
       items.push({ pdf, group: true, file, base: c, thumb: c, rot: 0 });
