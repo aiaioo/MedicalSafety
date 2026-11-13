@@ -58,6 +58,10 @@ from courts.ejagriti_case import history_hearing_dates
 # own (`python viewer.py`), it is mounted at "/" in a small Flask app of its own -- see create_app().
 bp = Blueprint("case_tracker", __name__, template_folder="templates", static_folder="static")
 COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
+COURT_DESCRIPTIONS = {  # court id -> what the court is, shown under its figures in the "At a glance" panel
+    "kmc": "KMC: cases before the Karnataka Medical Council.",
+    "consumer": "CPA: medical negligence cases before the consumer courts of Karnataka (Consumer Protection Act).",
+}
 SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
 PDF_COURT = "kmc"  # only the KMC has original PDFs
@@ -221,7 +225,7 @@ def analytics(cases, all_years=None):
     ten hospitals named in most cases."""
     per_court = {}
     for c in cases:
-        row = per_court.setdefault(c["court"], {"label": c["court_label"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+        row = per_court.setdefault(c["court"], {"label": c["court_label"], "description": COURT_DESCRIPTIONS.get(c["court"], ""), "total": 0, **{k: 0 for k, _ in OUTCOMES}})
         row["total"] += 1
         row[c["outcome"]] += 1
         row.setdefault("gaps", []).extend(c["gaps"])
