@@ -858,7 +858,9 @@ def helpers():
 
 def advocate_metrics(cases, sides):
     """How an advocate's cases went, from their `cases` and `sides` ({case_key: roles they appeared in}):
-    closed / closed_pct (closed cases of all their cases); won_patient / won_hospital (the cases they won for a
+    closed / closed_pct (closed cases of all their cases); win_done_pct (the cases won, on whichever side, of their
+    completed cases); won_hearings (the median hearings held in the cases they won, n_won_held of them) and won_years (the median years
+    from filing to the last hearing in those, n_won_time of them: consumer cases only, which have a filing date); won_patient / won_hospital (the cases they won for a
     patient, or for a hospital: complaint allowed, or dismissed) with their shares of ALL their cases; won / decided / won_pct (of the cases the court allowed or
     dismissed, how many the advocate's client won: a patient's lawyer wins when the complaint is allowed, a hospital's
     when it is dismissed; settled, withdrawn, returned and open cases are not decisions); time_n / time_of /
@@ -870,12 +872,18 @@ def advocate_metrics(cases, sides):
     Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not."""
     m = {"cases": len(cases), "closed": sum(c["outcome"] != "open" for c in cases), "won": 0, "decided": 0,
          "won_patient": 0, "won_hospital": 0, "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
+    won_held, won_days = [], []  # hearings held in, and days from filing to the end of, each case they won, on whichever side
     for c in cases:
         mine = {represents(c, r) for r in sides[c["case_key"]]} & {"patient", "hospital"}
         verdict = case_verdict(c)
         if verdict and mine:
             m["decided"] += 1
-            m["won"] += any((side == "hospital") == (verdict == "for") for side in mine)
+            won = any((side == "hospital") == (verdict == "for") for side in mine)
+            m["won"] += won
+            if won and c["n_held"]:
+                won_held.append(c["n_held"])
+            if won and c["days_to_close"] is not None:
+                won_days.append(c["days_to_close"])
             m["won_patient"] += "patient" in mine and verdict == "against"  # the complaint was allowed against the hospital
             m["won_hospital"] += "hospital" in mine and verdict == "for"
         if c["provider_side"]:
@@ -888,11 +896,13 @@ def advocate_metrics(cases, sides):
     median = lambda xs: round(statistics.median(xs)) if xs else None
     held = lambda closed: [c["n_held"] for c in cases if (c["outcome"] != "open") == closed and c["n_held"]]
     gaps = [g for c in cases for g in c["gaps"]]
+    m.update(won_hearings=median(won_held), n_won_held=len(won_held),
+             won_years=round(statistics.median(won_days) / 365.25, 1) if won_days else None, n_won_time=len(won_days))
     m.update(hearings_closed=median(held(True)), n_hearings_closed=len(held(True)),
              hearings_open=median(held(False)), n_hearings_open=len(held(False)), gap_days=median(gaps), n_gaps=len(gaps))
     return {**m, "closed_pct": pct(m["closed"], m["cases"]), "won_pct": pct(m["won"], m["decided"]),
             "won_patient_pct": pct(m["won_patient"], m["cases"]), "won_hospital_pct": pct(m["won_hospital"], m["cases"]),
-            "won_patient_done_pct": pct(m["won_patient"], m["closed"]), "won_hospital_done_pct": pct(m["won_hospital"], m["closed"]),
+            "win_done_pct": pct(m["won"], m["closed"]), "won_patient_done_pct": pct(m["won_patient"], m["closed"]), "won_hospital_done_pct": pct(m["won_hospital"], m["closed"]),
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
@@ -924,6 +934,11 @@ RANKINGS = {
     "hospital": {"title": "Best for hospitals", "sub": "won for hospitals ÷ all cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "cases"},
     "patient_done": {"title": "Best for patients", "sub": "won for patients ÷ completed cases", "group": "share", "kind": "share", "won": "won_patient", "of": "closed"},
     "hospital_done": {"title": "Best for hospitals", "sub": "won for hospitals ÷ completed cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "closed"},
+    "win_done": {"title": "Win rate", "sub": "cases won for either side ÷ completed cases", "group": "share", "kind": "share", "won": "won", "of": "closed"},
+    "won_years": {"title": "Won fastest", "sub": "shortest time to win, median years per case won", "group": "speed", "kind": "speed",
+                  "value": "won_years", "n": "n_won_time"},
+    "won_hearings": {"title": "Won in fewest hearings", "sub": "median hearings per case won", "group": "speed", "kind": "speed",
+                     "value": "won_hearings", "n": "n_won_held"},
 }
 ADVOCATE_SORTS = [(k, f"{r['title']} ({r['sub']})") for k, r in RANKINGS.items()]
 ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases (completed cases, for the completed-case rankings) to be ranked by a win share
@@ -940,6 +955,13 @@ def _share_parts(a, spec):
     return a["metrics"][spec["won"]], (len(a["cases"]) if spec["of"] == "cases" else a["metrics"]["closed"])
 
 
+def _speed_key(a, spec):
+    """Order for the "won fastest" rankings: the smallest median (years, or hearings, in the cases they won) first (ties:
+    more wins, then name); lawyers with no won case to measure last."""
+    m = a["metrics"]
+    return (m[spec["value"]] if m[spec["value"]] is not None else 10 ** 9, -m["won"], a["name"].lower())
+
+
 def rank_advocates(advs, sort, min_cases):
     """(ranked, below): the advocates in the order of RANKINGS[sort]. A "count" ranking puts those with most cases first
     (ties: more cases overall, then name), all ranked. A "share" ranking orders by the share won, highest first (ties:
@@ -947,6 +969,10 @@ def rank_advocates(advs, sort, min_cases):
     at least `min_cases`, so one lucky case does not put a lawyer at the top; the rest come back as `below`, in the same
     order, to be listed after the ranking."""
     spec = RANKINGS[sort]
+    if spec["kind"] == "speed":  # the minimum here is a number of won cases that have the measure
+        ok = lambda a: a["metrics"][spec["value"]] is not None and a["metrics"][spec["n"]] >= min_cases
+        return (sorted((a for a in advs if ok(a)), key=lambda a: _speed_key(a, spec)),
+                sorted((a for a in advs if not ok(a)), key=lambda a: _speed_key(a, spec)))
     if spec["kind"] == "count":
         return sorted(advs, key=lambda a: (-_count(a, sort), -len(a["cases"]), a["name"].lower())), []
     def key(a):
@@ -969,7 +995,12 @@ def advocate_boards(advs, min_cases):
         for a in rank_advocates(advs, key, min_cases)[0]:
             if len(rows) == BOARD_SIZE:
                 break
-            if spec["kind"] == "count":
+            if spec["kind"] == "speed":
+                m = a["metrics"]
+                parts = [f"{m['won_years']} years" if m["won_years"] is not None else None,
+                         f"{m['won_hearings']} hearings" if m["won_hearings"] is not None else None]
+                text = f"{', '.join(x for x in parts if x)} ({m[spec['n']]} won)"
+            elif spec["kind"] == "count":
                 n = _count(a, key)
                 if not n:
                     break  # ordered by this number, so nobody after has any
@@ -981,7 +1012,7 @@ def advocate_boards(advs, min_cases):
                 text = f"{round(100 * won / of)}% ({won}/{of})"
             rows.append({"name": a["name"], "slug": a["slug"], "text": text})
         boards.append({"key": key, "title": spec["title"], "sub": spec["sub"], "group": spec["group"], "kind": spec["kind"],
-                       "completed": spec.get("of") == "closed", "rows": rows})
+                       "completed": spec.get("of") == "closed", "wins": spec["kind"] == "speed", "rows": rows})
     return boards
 
 
@@ -996,7 +1027,7 @@ def advocates():
     boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
     return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
-                           sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "cases",
+                           sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "won cases" if RANKINGS[sort]["kind"] == "speed" else "cases",
                            min_cases=min_cases, min_options=ADVOCATE_MIN_CASES)
 
 

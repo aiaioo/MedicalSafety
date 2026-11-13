@@ -21,17 +21,17 @@
 </style>
 <form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 .4rem">
   <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="sort" value="{{ sort }}">
-  <label>The "Best for" lists include lawyers with at least <select name="min" onchange="this.form.submit()">{% for n in min_options %}<option value="{{ n }}"{{ ' selected' if n == min_cases }}>{{ n }}</option>{% endfor %}</select> case{{ 's' if min_cases != 1 }} (completed cases, for the lists divided by completed cases) and at least one win</label>
+  <label>The win lists include lawyers with at least <select name="min" onchange="this.form.submit()">{% for n in min_options %}<option value="{{ n }}"{{ ' selected' if n == min_cases }}>{{ n }}</option>{% endfor %}</select> case{{ 's' if min_cases != 1 }} (completed cases, for the lists divided by completed cases; won cases, for "Won fastest") and at least one win</label>
   <noscript><button type="submit">Apply</button></noscript>
 </form>
-{% for group, caption in [('volume', 'Who has the most cases'), ('share', 'Who wins the most: cases won for the side as a share of all their cases, or of their completed cases (those that have ended)')] %}
+{% for group, caption in [('volume', 'Who has the most cases'), ('share', 'Who wins the most: cases won as a share of all their cases, or of their completed cases (those that have ended)'), ('speed', 'Who wins fastest: the median time from filing to the end, or the median number of hearings, in the cases they won, smallest first')] %}
 <p class="muted" style="margin:.8rem 0 0;font-size:.9em">{{ caption }}</p>
 <div class="boards">
   {% for b in boards if b.group == group %}
   <div>
     <h3>{{ b.title }} <span class="muted">({{ b.sub|replace('÷', '&divide;')|safe }})</span></h3>
     {% if b.rows %}<ol>{% for r in b.rows %}<li><a href="{{ url_for('case_tracker.advocate', slug=r.slug) }}">{{ r.name }}</a> <span class="n muted">{{ r.text }}</span></li>{% endfor %}</ol>
-    {% elif b.kind == 'share' %}<p class="muted">No lawyer with a win and at least {{ min_cases }} {{ 'completed ' if b.completed }}case{{ 's' if min_cases != 1 }}.</p>
+    {% elif b.kind == 'share' or b.kind == 'speed' %}<p class="muted">No lawyer with a win and at least {{ min_cases }} {{ 'completed ' if b.completed }}{{ 'won ' if b.wins }}case{{ 's' if min_cases != 1 }}.</p>
     {% else %}<p class="muted">No lawyers.</p>{% endif %}
   </div>
   {% endfor %}
@@ -40,34 +40,40 @@
 <form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 1rem">
   <input type="hidden" name="q" value="{{ q }}">
   <label>Full table ranked by <select name="sort" onchange="this.form.submit()">{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
-  <input type="hidden" name="min" value="{{ min_cases }}">{% if sort_kind == 'share' %} <span class="muted">(lawyers with at least {{ min_cases }} {{ min_unit }})</span>{% endif %}
+  <input type="hidden" name="min" value="{{ min_cases }}">{% if sort_kind == 'share' %} <span class="muted">(lawyers with at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }})</span>{% endif %}
   <noscript><button type="submit">Rank</button></noscript>
+  {% if sort == 'win_done' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Win rate: the share of a lawyer's completed cases (those that have ended, however they ended) that they won for their client, whichever side that was: the complaint allowed for a patient's lawyer, dismissed for a hospital's. Settled, withdrawn and returned cases count as completed but not as wins. Treat small numbers with care.</p>{% endif %}
+  {% if sort == 'won_years' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Won fastest: the median time from filing to the last hearing in the cases the lawyer won (for either side), shortest first, among lawyers with at least {{ min_cases }} won case{{ 's' if min_cases != 1 }} that have a filing date. Only consumer cases have one, so the KMC is not covered. The last hearing stands in for the decision date.</p>{% endif %}
+  {% if sort == 'won_hearings' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Won in fewest hearings: the median number of hearings held in the cases the lawyer won (for either side), fewest first, among lawyers with at least {{ min_cases }} won case{{ 's' if min_cases != 1 }}. Fewer hearings means the case was decided in fewer sittings; it says nothing about how many years it took.</p>{% endif %}
   {% if sort in ('patient', 'patient_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for patients: the share of a lawyer's {{ 'completed' if sort == 'patient_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'patient_done' }} that they won for a patient (the court allowed the complaint against the hospital). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'patient_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
   {% if sort in ('hospital', 'hospital_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for hospitals: the share of a lawyer's {{ 'completed' if sort == 'hospital_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'hospital_done' }} that they won for a hospital or doctor (the court dismissed the complaint, including for non-prosecution). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'hospital_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
 </form>
 {% macro adv_row(a, rank) %}
-  <tr><td class="muted">{{ rank }}</td><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
-    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
+  <tr><td class="muted">{{ rank }}</td><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
+    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
     <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
 {% endmacro %}
 <table>
-  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th>
+  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th>
     <th title="Share of their cases that are closed">% closed</th>
     <th title="Of the cases the court decided (allowed or dismissed), the share their client won: a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed">% won</th>
     <th title="Cases won for patients (complaint allowed against the hospital), as a share of all their cases"{{ ' class=on' if sort == 'patient' }}>Won for patients ÷ all cases</th>
     <th title="Cases won for patients, as a share of their completed cases"{{ ' class=on' if sort == 'patient_done' }}>Won for patients ÷ completed</th>
     <th title="Cases won for hospitals (complaint dismissed), as a share of all their cases"{{ ' class=on' if sort == 'hospital' }}>Won for hospitals ÷ all cases</th>
     <th title="Cases won for hospitals, as a share of their completed cases"{{ ' class=on' if sort == 'hospital_done' }}>Won for hospitals ÷ completed</th>
+    <th title="Cases won for either side, as a share of their completed cases"{{ ' class=on' if sort == 'win_done' }}>Win rate ÷ completed</th>
+    <th title="Median years from filing to the last hearing in the cases they won (either side; consumer cases only)"{{ ' class=on' if sort == 'won_years' }}>Years per case won</th>
+    <th title="Median hearings held in the cases they won (either side)"{{ ' class=on' if sort == 'won_hearings' }}>Hearings per case won</th>
     <th title="Share of hearings in their cases where the record says their side asked for time">% adjourned</th>
     <th title="Share of hearings in their cases where the record says their side was absent">% absent</th>
     <th title="Median hearings held in their closed cases">Hearings per closed case</th>
     <th title="Median hearings held so far in their open cases">Hearings per open case</th>
     <th title="Median days between one hearing day and the next, across their cases">Median gap (days)</th></tr>
   {% for a in advocates %}{{ adv_row(a, loop.index) }}
-  {% else %}{% if not below %}<tr><td colspan="19">No advocates.</td></tr>{% else %}<tr><td colspan="19">No lawyer has at least {{ min_cases }} {{ min_unit }}.</td></tr>{% endif %}
+  {% else %}{% if not below %}<tr><td colspan="20">No advocates.</td></tr>{% else %}<tr><td colspan="20">No lawyer has at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }}.</td></tr>{% endif %}
   {% endfor %}
   {% if below %}
-  <tr class="divider"><td colspan="19">Below the minimum of {{ min_cases }} {{ min_unit }} for ranking: {{ below|length }} lawyer{{ 's' if below|length != 1 }}, in the same order, not ranked</td></tr>
+  <tr class="divider"><td colspan="20">Below the minimum of {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }} for ranking: {{ below|length }} lawyer{{ 's' if below|length != 1 }}, in the same order, not ranked</td></tr>
   {% for a in below %}{{ adv_row(a, '') }}
   {% endfor %}
   {% endif %}
