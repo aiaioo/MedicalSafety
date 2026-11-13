@@ -793,6 +793,19 @@ def orders_of(case_key):
     return found
 
 
+@bp.app_template_global()
+def judgement_pdf(case_key):
+    """The file name of a case's judgement PDF (latest date, then latest version), or None."""
+    best = None
+    for p in storage.order_files(case_key):
+        m = ORDER_RE.fullmatch(p.name)
+        if m and m["kind"] == "judgement" and m["ext"] == "pdf":
+            k = (_iso_date(m["date"]), int(m["v"] or 1))
+            if best is None or k > best[0]:
+                best = (k, p.name)
+    return best[1] if best else None
+
+
 @bp.route("/order/<case_key>/<name>")
 def order_file(case_key, name):
     """A saved order; HTML orders come from the court's portal, so they are sandboxed (no scripts)."""

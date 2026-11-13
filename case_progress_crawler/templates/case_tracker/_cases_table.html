@@ -12,6 +12,7 @@
   <tr>
     <td><a href="{{ url_for('case_tracker.case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %} {{ label_badge(c) }}</td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}
+      {% set jp = judgement_pdf(c.case_key) %}{% if jp %}<div>Judgement: <a href="{{ url_for('case_tracker.order_file', case_key=c.case_key, name=jp) }}" target="_blank" rel="noopener">PDF</a></div>{% endif %}
       {% if cl %}<details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
     <ul class="links">
       {% for l in cl %}
