@@ -53,6 +53,11 @@ PUBLIC_ENDPOINTS = {
     # are the one part of the site meant for anyone, signed in or not --
     # see app.py's public_view/public_article/api_article_image.
     "index", "public_view", "public_article", "api_article_image",
+    # The case tracker's hospital and advocate rankings are public; the pages that list individual cases and parties are not. The
+    # court / non-medical switches and the stylesheet-free static files serve those two pages; /suggest answers a signed-out
+    # visitor only for hospital and advocate names (see the viewer).
+    "case_tracker.hospitals", "case_tracker.advocates", "case_tracker.suggest",
+    "case_tracker.select_court", "case_tracker.non_medical", "case_tracker.static",
 }
 
 # Key holders (people using a secret key without an account) have no users

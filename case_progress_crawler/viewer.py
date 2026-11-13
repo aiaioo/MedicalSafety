@@ -46,6 +46,7 @@ from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
 from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
+from markupsafe import Markup, escape
 
 import progress_storage as storage
 from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, judgement_of
@@ -776,7 +777,7 @@ def case_prefill(number, with_court=True):
 def suggest():
     """Autocomplete: up to 12 party, hospital and advocate names and case numbers containing the query."""
     q = request.args.get("q", "").strip().lower()
-    if len(q) < 2:
+    if len(q) < 2 or (is_public_visitor() and request.args.get("kind") not in ("advocate", "hospital")):  # party names and case numbers are for signed-in users
         return jsonify([])
     data = load()
     if request.args.get("kind") in ("advocate", "hospital"):  # a list page's filter box: that list's names only
@@ -865,6 +866,7 @@ def hospital_table(cases):
         name = HOSPITAL_DISPLAY.get(slug) or best.get(slug, {}).get("name") or next(iter({**cs[0]["hospitals"], **cs[0]["provider_hospitals"]}.values()))
         rows.append({"slug": slug, "name": name, "cases": len(cs), "closed": len(prov), "n_closed": len(closed), "against": against,
                      "ratio": against / len(prov) if len(prov) >= MIN_CLOSED_FOR_RANKING else None,
+                     "ratio_all": against / len(cs) if len(cs) >= MIN_CLOSED_FOR_RANKING else None,
                      "years": mean([c["days_to_close"] / 365.25 for c in closed if c["days_to_close"] is not None], 1),
                      "hearings": mean([c["n_held"] for c in closed if c["n_held"]], 1),
                      "adjourned": round(100 * asked / held) if held else None,
@@ -872,18 +874,20 @@ def hospital_table(cases):
     return rows
 
 
-HOSPITAL_SORTS = [("against", "Share of closed cases decided against the hospital"), ("cases", "Number of cases"),
+HOSPITAL_SORTS = [("against", "Share of closed cases decided against the hospital"), ("against_all", "Cases decided against, as a share of all its cases"), ("cases", "Number of cases"),
                   ("years", "Average years per closed case"), ("hearings", "Average hearings per closed case"),
                   ("adjourned", "Share of hearings adjourned at its request")]
 # sort key -> (value of a row or None if it has no rank, whether the largest comes first, how the value reads)
 HOSPITAL_RANKS = {
     "against": (lambda r: r["ratio"], True, lambda r: f"{round(100 * r['ratio'])}% ({r['against']}/{r['closed']})"),
+    "against_all": (lambda r: r["ratio_all"], True, lambda r: f"{round(100 * r['ratio_all'])}% ({r['against']}/{r['cases']})"),
     "cases": (lambda r: r["cases"], True, lambda r: f"{r['cases']} cases"),
     "years": (lambda r: r["years"] if r["n_closed"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['years']} years ({r['n_closed']} closed)"),
     "hearings": (lambda r: r["hearings"] if r["n_closed"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['hearings']} hearings ({r['n_closed']} closed)"),
     "adjourned": (lambda r: r["adjourned"] if r["cases"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['adjourned']}% adjourned ({r['cases']} cases)"),
 }
-HOSPITAL_BOARDS = [("volume", "Most cases", "cases"), ("outcome", "Most often decided against", "against"),
+HOSPITAL_BOARDS = [("outcome", "Most cases", "cases"), ("outcome", "Most often decided against", "against"),
+                   ("outcome", "Most often against, adjusted for volume", "against_all"),
                    ("pace", "Slowest: average years from filing to the end", "years"), ("pace", "Most hearings per closed case", "hearings")]
 
 
@@ -923,9 +927,20 @@ def represents(case, role):
     return stored[role] if stored and role in stored else MATCHER.party_of(case["complainants"], case["respondents"], role)
 
 
+def is_public_visitor():
+    """True for a visitor who has not signed in to the case manager that mounts the viewer (g.user is None there). The standalone
+    viewer never sets g.user: everyone there is trusted, as ever."""
+    return hasattr(g, "user") and g.user is None
+
+
 @bp.context_processor
 def helpers():
-    return {"represents": represents}
+    def ct_link(endpoint, slug, text):
+        """A link to a hospital's or advocate's page (which lists its cases), or just the name for a visitor who is not signed in."""
+        if is_public_visitor():
+            return escape(text)
+        return Markup('<a href="{}">{}</a>').format(url_for(f"case_tracker.{endpoint}", slug=slug), text)
+    return {"represents": represents, "ct_link": ct_link, "public": is_public_visitor()}
 
 
 def advocate_metrics(cases, sides):

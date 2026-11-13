@@ -2,7 +2,7 @@
 {% block title %}Advocates{% endblock %}
 {% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
 {% block body %}
-<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>
+{% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
 <p class="muted">{{ advocates|length }} advocates and law firms named in the consumer cases, on the cause lists and in the case details.
   The hospital/doctor side of each case is worked out from the party names (hospital, clinic, Dr. ...); where neither side looks medical the respondent is assumed, and where both do it is left unclear. Names are as the court prints them, so one advocate may still appear under a spelling that was not merged.</p>
@@ -44,7 +44,7 @@
   {% for b in boards if b.group == group %}
   <div>
     <h3>{{ b.title }} <span class="muted">({{ b.sub|replace('÷', '&divide;')|safe }})</span></h3>
-    {% if b.rows %}<ol>{% for r in b.rows %}<li><a href="{{ url_for('case_tracker.advocate', slug=r.slug) }}">{{ r.name }}</a> <span class="n muted">{{ r.text }}</span></li>{% endfor %}</ol>
+    {% if b.rows %}<ol>{% for r in b.rows %}<li>{{ ct_link('advocate', r.slug, r.name) }} <span class="n muted">{{ r.text }}</span></li>{% endfor %}</ol>
     {% elif b.kind == 'share' or b.kind == 'speed' %}<p class="muted">No lawyer with a win and at least {{ min_cases }} {{ 'completed ' if b.completed }}{{ 'won ' if b.wins }}case{{ 's' if min_cases != 1 }}.</p>
     {% else %}<p class="muted">No lawyers.</p>{% endif %}
   </div>
@@ -64,7 +64,7 @@
   {% if sort in ('hospital', 'hospital_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for hospitals: the share of a lawyer's {{ 'completed' if sort == 'hospital_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'hospital_done' }} that they won for a hospital or doctor (the court dismissed the complaint, including for non-prosecution). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'hospital_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
 </form>
 {% macro adv_row(a, rank) %}
-  <tr><td class="muted">{{ rank }}</td><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
+  <tr><td class="muted">{{ rank }}</td><td>{{ ct_link('advocate', a.slug, a.name) }}</td><td>{{ a.cases|length }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
     {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
     <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
 {% endmacro %}
