@@ -228,9 +228,14 @@ def analytics(cases, all_years=None):
     ten hospitals named in most cases."""
     per_court = {}
     for c in cases:
-        row = per_court.setdefault(c["court"], {"label": c["court_label"], "description": COURT_DESCRIPTIONS.get(c["court"], ""), "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+        row = per_court.setdefault(c["court"], {"court": c["court"], "label": c["court_label"], "description": COURT_DESCRIPTIONS.get(c["court"], ""), "total": 0,
+                                                "decided": 0, "won_patient": 0, "won_hospital": 0, **{k: 0 for k, _ in OUTCOMES}})
         row["total"] += 1
         row[c["outcome"]] += 1
+        verdict = case_verdict(c)  # who won, where the court allowed or dismissed the complaint and the hospital's side is known
+        if verdict:
+            row["decided"] += 1
+            row["won_patient" if verdict == "against" else "won_hospital"] += 1
         row.setdefault("gaps", []).extend(c["gaps"])
         row.setdefault("with_hearings", 0)
         row["with_hearings"] += bool(c["gaps"])
@@ -241,6 +246,9 @@ def analytics(cases, all_years=None):
         del row["gaps"]  # kept out of the stored numbers: the page only needs the medians
         closed = row["total"] - row["open"]
         row["closed"] = closed
+        enough = row["decided"] >= MIN_TIMING_CASES  # the share of decided cases won by each side, only from enough of them
+        row["patient_win_pct"] = round(100 * row["won_patient"] / row["decided"]) if enough else None
+        row["hospital_win_pct"] = round(100 * row["won_hospital"] / row["decided"]) if enough else None
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
         row["dismissed_pct"] = round(100 * row["dismissed"] / closed) if closed else None
         row["decided_pct"] = round(100 * (row["disposed"] + row["allowed"]) / closed) if closed else None
@@ -884,6 +892,7 @@ def advocate_metrics(cases, sides):
              hearings_open=median(held(False)), n_hearings_open=len(held(False)), gap_days=median(gaps), n_gaps=len(gaps))
     return {**m, "closed_pct": pct(m["closed"], m["cases"]), "won_pct": pct(m["won"], m["decided"]),
             "won_patient_pct": pct(m["won_patient"], m["cases"]), "won_hospital_pct": pct(m["won_hospital"], m["cases"]),
+            "won_patient_done_pct": pct(m["won_patient"], m["closed"]), "won_hospital_done_pct": pct(m["won_hospital"], m["closed"]),
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
@@ -905,45 +914,74 @@ def visible_advocates(data):
     return out
 
 
-ADVOCATE_SORTS = [("cases", "Total number of cases"),
-                  ("patient", "Cases won for patients, as a share of all their cases"),
-                  ("hospital", "Cases won for hospitals, as a share of all their cases")]
-ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases a lawyer needs to be ranked by a win share
+# The rankings of lawyers: key -> what is ranked. "count" lists rank by a number of cases; "share" lists by won / (all cases or
+# completed cases), where `won` is the cases won for patients (the complaint allowed) or for hospitals (dismissed).
+RANKINGS = {
+    "cases": {"title": "Most cases", "sub": "cases in the tracker", "group": "volume", "kind": "count"},
+    "patient_cases": {"title": "Most patient cases", "sub": "cases acting for the patient", "group": "volume", "kind": "count"},
+    "hospital_cases": {"title": "Most hospital cases", "sub": "cases acting for the hospital or doctor", "group": "volume", "kind": "count"},
+    "patient": {"title": "Best for patients", "sub": "won for patients ÷ all cases", "group": "share", "kind": "share", "won": "won_patient", "of": "cases"},
+    "hospital": {"title": "Best for hospitals", "sub": "won for hospitals ÷ all cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "cases"},
+    "patient_done": {"title": "Best for patients", "sub": "won for patients ÷ completed cases", "group": "share", "kind": "share", "won": "won_patient", "of": "closed"},
+    "hospital_done": {"title": "Best for hospitals", "sub": "won for hospitals ÷ completed cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "closed"},
+}
+ADVOCATE_SORTS = [(k, f"{r['title']} ({r['sub']})") for k, r in RANKINGS.items()]
+ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases (completed cases, for the completed-case rankings) to be ranked by a win share
 DEFAULT_MIN_CASES = 2
 
 
+def _count(a, key):
+    """The number a "count" ranking orders by."""
+    return {"cases": len(a["cases"]), "patient_cases": a["patient"], "hospital_cases": a["hospital"]}[key]
+
+
+def _share_parts(a, spec):
+    """(won, of) for a "share" ranking: cases won for the side, and all their cases or all their completed cases."""
+    return a["metrics"][spec["won"]], (len(a["cases"]) if spec["of"] == "cases" else a["metrics"]["closed"])
+
+
 def rank_advocates(advs, sort, min_cases):
-    """(ranked, below): the advocates in the order asked for. "cases": most cases first, all of them ranked.
-    "patient" / "hospital": the share of all their cases won for patients / for hospitals, highest first (ties: more
-    wins, then more cases). Only lawyers with at least `min_cases` cases are ranked, so one lucky case does not put a
-    lawyer at the top; the rest come back as `below`, in the same order, to be listed after the ranking."""
-    if sort in ("patient", "hospital"):
-        key = lambda a: (-a["metrics"]["won_" + sort] / len(a["cases"]), -a["metrics"]["won_" + sort], -len(a["cases"]), a["name"].lower())
-        return (sorted((a for a in advs if len(a["cases"]) >= min_cases), key=key),
-                sorted((a for a in advs if len(a["cases"]) < min_cases), key=key))
-    return sorted(advs, key=lambda a: (-len(a["cases"]), a["name"].lower())), []
+    """(ranked, below): the advocates in the order of RANKINGS[sort]. A "count" ranking puts those with most cases first
+    (ties: more cases overall, then name), all ranked. A "share" ranking orders by the share won, highest first (ties:
+    more wins, then more of the denominator), and ranks only lawyers whose denominator (all cases, or completed cases) is
+    at least `min_cases`, so one lucky case does not put a lawyer at the top; the rest come back as `below`, in the same
+    order, to be listed after the ranking."""
+    spec = RANKINGS[sort]
+    if spec["kind"] == "count":
+        return sorted(advs, key=lambda a: (-_count(a, sort), -len(a["cases"]), a["name"].lower())), []
+    def key(a):
+        won, of = _share_parts(a, spec)
+        return (-(won / of if of else 0), -won, -of, a["name"].lower())
+    return (sorted((a for a in advs if _share_parts(a, spec)[1] >= min_cases), key=key),
+            sorted((a for a in advs if _share_parts(a, spec)[1] < min_cases), key=key))
 
 
 BOARD_SIZE = 10
 
 
 def advocate_boards(advs, min_cases):
-    """The three rankings side by side, top BOARD_SIZE of each, for the advocates page: most cases; the highest share
-    of all their cases won for patients; the highest share won for hospitals (the last two among lawyers with at least
-    `min_cases` cases, and with at least one win). Each entry has the lawyer's name and slug, the count shown, and the share where there is one."""
+    """Every ranking side by side, top BOARD_SIZE of each, for the advocates page. A share ranking lists only lawyers
+    with at least `min_cases` cases (completed cases, for the completed-case rankings) and at least one win. Each board
+    has its key, title, subtitle, group and rows of {name, slug, text}."""
     boards = []
-    for key, title in (("cases", "Most cases"), ("patient", "Best for patients"), ("hospital", "Best for hospitals")):
+    for key, spec in RANKINGS.items():
         rows = []
         for a in rank_advocates(advs, key, min_cases)[0]:
-            m, n = a["metrics"], len(a["cases"])
-            if key != "cases" and not m["won_" + key]:
-                break  # ranked by share, so everyone after this has no wins either: not a "best" for anyone
             if len(rows) == BOARD_SIZE:
                 break
-            won = n if key == "cases" else m["won_" + key]
-            rows.append({"name": a["name"], "slug": a["slug"], "won": won, "cases": n, "closed": m["closed"],
-                         "pct": None if key == "cases" else m["won_" + key + "_pct"]})
-        boards.append({"key": key, "title": title, "rows": rows})
+            if spec["kind"] == "count":
+                n = _count(a, key)
+                if not n:
+                    break  # ordered by this number, so nobody after has any
+                text = f"{n} cases, {a['metrics']['closed']} closed" if key == "cases" else f"{n} cases"
+            else:
+                won, of = _share_parts(a, spec)
+                if not won:
+                    break  # ordered by the share, so nobody after has a win: not a "best" for anyone
+                text = f"{round(100 * won / of)}% ({won}/{of})"
+            rows.append({"name": a["name"], "slug": a["slug"], "text": text})
+        boards.append({"key": key, "title": spec["title"], "sub": spec["sub"], "group": spec["group"], "kind": spec["kind"],
+                       "completed": spec.get("of") == "closed", "rows": rows})
     return boards
 
 
@@ -958,6 +996,7 @@ def advocates():
     boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
     return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
+                           sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "cases",
                            min_cases=min_cases, min_options=ADVOCATE_MIN_CASES)
 
 
