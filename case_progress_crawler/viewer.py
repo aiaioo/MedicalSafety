@@ -850,7 +850,8 @@ def helpers():
 
 def advocate_metrics(cases, sides):
     """How an advocate's cases went, from their `cases` and `sides` ({case_key: roles they appeared in}):
-    closed / closed_pct (closed cases of all their cases); won / decided / won_pct (of the cases the court allowed or
+    closed / closed_pct (closed cases of all their cases); won_patient / won_hospital (the cases they won for a
+    patient, or for a hospital: complaint allowed, or dismissed) with their shares of ALL their cases; won / decided / won_pct (of the cases the court allowed or
     dismissed, how many the advocate's client won: a patient's lawyer wins when the complaint is allowed, a hospital's
     when it is dismissed; settled, withdrawn, returned and open cases are not decisions); time_n / time_of /
     time_pct and absent_n / absent_of / absent_pct (of the hearings held in their cases where the hospital's side is
@@ -860,13 +861,15 @@ def advocate_metrics(cases, sides):
     between consecutive hearing days across all their cases (n_gaps of them). Each pct is None where there is nothing to divide by.
     Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not."""
     m = {"cases": len(cases), "closed": sum(c["outcome"] != "open" for c in cases), "won": 0, "decided": 0,
-         "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
+         "won_patient": 0, "won_hospital": 0, "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
     for c in cases:
         mine = {represents(c, r) for r in sides[c["case_key"]]} & {"patient", "hospital"}
         verdict = case_verdict(c)
         if verdict and mine:
             m["decided"] += 1
             m["won"] += any((side == "hospital") == (verdict == "for") for side in mine)
+            m["won_patient"] += "patient" in mine and verdict == "against"  # the complaint was allowed against the hospital
+            m["won_hospital"] += "hospital" in mine and verdict == "for"
         if c["provider_side"]:
             for side in mine:
                 m["time_of"] += c["n_held"]
@@ -880,6 +883,7 @@ def advocate_metrics(cases, sides):
     m.update(hearings_closed=median(held(True)), n_hearings_closed=len(held(True)),
              hearings_open=median(held(False)), n_hearings_open=len(held(False)), gap_days=median(gaps), n_gaps=len(gaps))
     return {**m, "closed_pct": pct(m["closed"], m["cases"]), "won_pct": pct(m["won"], m["decided"]),
+            "won_patient_pct": pct(m["won_patient"], m["cases"]), "won_hospital_pct": pct(m["won_hospital"], m["cases"]),
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
@@ -901,12 +905,60 @@ def visible_advocates(data):
     return out
 
 
+ADVOCATE_SORTS = [("cases", "Total number of cases"),
+                  ("patient", "Cases won for patients, as a share of all their cases"),
+                  ("hospital", "Cases won for hospitals, as a share of all their cases")]
+ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases a lawyer needs to be ranked by a win share
+DEFAULT_MIN_CASES = 2
+
+
+def rank_advocates(advs, sort, min_cases):
+    """(ranked, below): the advocates in the order asked for. "cases": most cases first, all of them ranked.
+    "patient" / "hospital": the share of all their cases won for patients / for hospitals, highest first (ties: more
+    wins, then more cases). Only lawyers with at least `min_cases` cases are ranked, so one lucky case does not put a
+    lawyer at the top; the rest come back as `below`, in the same order, to be listed after the ranking."""
+    if sort in ("patient", "hospital"):
+        key = lambda a: (-a["metrics"]["won_" + sort] / len(a["cases"]), -a["metrics"]["won_" + sort], -len(a["cases"]), a["name"].lower())
+        return (sorted((a for a in advs if len(a["cases"]) >= min_cases), key=key),
+                sorted((a for a in advs if len(a["cases"]) < min_cases), key=key))
+    return sorted(advs, key=lambda a: (-len(a["cases"]), a["name"].lower())), []
+
+
+BOARD_SIZE = 10
+
+
+def advocate_boards(advs, min_cases):
+    """The three rankings side by side, top BOARD_SIZE of each, for the advocates page: most cases; the highest share
+    of all their cases won for patients; the highest share won for hospitals (the last two among lawyers with at least
+    `min_cases` cases, and with at least one win). Each entry has the lawyer's name and slug, the count shown, and the share where there is one."""
+    boards = []
+    for key, title in (("cases", "Most cases"), ("patient", "Best for patients"), ("hospital", "Best for hospitals")):
+        rows = []
+        for a in rank_advocates(advs, key, min_cases)[0]:
+            m, n = a["metrics"], len(a["cases"])
+            if key != "cases" and not m["won_" + key]:
+                break  # ranked by share, so everyone after this has no wins either: not a "best" for anyone
+            if len(rows) == BOARD_SIZE:
+                break
+            won = n if key == "cases" else m["won_" + key]
+            rows.append({"name": a["name"], "slug": a["slug"], "won": won, "cases": n, "closed": m["closed"],
+                         "pct": None if key == "cases" else m["won_" + key + "_pct"]})
+        boards.append({"key": key, "title": title, "rows": rows})
+    return boards
+
+
 @bp.route("/advocates/")
 def advocates():
     q = request.args.get("q", "").strip().lower()
-    advs = [a for a in visible_advocates(load()) if not q or q in a["name"].lower()]
-    advs.sort(key=lambda a: (-len(a["cases"]), a["name"].lower()))
-    return render_template("case_tracker/advocates.html", advocates=advs, q=q)
+    sort = request.args.get("sort")
+    sort = sort if sort in dict(ADVOCATE_SORTS) else "cases"
+    min_cases = request.args.get("min", type=int)
+    min_cases = min_cases if min_cases in ADVOCATE_MIN_CASES else DEFAULT_MIN_CASES
+    found = [a for a in visible_advocates(load()) if not q or q in a["name"].lower()]
+    boards = advocate_boards(found, min_cases)
+    advs, below = rank_advocates(found, sort, min_cases)
+    return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
+                           min_cases=min_cases, min_options=ADVOCATE_MIN_CASES)
 
 
 @bp.route("/advocate/<slug>")

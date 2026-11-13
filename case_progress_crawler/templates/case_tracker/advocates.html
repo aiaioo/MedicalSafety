@@ -10,22 +10,61 @@
   <input type="search" name="q" value="{{ q }}" placeholder="Filter advocates" aria-label="Filter advocates">
   <button type="submit">Filter</button>
 </form>
+<style>
+  .boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .5rem 1.5rem; margin: 1rem 0; }
+  .boards h3 { font-size: .95rem; margin: 0 0 .2rem; }
+  .boards ol { margin: .2rem 0; padding-left: 1.5rem; font-size: .9em; }
+  .boards li { margin: .15rem 0; }
+  .boards .n { white-space: nowrap; }
+  th.on { text-decoration: underline; }
+  tr.divider td { background: #e7eefa; border-top: 2px solid #0b5cad; border-bottom: 1px solid #0b5cad; font-weight: 600; font-size: .9em; padding: .35rem .6rem; }
+</style>
+<form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 .4rem">
+  <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="sort" value="{{ sort }}">
+  <label>The two win-share rankings include lawyers with at least <select name="min" onchange="this.form.submit()">{% for n in min_options %}<option value="{{ n }}"{{ ' selected' if n == min_cases }}>{{ n }}</option>{% endfor %}</select> case{{ 's' if min_cases != 1 }}</label>
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
+<div class="boards">
+  {% for b in boards %}
+  <div>
+    <h3>{{ b.title }} <span class="muted">{% if b.key == 'cases' %}(cases in the tracker){% elif b.key == 'patient' %}(won for patients &divide; all cases){% else %}(won for hospitals &divide; all cases){% endif %}</span></h3>
+    {% if b.rows %}<ol>{% for r in b.rows %}<li><a href="{{ url_for('case_tracker.advocate', slug=r.slug) }}">{{ r.name }}</a> <span class="n muted">{% if b.key == 'cases' %}{{ r.cases }} cases, {{ r.closed }} closed{% else %}{{ r.pct }}% ({{ r.won }}/{{ r.cases }}){% endif %}</span></li>{% endfor %}</ol>
+    {% else %}<p class="muted">No lawyer with a win and at least {{ min_cases }} case{{ 's' if min_cases != 1 }}.</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+<form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 1rem">
+  <input type="hidden" name="q" value="{{ q }}">
+  <label>Full table ranked by <select name="sort" onchange="this.form.submit()">{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
+  <input type="hidden" name="min" value="{{ min_cases }}">{% if sort != 'cases' %} <span class="muted">(lawyers with at least {{ min_cases }} case{{ 's' if min_cases != 1 }})</span>{% endif %}
+  <noscript><button type="submit">Rank</button></noscript>
+  {% if sort == 'patient' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for patients: the share of a lawyer's cases that they won for a patient (the court allowed the complaint against the hospital). Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower. Treat small numbers with care.</p>{% endif %}
+  {% if sort == 'hospital' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for hospitals: the share of a lawyer's cases that they won for a hospital or doctor (the court dismissed the complaint, including for non-prosecution). Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower. Treat small numbers with care.</p>{% endif %}
+</form>
+{% macro adv_row(a, rank) %}
+  <tr><td class="muted">{{ rank }}</td><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
+    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
+    <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
+{% endmacro %}
 <table>
-  <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th>
+  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th>
     <th title="Share of their cases that are closed">% closed</th>
     <th title="Of the cases the court decided (allowed or dismissed), the share their client won: a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed">% won</th>
+    <th title="Cases won for patients (complaint allowed against the hospital), as a share of all their cases"{{ ' class=on' if sort == 'patient' }}>Won for patients</th>
+    <th title="Cases won for hospitals (complaint dismissed), as a share of all their cases"{{ ' class=on' if sort == 'hospital' }}>Won for hospitals</th>
     <th title="Share of hearings in their cases where the record says their side asked for time">% adjourned</th>
     <th title="Share of hearings in their cases where the record says their side was absent">% absent</th>
     <th title="Median hearings held in their closed cases">Hearings per closed case</th>
     <th title="Median hearings held so far in their open cases">Hearings per open case</th>
     <th title="Median days between one hearing day and the next, across their cases">Median gap (days)</th></tr>
-  {% for a in advocates %}
-  <tr><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
-    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
-    <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
-  {% else %}
-  <tr><td colspan="14">No advocates.</td></tr>
+  {% for a in advocates %}{{ adv_row(a, loop.index) }}
+  {% else %}{% if not below %}<tr><td colspan="17">No advocates.</td></tr>{% else %}<tr><td colspan="17">No lawyer has at least {{ min_cases }} case{{ 's' if min_cases != 1 }}.</td></tr>{% endif %}
   {% endfor %}
+  {% if below %}
+  <tr class="divider"><td colspan="17">Below the minimum of {{ min_cases }} case{{ 's' if min_cases != 1 }} for ranking: {{ below|length }} lawyer{{ 's' if below|length != 1 }}, in the same order, not ranked</td></tr>
+  {% for a in below %}{{ adv_row(a, '') }}
+  {% endfor %}
+  {% endif %}
 </table>
 <p class="muted" style="font-size:.9em">% closed is of the advocate's cases in the tracker. % won is of the cases the court decided (allowed or dismissed): a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed (including for non-prosecution); settled, withdrawn, returned and open cases are not counted. % adjourned and % absent are shares of the hearings in their cases (where the hospital's side is known) in which the court's record says their side asked for time or was absent. The record names the side, not the lawyer, and names a side only some of the time, so these are minimums. Hearings per case is the median number of hearings held, separately for their closed and their open cases (open cases are still going, so that number keeps rising); the median gap is the days between one hearing day and the next across all their cases. Figures in grey rest on very few cases, hearings or gaps. The tracker holds only the cases the crawler has found, and the KMC records name no lawyers, so these are not a lawyer's full record.</p>
 {% endblock %}
