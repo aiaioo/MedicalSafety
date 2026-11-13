@@ -1,9 +1,13 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}{{ a.name }}{% endblock %}
+{% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
 {% block body %}
 <p><a href="{{ url_for('case_tracker.advocates') }}">&larr; Advocates</a></p>
 <h1>{{ a.name }}</h1>
 <p class="muted">{{ a.cases|length }} case{{ 's' if a.cases|length != 1 }}: {{ complainant }} for the complainant, {{ respondent }} for the respondent ; by party type, {{ patient }} for the patient, {{ hospital }} for the hospital/doctor, {{ other_org }} for an insurer or other organisation</p>
+<p>Closed: {{ pct_cell(m.closed_pct, m.closed, m.cases) }} &middot; Won, of decided cases: {{ pct_cell(m.won_pct, m.won, m.decided) }} &middot; Hearings where their side asked for time: {{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }} &middot; Hearings where their side was absent: {{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}
+  <br>Hearings per case, median: {{ num_cell(m.hearings_closed, m.n_hearings_closed) }} in closed cases, {{ num_cell(m.hearings_open, m.n_hearings_open) }} in open cases (still going) &middot; Median gap between hearings: {{ num_cell(m.gap_days, m.n_gaps, 20, ' days') }}
+  <br><span class="muted">Won means the court allowed the complaint for a patient's lawyer, or dismissed it for a hospital's; the side's recorded requests for time and absences are counted, not the lawyer's own. See the notes on the <a href="{{ url_for('case_tracker.advocates') }}">advocates list</a>.</span></p>
 {% set cases = a.cases %}
 {% set sides = a.sides %}
 {% include "case_tracker/_cases_table.html" %}

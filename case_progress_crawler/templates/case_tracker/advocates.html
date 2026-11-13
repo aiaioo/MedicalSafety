@@ -1,5 +1,6 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}Advocates{% endblock %}
+{% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
 {% block body %}
 <p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>
 <h1>Advocates</h1>
@@ -10,11 +11,21 @@
   <button type="submit">Filter</button>
 </form>
 <table>
-  <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th></tr>
+  <tr><th>Advocate</th><th>Cases</th><th>For complainant</th><th>For respondent</th><th>For patient</th><th>For hospital/doctor</th><th>For insurer/ organisation</th>
+    <th title="Share of their cases that are closed">% closed</th>
+    <th title="Of the cases the court decided (allowed or dismissed), the share their client won: a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed">% won</th>
+    <th title="Share of hearings in their cases where the record says their side asked for time">% adjourned</th>
+    <th title="Share of hearings in their cases where the record says their side was absent">% absent</th>
+    <th title="Median hearings held in their closed cases">Hearings per closed case</th>
+    <th title="Median hearings held so far in their open cases">Hearings per open case</th>
+    <th title="Median days between one hearing day and the next, across their cases">Median gap (days)</th></tr>
   {% for a in advocates %}
-  <tr><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td></tr>
+  <tr><td><a href="{{ url_for('case_tracker.advocate', slug=a.slug) }}">{{ a.name }}</a></td><td>{{ a.cases|length }}</td><td>{{ a.complainant }}</td><td>{{ a.respondent }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
+    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
+    <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
   {% else %}
-  <tr><td colspan="7">No advocates.</td></tr>
+  <tr><td colspan="14">No advocates.</td></tr>
   {% endfor %}
 </table>
+<p class="muted" style="font-size:.9em">% closed is of the advocate's cases in the tracker. % won is of the cases the court decided (allowed or dismissed): a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed (including for non-prosecution); settled, withdrawn, returned and open cases are not counted. % adjourned and % absent are shares of the hearings in their cases (where the hospital's side is known) in which the court's record says their side asked for time or was absent. The record names the side, not the lawyer, and names a side only some of the time, so these are minimums. Hearings per case is the median number of hearings held, separately for their closed and their open cases (open cases are still going, so that number keeps rising); the median gap is the days between one hearing day and the next across all their cases. Figures in grey rest on very few cases, hearings or gaps. The tracker holds only the cases the crawler has found, and the KMC records name no lawyers, so these are not a lawyer's full record.</p>
 {% endblock %}

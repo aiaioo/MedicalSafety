@@ -475,6 +475,8 @@ def load(sel=None):
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
+    for c in cases.values():  # whom each side's lawyers act for, worked out once (represents() is called a great many times)
+        c["party_of"] = {role: MATCHER.party_of(c["complainants"], c["respondents"], role) for role in ("complainant", "respondent")}
     slug_uses = defaultdict(int)
     for c in cases.values():
         for slug in c["hospitals"]:
@@ -837,12 +839,48 @@ def hospital(slug):
 def represents(case, role):
     """Whom an advocate on `role`'s side of the case acts for: 'hospital', 'patient', 'insurer', 'organisation',
     'mixed' or '' (see ProviderMatcher.party_of)."""
-    return MATCHER.party_of(case["complainants"], case["respondents"], role)
+    stored = case.get("party_of")
+    return stored[role] if stored and role in stored else MATCHER.party_of(case["complainants"], case["respondents"], role)
 
 
 @bp.context_processor
 def helpers():
     return {"represents": represents}
+
+
+def advocate_metrics(cases, sides):
+    """How an advocate's cases went, from their `cases` and `sides` ({case_key: roles they appeared in}):
+    closed / closed_pct (closed cases of all their cases); won / decided / won_pct (of the cases the court allowed or
+    dismissed, how many the advocate's client won: a patient's lawyer wins when the complaint is allowed, a hospital's
+    when it is dismissed; settled, withdrawn, returned and open cases are not decisions); time_n / time_of /
+    time_pct and absent_n / absent_of / absent_pct (of the hearings held in their cases where the hospital's side is
+    known, those where the record says the advocate's side asked for time, or was absent). The record names the
+    side, not the lawyer, so the last two are the side's rates. hearings_closed / hearings_open are the median
+    hearings held per closed and per open case (with the number of cases, n_hearings_*), and gap_days the median days
+    between consecutive hearing days across all their cases (n_gaps of them). Each pct is None where there is nothing to divide by.
+    Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not."""
+    m = {"cases": len(cases), "closed": sum(c["outcome"] != "open" for c in cases), "won": 0, "decided": 0,
+         "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
+    for c in cases:
+        mine = {represents(c, r) for r in sides[c["case_key"]]} & {"patient", "hospital"}
+        verdict = case_verdict(c)
+        if verdict and mine:
+            m["decided"] += 1
+            m["won"] += any((side == "hospital") == (verdict == "for") for side in mine)
+        if c["provider_side"]:
+            for side in mine:
+                m["time_of"] += c["n_held"]
+                m["absent_of"] += c["n_held"]
+                m["time_n"] += c["adjournments"][(side, "time")]
+                m["absent_n"] += c["adjournments"][(side, "absent")]
+    pct = lambda n, d: round(100 * n / d) if d else None
+    median = lambda xs: round(statistics.median(xs)) if xs else None
+    held = lambda closed: [c["n_held"] for c in cases if (c["outcome"] != "open") == closed and c["n_held"]]
+    gaps = [g for c in cases for g in c["gaps"]]
+    m.update(hearings_closed=median(held(True)), n_hearings_closed=len(held(True)),
+             hearings_open=median(held(False)), n_hearings_open=len(held(False)), gap_days=median(gaps), n_gaps=len(gaps))
+    return {**m, "closed_pct": pct(m["closed"], m["cases"]), "won_pct": pct(m["won"], m["decided"]),
+            "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
 def visible_advocates(data):
@@ -859,6 +897,7 @@ def visible_advocates(data):
             out[-1]["patient"] = sum(represents(c, r) == "patient" for c, r in roles)
             out[-1]["hospital"] = sum(represents(c, r) == "hospital" for c, r in roles)
             out[-1]["other_org"] = sum(represents(c, r) in ("insurer", "organisation") for c, r in roles)
+            out[-1]["metrics"] = advocate_metrics(cases, a["sides"])
     return out
 
 
@@ -876,7 +915,7 @@ def advocate(slug):
     if a is None:
         abort(404)
     cases = [c for c in a["cases"] if visible(c)]
-    return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(),
+    return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(), m=advocate_metrics(cases, a["sides"]),
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
                            respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
                            patient=sum(represents(c, r) == "patient" for c in cases for r in a["sides"][c["case_key"]]),

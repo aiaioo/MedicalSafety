@@ -1,0 +1,9 @@
+{# A percentage with the count behind it: pct_cell(pct, n, of). Muted when fewer than 5 cases or hearings back it up. #}
+{% macro pct_cell(pct, n, of, few=5) -%}
+{%- if pct is none %}<span class="muted">&ndash;</span>{% else %}<span{{ ' class=muted' if of < few }}>{{ pct }}%</span> <span class="muted">({{ n }}/{{ of }})</span>{% endif -%}
+{%- endmacro %}
+
+{# A number with the count behind it: num_cell(value, n, few, unit). Muted when fewer than `few` (default 5) cases back it. #}
+{% macro num_cell(value, n, few=5, unit='') -%}
+{%- if value is none %}<span class="muted">&ndash;</span>{% else %}<span{{ ' class=muted' if n < few }}>{{ value }}{{ unit }}</span> <span class="muted">(n={{ n }})</span>{% endif -%}
+{%- endmacro %}
