@@ -5757,7 +5757,9 @@ def _case_tracker_panel(site) -> dict | None:
     except Exception:
         app.logger.exception("case tracker panel for the public page")
         return None
-    return stats if stats["total"] else None
+    if not stats["total"]:
+        return None
+    return {**stats, "states": getattr(case_tracker_viewer, "STATES", [])}
 
 
 @app.route("/public")

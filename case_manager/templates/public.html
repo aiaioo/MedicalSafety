@@ -130,6 +130,7 @@
       <input type="search" name="q" autocomplete="off" data-suggest placeholder="Search court cases by party, case number, hospital or advocate" aria-label="Search court cases">
       <button type="submit">Search</button>
     </form>
+    {% if case_tracker.states %}<label class="state" style="display:block;margin:.4rem 0 .8rem;font-size:.9em">State <select name="state" aria-label="State" style="font-size:1em;padding:.2rem .4rem;border:1px solid #0b5cad;border-radius:.4rem">{% for st in case_tracker.states %}<option value="{{ st }}"{% if loop.first %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>{% endif %}
     {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
   </div>
   {% endif %}
@@ -187,6 +188,7 @@
         <button type="submit">Search</button>
       </form>
       {% endif %}
+      {% if case_tracker.states %}<label class="state" style="display:block;margin:.4rem 0 .8rem;font-size:.9em">State <select name="state" aria-label="State" style="font-size:1em;padding:.2rem .4rem;border:1px solid #0b5cad;border-radius:.4rem">{% for st in case_tracker.states %}<option value="{{ st }}"{% if loop.first %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>{% endif %}
       {% with stats=case_tracker, year=none, q='', outcome=none %}{% include "case_tracker/_analytics.html" %}{% endwith %}
     </div>
     {% endif %}
