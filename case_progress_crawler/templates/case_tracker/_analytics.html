@@ -13,7 +13,7 @@
         {% for k, label, n, pct in c.bars %}<li><a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases"><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</a></li>{% endfor %}
       </ul>
       {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}">{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
-      {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} day gaps; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).
+      {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} day gaps between hearings; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).
         <details class="info"><summary title="What is a gap?">ⓘ</summary><span class="infobox">A gap is the number of days between one hearing day and the next in the same case.</span></details></p>{% endif %}
       {% if c.description %}<p class="muted court-description">{{ c.description }}</p>{% endif %}
     </div>
@@ -41,6 +41,6 @@
     {% endfor %}
   </table>
   {% endif %}
-  <p class="muted">"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p>
+  <details class="notes muted"><summary>About these figures</summary><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></details>
 </section>
 {% endif %}
