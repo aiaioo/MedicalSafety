@@ -52,7 +52,7 @@
   <div class="typical">
     <h3>A typical case <span class="muted">(closed cases only{{ '; ' ~ year if year }})</span></h3>
     <div class="tiles">
-    {% if t.per_case.closed %}<div class="tile"><span class="tile-n">{{ t.per_case.closed.mid }}</span><span class="tile-l">hearings per closed case</span><span class="muted">median (average {{ t.per_case.closed.mean }}) &middot; {{ t.per_case.closed.n }} cases{% if t.per_case.open %}; open cases so far: {{ t.per_case.open.mid }}{% endif %}</span></div>{% endif %}
+    {% if t.per_case.closed %}<div class="tile"><span class="tile-n">{{ t.per_case.closed.mid }}</span><span class="tile-l">hearings per closed case</span><span class="muted">median &middot; {{ t.per_case.closed.n }} cases<br>The average ({{ t.per_case.closed.mean }}){% if t.per_case.closed.mean > t.per_case.closed.mid %} is higher because a few very long cases pull it up; the median is the better guide to a typical case{% else %} is close to the median{% endif %}.</span></div>{% endif %}
     {% for g in t.groups if g.months %}
       <div class="tile"><span class="tile-n">{{ g.months.mid }} mo</span><span class="tile-l">to be {{ g.label|lower }}</span><span class="muted">usually {{ g.months.low }}&ndash;{{ g.months.high }} months &middot; {{ g.months.n }} cases</span></div>
     {% endfor %}
