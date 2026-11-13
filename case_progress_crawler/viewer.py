@@ -874,7 +874,7 @@ def hospital_table(cases):
     return rows
 
 
-HOSPITAL_SORTS = [("against", "Share of closed cases decided against the hospital"), ("against_all", "Cases decided against, as a share of all its cases"), ("cases", "Number of cases"),
+HOSPITAL_SORTS = [("cases", "Number of cases"), ("against", "Share of closed cases decided against the hospital"), ("against_all", "Cases decided against, as a share of all its cases"),
                   ("years", "Average years per closed case"), ("hearings", "Average hearings per closed case"),
                   ("adjourned", "Share of hearings adjourned at its request")]
 # sort key -> (value of a row or None if it has no rank, whether the largest comes first, how the value reads)
@@ -903,7 +903,7 @@ def rank_hospitals(rows, sort):
 def hospitals():
     q = request.args.get("q", "").strip().lower()
     sort = request.args.get("sort")
-    sort = sort if sort in HOSPITAL_RANKS else "against"
+    sort = sort if sort in HOSPITAL_RANKS else "cases"
     rows = hospital_table([c for c in load()["ordered"] if visible(c)])
     found = [r for r in rows if not q or q in r["name"].lower()]
     boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
