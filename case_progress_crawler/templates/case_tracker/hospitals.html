@@ -4,6 +4,17 @@
 <p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>
 <h1>Hospitals</h1>
 <p class="muted">{{ hospitals|length }} hospitals, clinics and nursing homes named among the respondents.</p>
+<h2>Cases that went against the hospital</h2>
+{% if ranking %}
+<table>
+  <tr><th>#</th><th>Hospital</th><th>Against</th><th>Closed cases</th><th>Share</th></tr>
+  {% for r in ranking %}
+  <tr><td>{{ loop.index }}</td><td><a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">{{ r.name }}</a></td><td>{{ r.against }}</td><td>{{ r.closed }}</td><td>{{ (100 * r.ratio)|round|int }}%</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+<p class="muted">Hospitals with at least 3 closed cases, ranked by the share of their closed cases decided against them: complaints or appeals against the hospital that were allowed, and the hospital's own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled, returned or disposed without a stated result, are not counted as against. {{ ranking|length }} hospital{{ 's' if ranking|length != 1 }} qualif{{ 'ies' if ranking|length == 1 else 'y' }}.</p>
+<h2>All hospitals</h2>
 <table>
   <tr><th>Hospital</th><th>Cases</th></tr>
   {% for h in hospitals %}

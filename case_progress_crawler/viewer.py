@@ -249,6 +249,7 @@ def analytics(cases, all_years=None):
                 hospitals[slug][0] += 1
                 hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug, {}).get("name") or hospitals[slug][1] or n
     top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:10]
+    against = hospital_ranking(cases)
     by_year = {}
     for c in all_years or cases:
         row = by_year.setdefault(c["year"], {"year": c["year"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
@@ -264,7 +265,24 @@ def analytics(cases, all_years=None):
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
         years.append(row)
-    return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years}
+    counts = defaultdict(int)
+    for c in cases:
+        j = judgement_of(c["case_key"])
+        if j:
+            counts[j["class"]] += 1
+    reasons = defaultdict(int)
+    for c in cases:
+        j = judgement_of(c["case_key"])
+        if j and j["reason"]:
+            reasons[j["reason"]] += 1
+    n_dismissed = sum(reasons.values())
+    dismissals = {"total": n_dismissed, "max": max(reasons.values(), default=0),
+                  "bars": sorted(((k, label, reasons[k], round(100 * reasons[k] / n_dismissed)) for k, label, _ in DISMISSAL_REASONS if reasons[k]),
+                                 key=lambda b: (b[0] == "other", -b[2]))}
+    n_judgements = sum(counts.values())
+    judgements = {"total": n_judgements, "bars": [(k, label, counts[k], round(100 * counts[k] / n_judgements)) for k, label in JUDGEMENT_CLASSES if counts[k]],
+                  "max": max(counts.values(), default=0)}
+    return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years, "judgements": judgements, "dismissals": dismissals, "against": against}
 
 
 def load(sel=None):
@@ -300,14 +318,18 @@ def load(sel=None):
             h["next_sitting"] = newer["hearing_date"] if newer and newer["hearing_date"] > h["hearing_date"] else ""
         for h, older in zip(hs, hs[1:] + [None]):  # the sitting before this one, if on a different day
             h["prev_sitting"] = older["hearing_date"] if older and older["hearing_date"] < h["hearing_date"] else ""
-        hospitals = {}
+        hospitals, provider_hospitals = {}, {}
         for pr in parties[key]:
             if pr["role"] == "respondent":
                 for n in MATCHER.hospital_names(pr["party"]):
                     hospitals.setdefault(hospital_key(n), n)
         provider = MATCHER.provider_side(names("complainant"), names("respondent"))
+        for pr in parties[key]:  # the hospitals on the provider's side: respondents normally, the appellant or complainant when the hospital brought the case
+            if provider and pr["role"] == provider:
+                for n in MATCHER.hospital_names(pr["party"]):
+                    provider_hospitals.setdefault(hospital_key(n), n)
         gaps, adjourned = case_pace(hs, provider, datetime.date.today().isoformat())
-        cases[key] = {**r, "outcome": outcome_of(r, statuses.get(key)), "hospitals": hospitals, "provider_side": provider,
+        cases[key] = {**r, "outcome": outcome_of(r, statuses.get(key)), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
@@ -318,6 +340,7 @@ def load(sel=None):
     slug_map = hospital_slug_map(slug_uses)  # "cloud-nine-hospital" and "cloudnine-hospital" are one hospital
     for c in cases.values():
         c["hospitals"] = {slug_map[slug]: n for slug, n in c["hospitals"].items()}
+        c["provider_hospitals"] = {slug_map.get(slug, slug): n for slug, n in c["provider_hospitals"].items()}
     ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
     by_date = defaultdict(list)  # hearing date -> [(case, hearing)], cases in list order
     for c in ordered:
@@ -484,7 +507,20 @@ def home():
     stats = analytics(cases, in_scope)
     if outcome:
         cases = [c for c in cases if c["outcome"] == outcome]
-    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, q=q, links=court_links(), stats=stats)
+    judgement = request.args.get("judgement")
+    if judgement != "all" and judgement not in dict(JUDGEMENT_CLASSES):
+        judgement = None
+    if judgement:  # only the cases with a judgement PDF (of the chosen class)
+        cases = [c for c in cases if (j := judgement_of(c["case_key"])) and judgement in ("all", j["class"])]
+    reason = request.args.get("reason")
+    if reason in dict((k, l) for k, l, _ in DISMISSAL_REASONS):
+        cases = [c for c in cases if (j := judgement_of(c["case_key"])) and j["reason"] == reason]
+    else:
+        reason = None
+    judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
+    reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
+    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, q=q, links=court_links(), stats=stats,
+                           judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
 
 
 def front_page_stats():
@@ -611,10 +647,42 @@ def visible_hospitals(data):
     return out
 
 
+MIN_CLOSED_FOR_RANKING = 3
+
+
+def case_verdict(c):
+    """'for' / 'against' the hospital, from who brought the case and how the court decided it: the court allowing
+    it favours the complainant (or appellant), dismissing it favours the respondent. None when the case is open,
+    ended some other way, or the hospital's side is unknown."""
+    side = c.get("provider_side")
+    if side not in ("complainant", "respondent") or c["outcome"] not in ("allowed", "dismissed"):
+        return None
+    return "for" if (c["outcome"] == "allowed") == (side == "complainant") else "against"
+
+
+def hospital_ranking(cases):
+    """Hospitals with at least MIN_CLOSED_FOR_RANKING closed cases among `cases` (as respondent, or as complainant
+    or appellant), ranked by the share of those closed cases decided against them, highest first."""
+    best = load("all")["hospitals"]
+    closed = defaultdict(list)
+    for c in cases:
+        if c["outcome"] != "open":
+            for slug in c["provider_hospitals"]:
+                if slug:
+                    closed[slug].append(c)
+    rows = []
+    for slug, cs in closed.items():
+        if len(cs) >= MIN_CLOSED_FOR_RANKING:
+            against = sum(case_verdict(c) == "against" for c in cs)
+            name = HOSPITAL_DISPLAY.get(slug) or best.get(slug, {}).get("name") or next(iter(cs[0]["provider_hospitals"].values()))
+            rows.append({"slug": slug, "name": name, "closed": len(cs), "against": against, "ratio": against / len(cs)})
+    return sorted(rows, key=lambda r: (-r["ratio"], -r["closed"], r["name"].lower()))
+
+
 @bp.route("/hospitals/")
 def hospitals():
     hs = sorted(visible_hospitals(load()), key=lambda h: (-len(h["cases"]), h["name"].lower()))
-    return render_template("case_tracker/hospitals.html", hospitals=hs)
+    return render_template("case_tracker/hospitals.html", hospitals=hs, ranking=hospital_ranking([c for c in load()["ordered"] if visible(c)]))
 
 
 @bp.route("/hospital/<slug>")
@@ -793,17 +861,88 @@ def orders_of(case_key):
     return found
 
 
-@bp.app_template_global()
-def judgement_pdf(case_key):
-    """The file name of a case's judgement PDF (latest date, then latest version), or None."""
+JUDGEMENT_CLASSES = [("dismissed", "Dismissed"), ("part", "Allowed in part"), ("full", "Allowed in full"),
+                     ("unclear", "Unclear"), ("scanned", "Scanned (not read)")]
+# why a dismissed case was dismissed, first match wins (a keyword pass over the end of the judgement)
+DISMISSAL_REASONS = [
+    ("nonpros", "Non-prosecution (no one appeared)", r"non[- ]?prosecution|no representation|not interested in|failed to appear|remained absent|\bnemo\b|not turn(?:ed)? up"),
+    ("limitation", "Time-barred or no jurisdiction", r"time[- ]barred|barred by (?:limitation|time)|beyond (?:the )?(?:period of )?limitation|delay (?:is )?not condon|jurisdiction|not a consumer|free of charge"),
+    ("withdrawn", "Withdrawn or settled", r"withdr[ae]w|settle|compromise"),
+    ("appeal", "Appeal: lower commission's order upheld", r"no interference|(?:is|are) (?:hereby )?confirmed|devoid of merit|does not call for interference|no (?:valid )?grounds"),
+    ("merits", "Negligence or deficiency not proved", r"no (?:any )?(?:medical )?negligence|not proved|failed to prove|not established|no deficiency|burden of proof|failed to establish"),
+    ("other", "Other or unclear", r""),
+]
+_judgement_cache = {}  # case_key -> (order folder's mtime, result)
+
+
+def classify_judgement(text):
+    """Which of JUDGEMENT_CLASSES a judgement's text falls in, by the wording of its operative end. Rough: a keyword
+    pass, not a reading of the order."""
+    if len(text) < 200:
+        return "scanned"  # no text layer
+    tail = text[-3000:]
+    if re.search(r"partly|partially|in part", tail, re.I) and re.search(r"allow", tail, re.I):
+        return "part"
+    if re.search(r"(?:complaint|case)\s+(?:is|stands)\s+(?:hereby\s+)?allowed|is\s+allowed", tail, re.I):
+        return "full"
+    if re.search(r"dismissed", tail, re.I):
+        return "dismissed"
+    return "unclear"
+
+
+def dismissal_reason(text):
+    """Which of DISMISSAL_REASONS a dismissed judgement gives (from the wording at its end)."""
+    tail = text[-3500:]
+    return next((k for k, _, rx in DISMISSAL_REASONS if rx and re.search(rx, tail, re.I)), "other")
+
+
+def judgement_of(case_key):
+    """{"name", "class", "label"} for a case's judgement PDF (latest date, then latest version), or None."""
+    folder = storage.order_dir(case_key)
+    try:
+        stamp = folder.stat().st_mtime
+    except OSError:
+        return None
+    hit = _judgement_cache.get(case_key)
+    if hit and hit[0] == stamp:
+        return hit[1]
     best = None
     for p in storage.order_files(case_key):
         m = ORDER_RE.fullmatch(p.name)
         if m and m["kind"] == "judgement" and m["ext"] == "pdf":
             k = (_iso_date(m["date"]), int(m["v"] or 1))
             if best is None or k > best[0]:
-                best = (k, p.name)
-    return best[1] if best else None
+                best = (k, p)
+    result = None
+    if best:
+        reason = None
+        try:
+            text = order_text(best[1])
+            cls = classify_judgement(text)
+            if cls == "dismissed":
+                reason = dismissal_reason(text)
+        except Exception:
+            cls = "scanned"
+        result = {"name": best[1].name, "class": cls, "label": dict(JUDGEMENT_CLASSES)[cls], "reason": reason}
+    _judgement_cache[case_key] = (stamp, result)
+    return result
+
+
+@bp.app_template_global()
+def judgement_line(c):
+    """What the case list shows for a case's judgement: (file name, text), or None. The text is the classification and,
+    where the hospital's side is known, which way it went for the hospital."""
+    j = judgement_of(c["case_key"])
+    if not j:
+        return None
+    text = j["label"].lower()
+    if j["reason"]:
+        text += ": " + dict((k, label) for k, label, _ in DISMISSAL_REASONS)[j["reason"]].lower()
+    side = c.get("provider_side")  # the side the hospital is on: complainant or respondent
+    if side in ("complainant", "respondent") and j["class"] in ("dismissed", "part", "full"):
+        for_hospital = (j["class"] == "dismissed") == (side == "respondent")  # dismissal favours the respondent
+        text += ", " + ("partly " if j["class"] == "part" else "") + ("for hospital" if for_hospital else "against hospital")
+    return j["name"], text
 
 
 @bp.route("/order/<case_key>/<name>")

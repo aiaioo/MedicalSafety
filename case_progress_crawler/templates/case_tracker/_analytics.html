@@ -30,6 +30,54 @@
     </div>
   {% endif %}
   </div>
+  {% if stats.judgements and stats.judgements.total %}
+  {% set linked = request.endpoint == 'case_tracker.home' %}
+  <div class="judgements">
+    <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
+    {% for k, label, n, pct in stats.judgements.bars %}
+    <div class="jrow{{ ' on' if linked and judgement == k }}">
+      {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement=k) }}#cases">{% endif %}
+      <span class="jlabel">{{ label }}</span>
+      <span class="jtrack"><span class="jfill seg {{ k }}" style="width:{{ (100 * n / stats.judgements.max)|round|int }}%"></span></span>
+      <span class="jn">{{ n }}</span>
+      {% if linked %}</a>{% endif %}
+    </div>
+    {% endfor %}
+    {% if linked %}<p class="muted"><a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement='all') }}#cases">All judgements &rarr;</a></p>{% endif %}
+    <p class="muted" style="font-size:.85em">Classified automatically from the wording at the end of each judgement; "scanned" judgements have no readable text.</p>
+  </div>
+  {% endif %}
+  {% if stats.dismissals and stats.dismissals.total %}
+  {% set linked = request.endpoint == 'case_tracker.home' %}
+  <div class="judgements">
+    <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
+    {% for k, label, n, pct in stats.dismissals.bars %}
+    <div class="jrow{{ ' on' if linked and reason == k }}">
+      {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, reason=k) }}#cases">{% endif %}
+      <span class="jlabel" style="width:15rem">{{ label }}</span>
+      <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * n / stats.dismissals.max)|round|int }}%"></span></span>
+      <span class="jn">{{ n }}</span>
+      {% if linked %}</a>{% endif %}
+    </div>
+    {% endfor %}
+    <p class="muted" style="font-size:.85em">Reasons are picked automatically from the wording at the end of each readable judgement; one reason per case.</p>
+  </div>
+  {% endif %}
+  {% if stats.against %}
+  <div class="judgements">
+    <h3>Hospitals by share of closed cases decided against them <span class="muted">(at least 3 closed cases{{ '; ' ~ year if year }})</span></h3>
+    {% for r in stats.against %}
+    <div class="jrow">
+      <a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">
+      <span class="jlabel" style="width:15rem">{{ r.name }}</span>
+      <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * r.ratio)|round|int }}%"></span></span>
+      <span class="jn" style="width:7rem">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
+      </a>
+    </div>
+    {% endfor %}
+    <p class="muted" style="font-size:.85em">Share of the hospital's closed cases decided against it: complaints or appeals against it that were allowed, and its own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled or returned, are not counted as against.</p>
+  </div>
+  {% endif %}
   {% if stats.years|length > 1 %}
   <details class="by-year"{{ " open" if year }}><summary><h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
   <table class="years">

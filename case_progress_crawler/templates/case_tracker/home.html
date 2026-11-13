@@ -6,6 +6,8 @@
 <form method="get" style="margin:1rem 0">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
   {% if outcome %}<input type="hidden" name="outcome" value="{{ outcome }}">{% endif %}
+  {% if reason %}<input type="hidden" name="reason" value="{{ reason }}">{% endif %}
+  {% if judgement %}<input type="hidden" name="judgement" value="{{ judgement }}">{% endif %}
   <label>Year
     <select name="year" onchange="this.form.submit()">
       <option value="">All</option>
@@ -15,11 +17,15 @@
   <noscript><button>Filter</button></noscript>
   <span class="muted">{{ cases|length }} cases</span>
   {% if outcome %}<span class="tag">{{ outcome_label }}</span> <a href="{{ url_for('case_tracker.home', year=year, q=q or None) }}">Clear filter</a>{% endif %}
+  {% if judgement %}<span class="tag">Judgements: {{ judgement_label }}</span> <a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=outcome) }}">Clear</a>{% endif %}
+  {% if reason %}<span class="tag">Dismissed: {{ reason_label }}</span> <a href="{{ url_for('case_tracker.home', year=year, q=q or None) }}">Clear</a>{% endif %}
+  · <a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement='all') }}#cases">All judgements</a>
   · <a href="{{ url_for('case_tracker.hearings', year=year) }}">Hearings by date</a>
   · <a href="{{ url_for('case_tracker.hospitals') }}">Hospitals</a>
   · <a href="{{ url_for('case_tracker.advocates') }}">Advocates</a>
 </form>
 {% include "case_tracker/_analytics.html" %}
+<div id="cases"></div>
 {% include "case_tracker/_cases_table.html" %}
 
 {% endblock %}
