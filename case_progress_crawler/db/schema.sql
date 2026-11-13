@@ -151,9 +151,14 @@ CREATE TABLE IF NOT EXISTS case_metrics (
     time_asked_hospital integer NOT NULL,
     absent_patient      integer NOT NULL,
     absent_hospital     integer NOT NULL,
+    filing_date         date,                           -- the portal's caseFilingDate (consumer cases; NULL for the KMC)
+    days_to_close       integer,                        -- filing_date to last_hearing, for a closed case (NULL while open); the last hearing stands in for the decision date
     computed_at         timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (court, case_key)
 );
+-- for a database made before these columns existed
+ALTER TABLE case_metrics ADD COLUMN IF NOT EXISTS filing_date date;
+ALTER TABLE case_metrics ADD COLUMN IF NOT EXISTS days_to_close integer;
 
 CREATE TABLE IF NOT EXISTS hearing_metrics (
     id              bigserial PRIMARY KEY,
@@ -179,4 +184,17 @@ CREATE TABLE IF NOT EXISTS case_judgements (
     reason         text NOT NULL DEFAULT '',        -- why, for a dismissal (see DISMISSAL_REASONS)
     version        integer NOT NULL,                -- judgements.CLASSIFIER_VERSION it was classified with
     classified_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- ---- the "At a glance" panel, ready to show (dashboard_stats.py; the daily crawl rebuilds it after judgements.py) ----
+-- One row per what a visitor can ask for: the court selection (kmc / consumer / all), whether not_medical cases are
+-- shown, and a year (0 = all years). doc is viewer.analytics()'s result, so the page need not walk every case.
+
+CREATE TABLE IF NOT EXISTS dashboard_stats (
+    sel            text NOT NULL,
+    non_medical    boolean NOT NULL,
+    year           integer NOT NULL,
+    doc            jsonb NOT NULL,
+    computed_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (sel, non_medical, year)
 );

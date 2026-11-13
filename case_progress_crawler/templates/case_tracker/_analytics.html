@@ -30,6 +30,49 @@
     </div>
   {% endif %}
   </div>
+  {% if stats.timing and stats.timing.shown %}
+  {% set t = stats.timing %}
+  <div class="typical">
+    <h3>A typical case <span class="muted">(closed cases only{{ '; ' ~ year if year }})</span></h3>
+    <div class="tiles">
+    {% if t.per_case.closed %}<div class="tile"><span class="tile-n">{{ t.per_case.closed.mid }}</span><span class="tile-l">hearings per closed case</span><span class="muted">median (average {{ t.per_case.closed.mean }}) &middot; {{ t.per_case.closed.n }} cases{% if t.per_case.open %}; open cases so far: {{ t.per_case.open.mid }}{% endif %}</span></div>{% endif %}
+    {% for g in t.groups if g.months %}
+      <div class="tile"><span class="tile-n">{{ g.months.mid }} mo</span><span class="tile-l">to be {{ g.label|lower }}</span><span class="muted">usually {{ g.months.low }}&ndash;{{ g.months.high }} months &middot; {{ g.months.n }} cases</span></div>
+    {% endfor %}
+    {% for g in t.groups if g.hearings %}
+      <div class="tile"><span class="tile-n">{{ g.hearings.mid }}</span><span class="tile-l">hearings before {{ g.label|lower }}</span><span class="muted">median &middot; {{ g.hearings.n }} cases</span></div>
+    {% endfor %}
+    {% if t.gap_weeks is not none %}<div class="tile"><span class="tile-n">{{ t.gap_weeks }} wk</span><span class="tile-l">between hearings</span><span class="muted">median &middot; {{ t.n_gaps }} gaps</span></div>{% endif %}
+    {% if t.ended_early_pct is not none %}<div class="tile"><span class="tile-n">{{ t.ended_early_pct }}%</span><span class="tile-l">settled or withdrawn</span><span class="muted">of {{ t.n_closed }} closed cases</span></div>{% endif %}
+    </div>
+    <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
+  </div>
+  {% endif %}
+  {% if stats.sides and (stats.sides.rates or stats.sides.lawyers) %}
+  {% set sd = stats.sides %}
+  <div class="sides">
+    <h3>Patients and hospitals compared <span class="muted">(blue: patient side, orange: hospital side{{ '; ' ~ year if year }})</span></h3>
+    {% macro pair(title, pv, hv, unit, vmax) %}
+    <div class="pairrow"><span class="pairlabel">{{ title }}</span>
+      <span class="pairbars">
+        <span class="pairline"><span class="jtrack"><span class="jfill pat" style="width:{{ (100 * pv / vmax)|round|int }}%"></span></span><span class="jn">{{ pv }} {{ unit }}</span></span>
+        <span class="pairline"><span class="jtrack"><span class="jfill hosp" style="width:{{ (100 * hv / vmax)|round|int }}%"></span></span><span class="jn">{{ hv }} {{ unit }}</span></span>
+      </span></div>
+    {% endmacro %}
+    {% if sd.rates %}
+      {% set tp = sd.rates.time.patient.per100 %}{% set th = sd.rates.time.hospital.per100 %}
+      {% set ap = sd.rates.absent.patient.per100 %}{% set ah = sd.rates.absent.hospital.per100 %}
+      {% set rmax = [tp, th, ap, ah, 0.1]|max %}
+      {{ pair("Asked for more time", tp, th, "per 100 hearings", rmax) }}
+      {{ pair("Failed to appear", ap, ah, "per 100 hearings", rmax) }}
+    {% endif %}
+    {% if sd.lawyers %}
+      {% set lp = sd.lawyers.patient.mean %}{% set lh = sd.lawyers.hospital.mean %}
+      {{ pair("Lawyers' experience", lp, lh, "cases on average", [lp, lh, 0.1]|max) }}
+    {% endif %}
+    <p class="muted" style="font-size:.85em">{% if sd.rates %}Per 100 hearings held in {{ sd.cases }} cases where the hospital's side is known ({{ sd.hearings }} hearings). Counted only where the court's record says which side asked for time or was absent, so the true rates are higher; compare the two sides, not the totals. {% endif %}{% if sd.lawyers %}A lawyer's experience is the number of cases they appear in across the tracker (median: {{ sd.lawyers.patient.median }} for patients' lawyers, {{ sd.lawyers.hospital.median }} for hospitals'), counted once per case from {{ sd.lawyers.patient.n }} and {{ sd.lawyers.hospital.n }} lawyer appearances. It is not years at the bar, which no court record gives.{% endif %}</p>
+  </div>
+  {% endif %}
   <div class="triple">
   {% if stats.judgements and stats.judgements.total %}
   {% set linked = true %}

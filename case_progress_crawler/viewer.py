@@ -50,7 +50,7 @@ from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, rende
 import progress_storage as storage
 from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, judgement_of
 from courts.providers import MATCHER
-from metrics import OUTCOMES, case_pace, outcome_of
+from metrics import OUTCOMES, case_pace, days_to_close, outcome_of
 from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
@@ -237,6 +237,7 @@ def analytics(cases, all_years=None):
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
         row["long_gap_pct"] = round(100 * sum(g > 60 for g in row["gaps"]) / len(row["gaps"])) if row["gaps"] else None
         row["n_gaps"] = len(row["gaps"])
+        del row["gaps"]  # kept out of the stored numbers: the page only needs the medians
         closed = row["total"] - row["open"]
         row["closed"] = closed
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
@@ -250,6 +251,8 @@ def analytics(cases, all_years=None):
                 hospitals[slug][0] += 1
                 hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug, {}).get("name") or hospitals[slug][1] or n
     top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:10]
+    timing = case_timing(cases)
+    sides = side_comparison(cases)
     against = hospital_ranking(cases)
     by_year = {}
     for c in all_years or cases:
@@ -265,6 +268,7 @@ def analytics(cases, all_years=None):
         row = by_year[y]
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
+        del row["gaps"]
         years.append(row)
     counts = defaultdict(int)
     for c in cases:
@@ -283,7 +287,102 @@ def analytics(cases, all_years=None):
     n_judgements = sum(counts.values())
     judgements = {"total": n_judgements, "bars": [(k, label, counts[k], round(100 * counts[k] / n_judgements)) for k, label in JUDGEMENT_CLASSES if counts[k]],
                   "max": max(counts.values(), default=0)}
-    return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years, "judgements": judgements, "dismissals": dismissals, "against": against}
+    return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years, "judgements": judgements, "dismissals": dismissals, "against": against, "timing": timing, "sides": sides}
+
+
+MIN_TIMING_CASES = 20  # a typical time or count is not shown from fewer closed cases than this
+TIMING_GROUPS = [("allowed", "Allowed", ("allowed",)), ("dismissed", "Dismissed", ("dismissed",)),
+                 ("settled", "Settled or withdrawn", ("settled", "withdrawn"))]
+
+
+def _quartiles(values):
+    """(25th, median, 75th percentile) of a list of numbers."""
+    q = statistics.quantiles(values, n=4, method="inclusive")
+    return q[0], q[1], q[2]
+
+
+def case_timing(cases):
+    """How long cases take, for the panel's "A typical case" tiles: per way of ending (TIMING_GROUPS) the months from
+    filing to the last hearing (25th / median / 75th percentile) and the hearings held, each only where at least
+    MIN_TIMING_CASES closed cases have the figure; the typical gap between hearings; and the share of closed cases
+    that were settled or withdrawn. Only closed cases are counted, so recent filings still open pull the real
+    typical time up. Consumer cases only for the months (the KMC's filing dates are not recorded)."""
+    groups = []
+    for key, label, outcomes in TIMING_GROUPS:
+        mine = [c for c in cases if c["outcome"] in outcomes]
+        months = [c["days_to_close"] / 30.44 for c in mine if c["days_to_close"] is not None]
+        held = [c["n_held"] for c in mine if c["n_held"]]
+        g = {"key": key, "label": label, "closed": len(mine), "months": None, "hearings": None}
+        if len(months) >= MIN_TIMING_CASES:
+            lo, mid, hi = _quartiles(months)
+            g["months"] = {"low": round(lo), "mid": round(mid), "high": round(hi), "n": len(months)}
+        if len(held) >= MIN_TIMING_CASES:
+            g["hearings"] = {"mid": round(statistics.median(held)), "n": len(held)}
+        groups.append(g)
+    gaps = [x for c in cases for x in c["gaps"]]
+    closed = [c for c in cases if c["outcome"] != "open"]
+    ended_early = sum(c["outcome"] in ("settled", "withdrawn") for c in closed)
+    per_case = {}
+    for key, label, subset in (("closed", "closed", closed), ("open", "open", [c for c in cases if c["outcome"] == "open"])):
+        held = [c["n_held"] for c in subset if c["n_held"]]
+        per_case[key] = {"mid": round(statistics.median(held)), "mean": round(statistics.mean(held)), "n": len(held)} if len(held) >= MIN_TIMING_CASES else None
+    return {"groups": groups, "per_case": per_case,
+            "gap_weeks": round(statistics.median(gaps) / 7, 1) if len(gaps) >= MIN_TIMING_CASES else None, "n_gaps": len(gaps),
+            "ended_early_pct": round(100 * ended_early / len(closed)) if len(closed) >= MIN_TIMING_CASES else None, "n_closed": len(closed),
+            "shown": any(g["months"] or g["hearings"] for g in groups) or any(per_case.values())}
+
+
+MIN_SIDE_HEARINGS = 200  # hearings, and MIN_SIDE_LAWYERS lawyer appearances per side, before patient-vs-hospital rates are shown
+MIN_SIDE_LAWYERS = 20
+
+
+def side_comparison(cases):
+    """Patients against hospitals, for the panel: how often each side asked for time (adjournment rate) and how often
+    each was absent (no-show rate), per 100 hearings held, and how many cases the lawyers on each side have handled.
+
+    Time asked for and absence are counted only where the court's recorded text says which side it was (see
+    metrics.adjournment_sides), so the real rates are higher than shown; the comparison between the sides is the
+    point. Hearings are those of cases where the hospital's side is known. A lawyer's experience is the number of
+    cases they appear in anywhere in the tracker (not years at the bar, which no record gives); each lawyer counts once
+    per case, on the side they act for, and the figure is the mean and median over those appearances."""
+    known = [c for c in cases if c["provider_side"]]
+    hearings = sum(c["n_held"] for c in known)
+    totals = defaultdict(int)
+    for c in known:
+        for key, n in c["adjournments"].items():
+            totals[key] += n
+    out = {"hearings": hearings, "cases": len(known), "rates": None, "lawyers": None}
+    if hearings >= MIN_SIDE_HEARINGS:
+        out["rates"] = {kind: {w: {"n": totals[(w, kind)], "per100": round(100 * totals[(w, kind)] / hearings, 1)} for w in ("patient", "hospital")}
+                        for kind in ("time", "absent")}
+    cases_of = {slug: len(a["cases"]) for slug, a in load("all")["advocates"].items()}
+    seen = defaultdict(list)
+    for c in cases:
+        for slug, a in c["advocate_info"].items():
+            if slug in cases_of:
+                for side in {represents(c, r) for r in a["roles"]} & {"patient", "hospital"}:
+                    seen[side].append(cases_of[slug])
+    if all(len(seen[s]) >= MIN_SIDE_LAWYERS for s in ("patient", "hospital")):
+        out["lawyers"] = {s: {"n": len(seen[s]), "mean": round(statistics.mean(seen[s]), 1), "median": round(statistics.median(seen[s]))}
+                          for s in ("patient", "hospital")}
+    return out
+
+
+def compute_stats(sel, year, non_medical):
+    """The panel's numbers for a court selection, a year (0 = all years) and whether not_medical cases are shown,
+    worked out from every case (dashboard_stats.py stores these; the page falls back to this when nothing is stored)."""
+    in_scope = [c for c in load(sel)["ordered"] if non_medical or c.get("label") != "not_medical"]
+    cases = [c for c in in_scope if not year or c["year"] == year]
+    return analytics(cases, in_scope)
+
+
+def panel_stats(sel, year, non_medical):
+    """The panel's numbers, from the dashboard_stats table when the daily crawl has stored them (one lookup, no walk
+    over the cases), else worked out on the spot. Adds "as_of": the date they were worked out."""
+    stored = storage.load_dashboard_stats(sel, bool(non_medical), year or 0)
+    if stored:
+        return {**stored["doc"], "as_of": stored["computed_at"].date().isoformat()}
+    return {**compute_stats(sel, year or 0, non_medical), "as_of": datetime.date.today().isoformat()}
 
 
 def load(sel=None):
@@ -329,8 +428,13 @@ def load(sel=None):
             if provider and pr["role"] == provider:
                 for n in MATCHER.hospital_names(pr["party"]):
                     provider_hospitals.setdefault(hospital_key(n), n)
-        gaps, adjourned = case_pace(hs, provider, datetime.date.today().isoformat())
-        cases[key] = {**r, "outcome": outcome_of(r, statuses.get(key)), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
+        today = datetime.date.today().isoformat()
+        gaps, adjourned = case_pace(hs, provider, today)
+        held_dates = [h["hearing_date"] for h in hs if h["hearing_date"] and h["hearing_date"] <= today]
+        outcome = outcome_of(r, statuses.get(key))
+        filing_date = ist_date((statuses.get(key) or {}).get("caseFilingDate") or "")[:10]
+        cases[key] = {**r, "outcome": outcome, "filing_date": filing_date, "n_held": len(held_dates),
+                      "days_to_close": days_to_close(filing_date, max(held_dates, default=""), outcome), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
@@ -505,7 +609,7 @@ def home():
     outcome = request.args.get("outcome")
     if outcome not in {k for k, _ in OUTCOMES}:
         outcome = None
-    stats = analytics(cases, in_scope)
+    stats = panel_stats(selection(), year, show_non_medical()) if not q else analytics(cases, in_scope)  # a search changes the cases, so it is worked out live
     if outcome:
         cases = [c for c in cases if c["outcome"] == outcome]
     judgement = request.args.get("judgement")
@@ -528,8 +632,7 @@ def front_page_stats():
     """The front page's "At a glance" numbers over every court, for a page outside the tracker (the case manager's
     public page): the visitor's court and non-medical cookies don't apply there, so cases labelled not_medical are
     left out."""
-    shown = [c for c in load("all")["ordered"] if c.get("label") != "not_medical"]
-    return analytics(shown, shown)
+    return panel_stats("all", 0, False)
 
 
 def _number_key(s):

@@ -263,7 +263,7 @@ def replace_analysis(court, enquiries, **rows):
 
 CASE_METRIC_COLUMNS = ["court", "case_key", "enquiry_id", "year", "kind", "outcome", "provider_side", "label", "hospitals", "n_hearings",
                        "n_held", "first_hearing", "last_hearing", "n_gaps", "median_gap_days", "max_gap_days",
-                       "time_asked_patient", "time_asked_hospital", "absent_patient", "absent_hospital"]
+                       "time_asked_patient", "time_asked_hospital", "absent_patient", "absent_hospital", "filing_date", "days_to_close"]
 HEARING_METRIC_COLUMNS = ["court", "case_key", "hearing_date", "held", "gap_days", "time_asked_by", "absent_side",
                           "provider_side", "from_history"]
 
@@ -277,6 +277,24 @@ def replace_metrics(case_rows, hearing_rows):
                                      ("hearing_metrics", HEARING_METRIC_COLUMNS, hearing_rows)):
             if rows:
                 psycopg2.extras.execute_values(cur, f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s", rows, page_size=2000)
+
+
+def replace_dashboard_stats(rows):
+    """Replace dashboard_stats (dashboard_stats.py) with rows of (sel, non_medical, year, doc), in one transaction."""
+    with _db() as cur:
+        cur.execute("DELETE FROM dashboard_stats")
+        if rows:
+            psycopg2.extras.execute_values(cur, "INSERT INTO dashboard_stats (sel, non_medical, year, doc) VALUES %s",
+                                           [(sel, nm, year, _json(doc)) for sel, nm, year, doc in rows])
+
+
+def load_dashboard_stats(sel, non_medical, year):
+    """The stored panel numbers for this selection (year 0 = all years) as {"doc", "computed_at"}, or None if there are none."""
+    with _db() as cur:
+        cur.execute("SELECT doc, computed_at FROM dashboard_stats WHERE sel = %s AND non_medical = %s AND year = %s",
+                    (sel, non_medical, year))
+        r = cur.fetchone()
+        return {"doc": r["doc"], "computed_at": r["computed_at"]} if r else None
 
 
 def load_judgements():

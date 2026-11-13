@@ -3,7 +3,7 @@
 
 Two tables (see db/schema.sql), rebuilt wholesale by `python metrics.py` (the daily crawl runs it after the analyses):
   case_metrics     one row per case: outcome (open / disposed / allowed / dismissed / withdrawn / settled / returned), which side is the hospital or doctor,
-                   hospitals, years, hearing counts, days between hearings, adjournments by patient / hospital side.
+                   hospitals, years, hearing counts, days between hearings, adjournments by patient / hospital side, filing date and days from filing to close.
   hearing_metrics  one row per hearing: the days since the previous hearing day, and which side asked for time or was
                    absent, as far as the court's recorded text says (never guessed: '' when it does not say).
 
@@ -123,6 +123,18 @@ def case_pace(hearings, provider_side, today):
     return gaps, counts
 
 
+def days_to_close(filing_date, last_hearing, outcome):
+    """Days from filing to the last hearing for a closed case (the last hearing stands in for the decision date),
+    or None for an open case, a missing date, or dates that do not run forwards."""
+    if outcome == "open" or not filing_date or not last_hearing:
+        return None
+    try:
+        days = (datetime.date.fromisoformat(last_hearing) - datetime.date.fromisoformat(filing_date)).days
+    except ValueError:
+        return None
+    return days if days >= 0 else None
+
+
 def rebuild():
     """Recompute both tables for every analysed court, from the viewer's merged view of each case (cause lists plus
     the portal's history), so the numbers stored are the numbers the viewer shows."""
@@ -140,7 +152,8 @@ def rebuild():
             c.get("label", ""), "; ".join(sorted(c["hospitals"].values())), len(labels), len(held),
             min((l["date"] for l in held), default=None), max((l["date"] for l in held), default=None),
             len(gaps), int(statistics.median(gaps)) if gaps else None, max(gaps, default=None),
-            counts[("patient", "time")], counts[("hospital", "time")], counts[("patient", "absent")], counts[("hospital", "absent")]])
+            counts[("patient", "time")], counts[("hospital", "time")], counts[("patient", "absent")], counts[("hospital", "absent")],
+            c["filing_date"] or None, c["days_to_close"]])
         for h, l in zip(c["hearings"], labels):
             hearing_rows.append([c["court"], c["case_key"], l["date"] or None, l["held"], l["gap_days"],
                                  l["time_asked_by"], l["absent_side"], c["provider_side"], bool(h.get("from_history"))])
