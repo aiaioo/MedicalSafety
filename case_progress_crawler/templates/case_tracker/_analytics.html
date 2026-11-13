@@ -31,7 +31,7 @@
   {% endif %}
   </div>
   {% if stats.years|length > 1 %}
-  <h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3>
+  <details class="by-year"{{ " open" if year }}><summary><h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
   <table class="years">
     {% for y in stats.years %}
     <tr{{ ' class=on' if y.year == year }}>
@@ -42,6 +42,7 @@
     </tr>
     {% endfor %}
   </table>
+  </details>
   {% endif %}
   <details class="notes muted"><summary>About these figures</summary><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></details>
 </section>
