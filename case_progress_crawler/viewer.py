@@ -305,19 +305,20 @@ def _quartiles(values):
 
 
 # the key outcomes shown as a share of closed cases: (key, tile label, what it comes from)
-ENDED_OUTCOMES = [("allowed", "allowed (in full or in part)", "outcome"), ("dismissed", "dismissed, for any reason", "outcome"),
+ENDED_OUTCOMES = [("allowed", "allowed (in full or in part)", "outcome"), ("dismissed", "dismissed, for any reason", "outcome"), ("open", "still open", "all"),
                   ("nonpros", "dismissed for non-prosecution", "reason"), ("merits", "dismissed: negligence not proven", "reason"),
                   ("limitation", "dismissed: time-barred or no jurisdiction", "reason"), ("appeal", "appeals dismissed, order upheld", "reason"),
                   ("returned", "returned or transferred", "outcome")]
 MIN_REASON_CASES = 3  # a dismissal reason is not shown from fewer cases than this
 
 
-def ended_shares(closed):
-    """How closed cases ended, as a share of all closed cases, for the panel's tiles: allowed, dismissed (any reason),
+def ended_shares(cases):
+    """How cases ended, for the panel's tiles: still open (a share of all cases), allowed, dismissed (any reason),
     each dismissal reason (non-prosecution, negligence not proven ...), returned. The court's own outcome gives
-    allowed, dismissed and returned, as a share of all closed cases. A dismissal's reason is known only from the
+    allowed, dismissed and returned, as a share of all closed cases (the still-open share is of all cases). A dismissal's reason is known only from the
     judgement PDF, so a reason's share is of the closed cases whose judgement could be read (basis "read", "of" the
     number of them, "read" in the result), not of all closed cases."""
+    closed = [c for c in cases if c["outcome"] != "open"]
     if len(closed) < MIN_TIMING_CASES:
         return None
     reasons, read = defaultdict(int), 0
@@ -329,12 +330,12 @@ def ended_shares(closed):
             reasons[j["reason"]] += 1
     tiles = []
     for key, label, source in ENDED_OUTCOMES:
-        n = sum(c["outcome"] == key for c in closed) if source == "outcome" else reasons[key]
-        of = len(closed) if source == "outcome" else read
+        n = len(cases) - len(closed) if source == "all" else sum(c["outcome"] == key for c in closed) if source == "outcome" else reasons[key]
+        of = len(cases) if source == "all" else len(closed) if source == "outcome" else read
         if n and of >= MIN_TIMING_CASES and (source == "outcome" or n >= MIN_REASON_CASES):
             pct = 100 * n / of
-            tiles.append({"key": key, "label": label, "n": n, "of": of, "pct": round(pct, 1) if pct < 10 else round(pct), "basis": "closed" if source == "outcome" else "read"})
-    return {"tiles": tiles, "closed": len(closed), "read": read}
+            tiles.append({"key": key, "label": label, "n": n, "of": of, "pct": round(pct, 1) if pct < 10 else round(pct), "basis": {"all": "all", "outcome": "closed"}.get(source, "read")})
+    return {"tiles": tiles, "closed": len(closed), "cases": len(cases), "read": read}
 
 
 def case_timing(cases):
@@ -362,7 +363,7 @@ def case_timing(cases):
     for key, label, subset in (("closed", "closed", closed), ("open", "open", [c for c in cases if c["outcome"] == "open"])):
         held = [c["n_held"] for c in subset if c["n_held"]]
         per_case[key] = {"mid": round(statistics.median(held)), "mean": round(statistics.mean(held)), "n": len(held)} if len(held) >= MIN_TIMING_CASES else None
-    return {"groups": groups, "per_case": per_case, "ended": ended_shares(closed),
+    return {"groups": groups, "per_case": per_case, "ended": ended_shares(cases),
             "gap_weeks": round(statistics.median(gaps) / 7, 1) if len(gaps) >= MIN_TIMING_CASES else None, "n_gaps": len(gaps),
             "ended_early_pct": round(100 * ended_early / len(closed)) if len(closed) >= MIN_TIMING_CASES else None, "n_closed": len(closed),
             "shown": any(g["months"] or g["hearings"] for g in groups) or any(per_case.values())}
