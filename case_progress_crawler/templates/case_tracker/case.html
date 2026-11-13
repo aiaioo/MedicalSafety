@@ -1,14 +1,19 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}{{ c.enquiry_id }}{% endblock %}
 {% from 'case_tracker/_macros.html' import label_badge %}
-{% macro order_block(items) %}
+{% macro order_block(items, raw_text=none) %}
   {% for o in items %}
   <p><b>Order:</b> <a href="{{ url_for('case_tracker.order_file', case_key=c.case_key, name=o.name) }}" target="_blank" rel="noopener noreferrer">{{ o.label }} ({{ o.ext|upper }})</a></p>
   {% endfor %}
-  {% for o in items %}
-  <details><summary class="muted">Text of {{ o.label|lower }}</summary>
-    {% if o.text %}<pre>{{ o.text }}</pre>{% else %}<p class="muted">No text could be extracted (a scanned PDF?); use the link above.</p>{% endif %}</details>
-  {% endfor %}
+  {% if items or raw_text %}
+  <details><summary class="muted">{% if items and raw_text %}Order text and text as printed{% elif items %}Text of {{ items|map(attribute='label')|map('lower')|join(' / ') }}{% else %}Text as printed{% endif %}</summary>
+    {% for o in items %}
+    {% if items|length > 1 or raw_text %}<p class="muted"><b>Text of {{ o.label|lower }}</b></p>{% endif %}
+    {% if o.text %}<pre>{{ o.text }}</pre>{% else %}<p class="muted">No text could be extracted (a scanned PDF?); use the link above.</p>{% endif %}
+    {% endfor %}
+    {% if raw_text %}{% if items %}<p class="muted"><b>Text as printed</b></p>{% endif %}<pre>{{ raw_text }}</pre>{% endif %}
+  </details>
+  {% endif %}
 {% endmacro %}
 {% block body %}
 <p><a href="{{ url_for('case_tracker.home', year=c.year) }}">&larr; {{ c.year }} cases</a></p>
@@ -77,8 +82,7 @@
     {% elif h.history and h.history.next %}<p><b>Next date:</b> <a href="{{ url_for('case_tracker.day', date=h.history.next) }}">{{ h.history.next }}</a></p>
     {% elif h.next_sitting %}<p><b>Next date:</b> <a href="{{ url_for('case_tracker.day', date=h.next_sitting) }}">{{ h.next_sitting }}</a> <span class="muted">(not stated in the outcome; next sitting on record)</span></p>{% endif %}
     {% if h.record %}<p><b>Court's record:</b></p><div class="record">{{ h.record }}</div>{% endif %}
-    {{ order_block(orders.get(h.hearing_date, [])) }}
-    {% if h.raw_text %}<details><summary class="muted">Text as printed</summary><pre>{{ h.raw_text }}</pre></details>{% endif %}
+    {{ order_block(orders.get(h.hearing_date, []), h.raw_text) }}
     {% for t in h.next_stage_tags.split(', ') if t %}<span class="tag">{{ t }}</span>{% endfor %}
   </li>
   {% else %}

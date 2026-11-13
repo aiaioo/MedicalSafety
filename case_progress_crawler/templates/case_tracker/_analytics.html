@@ -42,8 +42,10 @@
     </tr>
     {% endfor %}
   </table>
+  <div class="notes muted"><h4>About these figures</h4><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></div>
   </details>
-  {% endif %}
+  {% else %}
   <details class="notes muted"><summary>About these figures</summary><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></details>
+  {% endif %}
 </section>
 {% endif %}
