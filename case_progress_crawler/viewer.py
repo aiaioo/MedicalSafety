@@ -58,6 +58,7 @@ from courts.ejagriti_case import history_hearing_dates
 # own (`python viewer.py`), it is mounted at "/" in a small Flask app of its own -- see create_app().
 bp = Blueprint("case_tracker", __name__, template_folder="templates", static_folder="static")
 COURTS = {"kmc": "KMC", "consumer": "CPA"}  # court id -> short label
+MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year
 COURT_DESCRIPTIONS = {  # court id -> what the court is, shown under its figures in the "At a glance" panel
     "kmc": "KMC: cases before the Karnataka Medical Council.",
     "consumer": "CPA: medical negligence cases before the consumer courts of Karnataka (Consumer Protection Act).",
@@ -257,7 +258,7 @@ def analytics(cases, all_years=None):
     years = []
     this_year = datetime.date.today().year
     for y in sorted(by_year, reverse=True):
-        if y > this_year:  # a case numbered for a year yet to come (a typo or a pre-registered number): no line for it
+        if y > this_year or y < MIN_YEAR:  # a case numbered for a year yet to come, or before MIN_YEAR (a typo): no line for it
             continue
         row = by_year[y]
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
@@ -344,7 +345,7 @@ def load(sel=None):
     advocates = {s: {"slug": s, "name": advocate_display(a["names"]), "cases": a["cases"], "sides": a["sides"]}
                  for s, a in advocates.items() if s}
     data = {"cases": cases, "hospitals": hospitals, "advocates": advocates, "ordered": ordered, "by_date": by_date,
-            "years": sorted({c["year"] for c in ordered}, reverse=True),
+            "years": sorted({c["year"] for c in ordered if c["year"] >= MIN_YEAR}, reverse=True),
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
     _cache[sel] = {"mtimes": mtimes, "data": data}
     return data
