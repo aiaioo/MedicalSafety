@@ -2,7 +2,7 @@
 """Refresh the stored list (storage.save_courts) of courts the crawler knows about, by city.
 
 It holds the crawler's own courts (courts/, e.g. the Karnataka Medical Council) and the
-consumer courts of Bangalore read from the e-Jagriti portal (courts/ejagriti.py). Courts
+consumer courts of Karnataka read from the e-Jagriti portal (courts/ejagriti.py). Courts
 come and go on the portal, so each run records when a court was first and last seen; one
 that disappears is kept, marked "active": false, rather than dropped.
 
@@ -38,7 +38,7 @@ def main():
     old = storage.load_courts()
     current = local_courts()
     try:
-        current += ejagriti.bangalore_courts()
+        current += ejagriti.karnataka_courts()
         fetched = True
     except Exception as e:
         log(f"ERROR fetching consumer courts from e-Jagriti: {e}")

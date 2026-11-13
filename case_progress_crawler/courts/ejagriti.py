@@ -16,7 +16,8 @@ API_URL = "https://e-jagriti.gov.in/services/master/master/v2/getCommissionDetai
 USER_AGENT = "Mozilla/5.0 (compatible; case-progress-crawler)"
 TIMEOUT = 60
 
-STATE_COMMISSION = 2  # commissionTypeId; district commissions are 3
+STATE_COMMISSION = 2  # commissionTypeId
+DISTRICT_COMMISSION = 3
 
 KARNATAKA = {"state": "Karnataka", "state_id": 29}
 BANGALORE_RE = re.compile(r"\b(?:bangalore|bengaluru)\b", re.IGNORECASE)  # two spellings of the same name
@@ -33,26 +34,28 @@ def fetch_commissions(state_id):
         session.close()
 
 
-def bangalore_courts():
-    """Consumer courts in Bangalore: the Karnataka State Commission and every commission
-    with "Bangalore" or "Bengaluru" in its name (Bangalore Urban, Bengaluru Rural, Bengaluru South and the additional benches)."""
+def karnataka_courts():
+    """Consumer courts of Karnataka: the State Commission and every district commission (the circuit benches
+    of the State Commission are left out). The city of the Bangalore ones (Bangalore Urban, Bengaluru Rural,
+    Bengaluru South and the additional benches) is "Bangalore"; any other is named after its district."""
     courts = []
     for c in fetch_commissions(KARNATAKA["state_id"]):
         is_state = c["commissionTypeId"] == STATE_COMMISSION and not c["circuitAdditionBenchStatus"]
-        if not (is_state or BANGALORE_RE.search(c["commissionNameEn"])):
+        if not is_state and c["commissionTypeId"] != DISTRICT_COMMISSION:
             continue
+        name = c["commissionNameEn"]
         courts.append({
             "id": f"ejagriti-{c['commissionId']}",
-            "name": "Karnataka State Commission" if is_state else c["commissionNameEn"],
+            "name": "Karnataka State Commission" if is_state else name,
             "kind": "consumer state commission" if is_state else "consumer district commission",
-            "city": "Bangalore",
+            "city": "Bangalore" if is_state or BANGALORE_RE.search(name) else name.strip().title(),
             "state": KARNATAKA["state"],
             "source": API_URL + f"?stateId={KARNATAKA['state_id']}",
             "ejagriti_commission_id": c["commissionId"],
             "ejagriti_case_prefix": c["casePrefixText"],
         })
     if not courts:
-        log("ERROR: no Bangalore consumer courts found; has the API changed?")
+        log("ERROR: no Karnataka consumer courts found; has the API changed?")
     return courts
 
 

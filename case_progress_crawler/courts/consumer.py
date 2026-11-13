@@ -1,7 +1,7 @@
 """Consumer commissions (e-Jagriti): download the cause lists of the courts in court_list.py.
 
 For every active consumer court in the courts table (storage.load_courts) (the state commission and the district
-commissions of Bangalore; run court_list.py to refresh it), the day's cause lists of all its
+commissions of Karnataka; run court_list.py to refresh it), the day's cause lists of all its
 court numbers (the portal's "All") are fetched from the e-Jagriti API (courts/ejagriti.py)
 for each working day from yesterday to LOOKAHEAD_DAYS ahead, and saved as one document per
 commission per day (storage.save_cause_list).
@@ -53,7 +53,7 @@ class EJagritiConsumer(Court):
                   if c.get("active") and c.get("ejagriti_commission_id")]
         if not courts:
             log("No consumer courts stored (run court_list.py); reading them from e-Jagriti")
-            courts = [{**c, "active": True} for c in ejagriti.bangalore_courts()]
+            courts = [{**c, "active": True} for c in ejagriti.karnataka_courts()]
         return courts
 
     def save(self, commission, day, rows, state, dry_run):
