@@ -114,37 +114,40 @@
 
   <div class="toolbar">
     <nav class="file-menu">
-      <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
+      <button type="button" class="menu-trigger" id="fileMenuBtn" title="Page setup and download options">File</button>
       <div class="menu-dropdown" id="fileMenuDropdown">
-        <button type="button" id="pageSetupBtn">Page setup&hellip;</button>
+        <button type="button" id="pageSetupBtn" title="Choose paper size, margins and page numbering for downloads">Page setup&hellip;</button>
         <hr>
-        <button type="button" id="downloadBtn">Download annotated PDF</button>
-        <button type="button" id="downloadPagesBtn" disabled>Download annotated pages only</button>
+        <button type="button" id="downloadBtn" title="Download the whole document with your annotations drawn on it">Download annotated PDF</button>
+        <button type="button" id="downloadPagesBtn" disabled title="Download only the pages that have annotations or snippets">Download annotated pages only</button>
         <button type="button" id="downloadOriginalBtn" {% if g.user.is_guest %}disabled title="Not available through a Share link"{% endif %}>Download original PDF</button>
       </div>
     </nav>
     <button type="button" class="btn" id="shareBtn" {{ 'title="Share this document with a secret key"' if can_edit and not g.user.is_guest else 'disabled title="Only the owner, or a collaborator with edit access, can share this"' }}>Share&hellip;</button>
+    <span class="toolbar-sep" aria-hidden="true"></span>
     <div class="mode-group" role="group" aria-label="Drawing mode">
       <button type="button" class="mode-btn active" data-mode="select" title="Select tool: click an annotation to select it, then press Delete" aria-label="Select">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -3px"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -3px"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg> Select
       </button>
-      <button type="button" class="mode-btn" data-mode="rect">Rectangle</button>
-      <button type="button" class="mode-btn" data-mode="freehand">Freehand</button>
-      <button type="button" class="mode-btn" data-mode="text">Text</button>
+      <button type="button" class="mode-btn" data-mode="rect" title="Rectangle: drag to draw an outlined box">Rectangle</button>
+      <button type="button" class="mode-btn" data-mode="freehand" title="Freehand: draw with the mouse or pen">Freehand</button>
+      <button type="button" class="mode-btn" data-mode="text" title="Text: drag a box, then type a text note">Text</button>
       <button type="button" class="mode-btn" data-mode="blackout" title="Blackout: drag a filled box over sensitive information">Blackout</button>
-      <button type="button" class="mode-btn" data-mode="snippet">Snippet</button>
+      <button type="button" class="mode-btn" data-mode="snippet" title="Snippet: drag a box to save that part of the page as a reusable snippet">Snippet</button>
     </div>
     <div class="color-pop-wrap">
-      <button type="button" id="colorBtn" aria-haspopup="true" aria-expanded="false">Color <span class="color-current" id="colorCurrent"></span></button>
+      <button type="button" id="colorBtn" title="Choose the annotation colour" aria-haspopup="true" aria-expanded="false">Color <span class="color-current" id="colorCurrent"></span></button>
       <input id="colorPicker" type="hidden" value="#e02424">
       <div id="colorPopover" class="color-popover" hidden>
         <div id="annotationColorPalette" class="color-palette" role="radiogroup" aria-label="Annotation colour"></div>
       </div>
     </div>
-    <button type="button" id="undoBtn">Undo</button>
-    <button type="button" id="clearBtn">Clear</button>
+    <button type="button" id="undoBtn" title="Undo the last annotation on the current page">Undo</button>
+    <button type="button" id="clearBtn" title="Remove all annotations on the current page">Clear</button>
     <span class="toolbar-sep"></span>
-    <button type="button" id="saveBtn" class="save-btn">Save</button>
+    <button type="button" id="saveBtn" class="save-btn" title="Save annotations, title and description">Save</button>
+    <button type="button" id="prevAnnBtn" hidden title="Select the previous annotation (by page, then oldest first)">&lt; Prev Annotation</button>
+    <button type="button" id="nextAnnBtn" hidden title="Select the next annotation (by page, then oldest first)">Next Annotation &gt;</button>
     <span id="statusMsg" class="status-msg" style="margin-left: 0;"></span>
     <span id="modeHint" class="hint"></span>
   </div>

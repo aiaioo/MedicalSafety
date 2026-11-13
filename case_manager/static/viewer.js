@@ -501,6 +501,7 @@
       }
       if (controller.liveRect) drawRect(ctx, canvas, controller.liveRect);
       if (controller.currentStroke) drawFreehand(ctx, canvas, controller.currentStroke);
+      updateAnnNavButtons();
     }
     controller.redraw = redraw;
 
@@ -956,6 +957,76 @@
     updateSnippetGroupHighlight();
   }
 
+  // ---- Prev/Next Annotation: order = page ascending, then creation order within the page
+  // (annotations are appended per page, so array order is oldest-first) ----
+  const prevAnnBtn = document.getElementById("prevAnnBtn");
+  const nextAnnBtn = document.getElementById("nextAnnBtn");
+  let annNavKey = "";
+
+  function annotatedPages() {
+    const pages = [];
+    for (const [p, st] of pageState) if (st.annotations.length > 0) pages.push(p);
+    return pages.sort((a, b) => a - b);
+  }
+
+  function updateAnnNavButtons() {
+    const any = annotatedPages().length > 0;
+    const key = !any ? "none" : selected ? "sel" : "first";
+    if (key === annNavKey) return;
+    annNavKey = key;
+    prevAnnBtn.hidden = nextAnnBtn.hidden = key === "none";
+    if (key === "first") {
+      prevAnnBtn.textContent = "< First annotation";
+      prevAnnBtn.title = "Select the first annotation in the document";
+      nextAnnBtn.textContent = "Last annotation >";
+      nextAnnBtn.title = "Select the last annotation in the document";
+    } else {
+      prevAnnBtn.textContent = "< Prev Annotation";
+      prevAnnBtn.title = "Select the previous annotation (by page, then oldest first)";
+      nextAnnBtn.textContent = "Next Annotation >";
+      nextAnnBtn.title = "Select the next annotation (by page, then oldest first)";
+    }
+  }
+
+  function selectAnnotation(p, index) {
+    if (!mounted.has(p)) { // single-page mode: switch the shown page in place
+      currentPage = p;
+      applyMode();
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", p);
+      history.replaceState(null, "", url);
+      prevLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.max(1, p - 1)}`;
+      nextLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.min(pageCount, p + 1)}`;
+    } else {
+      setCurrentPage(p);
+    }
+    const controller = mounted.get(p);
+    selected = { controller, index };
+    controller.redraw();
+    const icon = controller.wrap.querySelector(".annotation-delete-icon");
+    (icon && icon.style.display !== "none" ? icon : controller.wrap).scrollIntoView({ block: icon ? "center" : "start" });
+  }
+
+  function stepAnnotation(dir) {
+    const pages = annotatedPages();
+    if (!pages.length) return;
+    let pi, idx;
+    if (!selected) {
+      pi = dir > 0 ? 0 : pages.length - 1;
+      idx = dir > 0 ? 0 : getState(pages[pi]).annotations.length - 1;
+    } else {
+      pi = pages.indexOf(selected.controller.pageNum);
+      idx = selected.index + dir;
+      const n = pi >= 0 ? getState(pages[pi]).annotations.length : 0;
+      if (pi < 0) { pi = 0; idx = 0; }
+      else if (idx >= n) { pi = (pi + 1) % pages.length; idx = 0; }
+      else if (idx < 0) { pi = (pi - 1 + pages.length) % pages.length; idx = getState(pages[pi]).annotations.length - 1; }
+    }
+    selectAnnotation(pages[pi], idx);
+  }
+  prevAnnBtn.addEventListener("click", () => stepAnnotation(selected ? -1 : 1)); // unselected: "First"
+  nextAnnBtn.addEventListener("click", () => stepAnnotation(selected ? 1 : -1)); // unselected: "Last"
+
   function activeController() {
     if (selected) return selected.controller;
     return mounted.get(currentPage) || null;
@@ -1149,6 +1220,7 @@
       console.error(e);
     }
     updateAnnotatedPagesBtn();
+    updateAnnNavButtons();
   }
 
   async function loadInfo() {
