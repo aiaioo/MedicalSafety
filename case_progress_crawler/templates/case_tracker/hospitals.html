@@ -12,6 +12,7 @@
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
 <h1>Hospitals</h1>
+<p><a href="{{ url_for('case_tracker.advocates') }}">Advocates and law firms &rarr;</a></p>
 <p class="muted">{{ total }} hospitals, clinics and nursing homes named in the cases. A case counts against a hospital when the court allowed a complaint or appeal against it, or dismissed its own appeal or complaint. Lists that rank by an outcome or an average include hospitals with at least {{ min_closed }} closed cases.</p>
 <form class="search" method="get" action="{{ url_for('case_tracker.hospitals') }}">
   <input type="search" name="q" value="{{ q }}" placeholder="Filter hospitals" aria-label="Filter hospitals" list="suggestions" autocomplete="off">
