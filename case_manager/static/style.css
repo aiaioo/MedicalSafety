@@ -447,7 +447,7 @@ a.tag:hover { background: #d7deec; }
 
 .snippet-card img { cursor: default; }
 .snippet-card .tag { margin-left: 0; }
-.snippet-actions .insert-snippet { color: #2266dd; }
+.snippet-actions .insert-snippet, .annexed-controls .insert-annexed { color: #2266dd; }
 
 /* ---- document landing / picker ---- */
 .doc-landing { width: 100%; max-width: 900px; padding: 12px 4px; }
@@ -963,6 +963,7 @@ a.cause-static { text-decoration: none; color: inherit; }
    and the snippet Insert buttons. */
 #docApp.report-readonly #fmtControls > *,
 #docApp.report-readonly .insert-snippet,
+#docApp.report-readonly .insert-annexed,
 #docApp.report-readonly #saveBtn,
 #docApp.report-readonly #saveStatus { display: none; }
 
@@ -1051,6 +1052,8 @@ a.cause-static { text-decoration: none; color: inherit; }
 .annexed-title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .annexed-controls { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; }
 .annexed-controls select { min-width: 0; flex: 1; font-size: 13px; }
+.annexed-controls .insert-annexed { border: none; background: none; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.annexed-controls .insert-annexed:disabled { color: #b0b4bd; cursor: default; }
 .annexed-error:empty { display: none; }
 
 /* ---- tables (static/src/tableTools.js) ---- */
@@ -1211,3 +1214,6 @@ label.toggle-label #continuousToggle:checked::before,
 label.annex-toggle input[type="checkbox"]:focus-visible,
 label.toggle-label #continuousToggle:focus-visible,
 .list-cascade-field input[type="checkbox"]:focus-visible { outline: 2px solid #2266dd; outline-offset: 2px; }
+.annex-collapse { margin-top: 6px; }
+.annex-collapse > summary { cursor: pointer; font-size: 13px; color: #555; padding: 4px 0; }
+.source-picker .source-group { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; border: 1px solid #e0e2e8; border-radius: 8px; background: #f8f9fb; }

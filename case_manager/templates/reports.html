@@ -46,7 +46,12 @@
     <input id="titleInput" class="doc-name" type="text" placeholder="Untitled report">
     {% endif %}
 
+    {% if report_id %}
+    <a class="btn" id="annexureLink" style="margin-left: auto;" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Annexures &raquo;</a>
+    <a class="btn" href="{{ url_for('page_view') }}">Documents</a>
+    {% else %}
     <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Documents</a>
+    {% endif %}
     <a class="btn disabled" id="lastSourceLink" aria-disabled="true" title="No document viewed yet">Last Document &raquo;</a>
   </header>
 
@@ -62,6 +67,7 @@
         <input type="file" id="uploadSourceInput" accept=".pdf" hidden>
         <hr>
         <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>
+        <button type="button" id="caseSetupBtn" style="display:none">Templates&hellip;</button>
         <hr>
         <button type="button" id="downloadPdfBtn" {{ 'disabled' if not report_id }}>Download as PDF</button>
         <button type="button" id="downloadDocxBtn" {{ 'disabled' if not report_id }}>Download as Word</button>
@@ -204,6 +210,7 @@
     {% if report_id %}
     <aside class="sidebar">
       <div class="source-picker">
+        <div class="source-group">
         <label class="jump">Insert from
           <select id="sourceSelect">
             <option value="">&mdash; none &mdash;</option>
@@ -212,26 +219,31 @@
             {% endfor %}
           </select>
         </label>
-        <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document &raquo;</a>
-        <button type="button" class="btn" id="caseSetupBtn" style="display:none">Insert from templates &hellip;</button>
-        <a class="btn" id="annexureLink" style="font-weight: bold; font-size: 110%" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Annexures</a>
+        <a class="btn" id="annotateLink" href="#" style="display:none">Annotate document</a>
+        </div>
       </div>
       <h3>Snippets &amp; annotations</h3>
       <div id="reportSnippetList" class="snippet-list">
         <p class="empty">Pick a source document above to see its snippets here.</p>
       </div>
-      <h3 class="annex-section-divider">Annexed documents</h3>
+      <h3 class="annex-section-divider">Annexed document page references</h3>
       <div id="reportAnnexedDocs" class="annexed-docs">
         <p class="empty">No documents are annexed yet.</p>
       </div>
       <h3 class="annex-section-divider">Snippet style</h3>
+      <details class="annex-collapse">
+        <summary>Snippet style settings</summary>
       <div class="insert-style" role="radiogroup" aria-label="Snippet style">
         <label><input type="radio" name="snippetInsertStyle" value="image"> Only image</label>
         <label><input type="radio" name="snippetInsertStyle" value="both" checked> Images with reference</label>
         <label><input type="radio" name="snippetInsertStyle" value="reference"> Only reference</label>
         <p class="empty" style="margin: 0">A reference is the snippet's annexure document number and page number; it sits below the image as part of it. Changing the style changes every snippet in the report, and references follow the annexure as it is reordered or renumbered.</p>
       </div>
+      </details>
       <h3 class="annex-section-divider">Page numbers</h3>
+      <label class="annex-toggle"><input type="checkbox" id="pageNumberAlternateInput"> Number alternate pages</label>
+      <details class="annex-collapse">
+        <summary>Page number settings</summary>
       <div class="annex-numbering">
         <label class="modal-field">Page number position
           <select id="pageNumberPositionInput">
@@ -281,8 +293,9 @@
             </div>
           </div>
         </div>
-        <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. Shown in the page preview and included in exported PDF/Word files. In Word files a circle comes out as a box.</p>
+        <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. With "Number alternate pages", only the front (recto) of each sheet is numbered (PDF and preview; Word files number every page). Shown in the page preview and included in exported PDF/Word files. In Word files a circle comes out as a box.</p>
       </div>
+      </details>
     </aside>
     {% endif %}
   </main>

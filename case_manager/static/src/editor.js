@@ -83,6 +83,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   const pageNumberFontInput = document.getElementById("pageNumberFontInput");
   const pageNumberFontSizeInput = document.getElementById("pageNumberFontSizeInput");
   const pageNumberShapeInput = document.getElementById("pageNumberShapeInput");
+  const pageNumberAlternateInput = document.getElementById("pageNumberAlternateInput");
   const pageSetupError = document.getElementById("pageSetupError");
   const pageSetupCancel = document.getElementById("pageSetupCancel");
   const pageSetupApply = document.getElementById("pageSetupApply");
@@ -105,7 +106,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   const PAGE_NUMBER_FONT_SIZE_MAX = 72;
   const PAGE_NUMBER_SHAPES = new Set(["none", "circle", "rectangle"]);
   const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555" };
+  const DEFAULT_PAGE_NUMBERS = { position: "top-center", skip: 0, first: 1, font: "Arial", fontSize: 11, shape: "none", color: "#555555", alternate: false };
   let pageNumbers = { ...DEFAULT_PAGE_NUMBERS };
 
   const newDocModal = document.getElementById("newDocModal");
@@ -599,7 +600,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       ? fontSizeRaw : DEFAULT_PAGE_NUMBERS.fontSize;
     const shape = raw && PAGE_NUMBER_SHAPES.has(raw.shape) ? raw.shape : DEFAULT_PAGE_NUMBERS.shape;
     const color = raw && typeof raw.color === "string" && HEX_COLOR.test(raw.color) ? raw.color.toLowerCase() : DEFAULT_PAGE_NUMBERS.color;
-    return { position, skip, first, font, fontSize, shape, color };
+    return { position, skip, first, font, fontSize, shape, color, alternate: !!(raw && raw.alternate === true) };
   }
 
   function marginsPx() {
@@ -646,7 +647,12 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       rect.className = "page-rect";
       rect.style.top = top + "px";
       rect.style.height = Math.max(0, bottom - top) + "px";
-      if (pageNumbers.position !== "none" && i >= pageNumbers.skip) {
+      // With "alternate", only the even page indexes (rectos) are numbered, from the first at or after the start page.
+      const altLo = pageNumbers.skip + (pageNumbers.skip % 2);
+      const pageNumber = !pageNumbers.alternate
+        ? (i >= pageNumbers.skip ? i - pageNumbers.skip + pageNumbers.first : null)
+        : (i >= altLo && i % 2 === 0 ? (i - altLo) / 2 + pageNumbers.first : null);
+      if (pageNumbers.position !== "none" && pageNumber !== null) {
         const label = document.createElement("div");
         label.className = `page-number-label page-number-${pageNumbers.position}`;
         label.style.fontFamily = pageNumbers.font;
@@ -654,7 +660,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         label.style.color = pageNumbers.color;
         const num = document.createElement("span");
         num.className = "page-number-outline";
-        num.textContent = String(i - pageNumbers.skip + pageNumbers.first);
+        num.textContent = String(pageNumber);
         if (pageNumbers.shape !== "none") {
           num.style.border = "1px solid " + pageNumbers.color;
           num.style.borderRadius = pageNumbers.shape === "circle" ? "50%" : "0";
@@ -709,6 +715,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     pageNumberFontInput.value = pageNumbers.font;
     pageNumberFontSizeInput.value = pageNumbers.fontSize;
     pageNumberShapeInput.value = pageNumbers.shape;
+    pageNumberAlternateInput.checked = !!pageNumbers.alternate;
     selectPageNumberSwatch(pageNumbers.color);
   }
 
@@ -729,11 +736,11 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     pageNumbers = {
       position: pageNumberPositionInput.value, skip: start - 1, first, font: pageNumberFontInput.value, fontSize,
       shape: PAGE_NUMBER_SHAPES.has(pageNumberShapeInput.value) ? pageNumberShapeInput.value : "none",
-      color: pageNumbers.color,
+      color: pageNumbers.color, alternate: pageNumberAlternateInput.checked,
     };
     applyPageNumbers();
   }
-  [pageNumberPositionInput, pageNumberStartInput, pageNumberFirstInput, pageNumberFontInput, pageNumberFontSizeInput, pageNumberShapeInput]
+  [pageNumberPositionInput, pageNumberStartInput, pageNumberFirstInput, pageNumberFontInput, pageNumberFontSizeInput, pageNumberShapeInput, pageNumberAlternateInput]
     .forEach((el) => el.addEventListener("change", readPageNumbers));
 
   pageSetupBtn.addEventListener("click", () => {
@@ -1710,7 +1717,8 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       const button = document.createElement("button");
       button.type = "button";
       button.className = "insert-annexed";
-      button.textContent = "Insert";
+      button.textContent = "<< Insert";
+      button.title = "Inserts a textual reference to the selected annexure pages into the report";
       button.disabled = !canEdit;
       // Each end only offers pages that keep the range valid.
       const sync = () => {
@@ -1776,7 +1784,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
           <img src="${s.url}" alt="${label} from page ${s.page}">
           <div class="snippet-actions">
             <a class="tag" href="${annotationUrl}" title="Open page ${s.page} in annotations">${label} &middot; p${s.page}</a>
-            <button type="button" class="insert-snippet">Insert</button>
+            <button type="button" class="insert-snippet" title="Inserts a visual (image) or textual reference to this snippet into the report, as chosen under Snippet style">&lt;&lt; Insert</button>
           </div>`;
         card.querySelector(".insert-snippet").addEventListener("click", () => {
           insertSnippet(s.url, `${label} from page ${s.page}`, pages[s.page - 1], s.rect);
