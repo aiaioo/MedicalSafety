@@ -1,3 +1,5 @@
+{# Links into the case lists and the hospital / advocate pages are shown only to signed-in users (g.user is None for a visitor who is not; the standalone viewer has no g.user and shows them). #}
+{% set may_list = not (g.user is defined and g.user is none) %}
 {# The "At a glance" panel; needs stats, and year, q and outcome (None / "" when not filtering). #}
 {% macro against_list() %}
   {% if stats.against %}
@@ -5,11 +7,11 @@
     <h3>Hospitals by share of closed cases decided against them <span class="muted">(at least 3 closed cases{{ '; ' ~ year if year }})</span></h3>
     {% for r in stats.against %}
     <div class="jrow">
-      <a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">
+      {% if may_list %}<a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">{% endif %}
       <span class="jlabel">{{ r.name }}</span>
       <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * r.ratio)|round|int }}%"></span></span>
       <span class="jn">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
-      </a>
+      {% if may_list %}</a>{% endif %}
     </div>
     {% endfor %}
     <p class="muted" style="font-size:.85em">Share of the hospital's closed cases decided against it: complaints or appeals against it that were allowed, and its own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled or returned, are not counted as against.</p>
@@ -27,9 +29,9 @@
         {% for k, label, n, pct in c.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
       </div>
       <ul class="legend">
-        {% for k, label, n, pct in c.bars %}<li><a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases"><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</a></li>{% endfor %}
+        {% for k, label, n, pct in c.bars %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases">{% endif %}<i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%){% if may_list %}</a>{% endif %}</li>{% endfor %}
       </ul>
-      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}">{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
       {% if c.patient_win_pct is not none %}<p class="muted">Of {{ c.decided }} decided cases (the court allowed or dismissed the complaint): <strong>patients won {{ c.patient_win_pct }}%</strong> ({{ c.won_patient }}), <strong>hospitals won {{ c.hospital_win_pct }}%</strong> ({{ c.won_hospital }}).
         <details class="info"><summary title="How is a win decided?">ⓘ</summary><span class="infobox">Patients win when the complaint is allowed (in full or in part); hospitals win when it is dismissed, including for non-prosecution. Settled, withdrawn, returned and open cases are not decided, and nor are cases where the hospital's side is unclear.{% if c.court == 'kmc' %} The KMC's record rarely says a complaint was upheld (its outcomes are mostly dismissals), so this understates patients' wins there.{% endif %}</span></details></p>{% endif %}
       <details class="court-more muted"><summary>More about {{ c.label }}</summary>
@@ -43,7 +45,7 @@
     <div>
       <h3>Top 10 hospitals <span class="muted">by cases</span></h3>
       <ol class="tophosp">
-        {% for n, name, slug in stats.top_hospitals %}<li><a href="{{ url_for('case_tracker.hospital', slug=slug) }}">{{ name }}</a> <span class="muted">{{ n }}</span></li>{% endfor %}
+        {% for n, name, slug in stats.top_hospitals %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.hospital', slug=slug) }}">{{ name }}</a>{% else %}{{ name }}{% endif %} <span class="muted">{{ n }}</span></li>{% endfor %}
       </ol>
       <p class="tophosp-all"><a href="{{ url_for('case_tracker.hospitals') }}">View all hospitals &rarr;</a></p>
     </div>
@@ -51,7 +53,7 @@
   </div>
   <div class="triple">
   {% if stats.judgements and stats.judgements.total %}
-  {% set linked = true %}
+  {% set linked = may_list %}
   <div class="judgements">
     <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' in ' ~ year if year }}{% if stats.judgements.read is defined %}; {{ stats.judgements.read }} could be read, and the percentages are of those{% endif %}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.judgements.bars %}
@@ -68,7 +70,7 @@
   </div>
   {% endif %}
   {% if stats.dismissals and stats.dismissals.total %}
-  {% set linked = true %}
+  {% set linked = may_list %}
   <div class="judgements">
     <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements read{{ ' in ' ~ year if year }}; percentages are of those{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.dismissals.bars %}
@@ -134,12 +136,12 @@
   </div>
   {% endif %}
   {% if stats.years|length > 1 %}
-  <details class="by-year"{{ " open" if year }}><summary><h3>By year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
+  <details class="by-year"{{ " open" if year }}><summary><h3>By year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected{% if may_list %}; click a year to filter{% endif %})</span></h3></summary>
   {{ against_list() }}
   <table class="years">
     {% for y in stats.years %}
     <tr{{ ' class=on' if y.year == year }}>
-      <td><a href="{{ url_for('case_tracker.home', year=y.year, q=q or None) }}">{{ y.year }}</a></td>
+      <td>{% if may_list %}<a href="{{ url_for('case_tracker.home', year=y.year, q=q or None) }}">{{ y.year }}</a>{% else %}{{ y.year }}{% endif %}</td>
       <td class="muted">{{ y.total }}</td>
       <td style="width:60%"><div class="bar">{% for k, label, n, pct in y.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}</div></td>
       <td class="muted">{{ y.open }} open · {{ y.total - y.open }} closed{% if y.median_gap is not none %} · {{ y.median_gap }}d gaps{% endif %}</td>
