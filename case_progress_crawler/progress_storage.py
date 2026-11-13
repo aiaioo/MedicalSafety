@@ -279,6 +279,29 @@ def replace_metrics(case_rows, hearing_rows):
                 psycopg2.extras.execute_values(cur, f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s", rows, page_size=2000)
 
 
+def load_judgements():
+    """{case_key: {"file", "size", "class", "reason", "version"}}: the stored classification of each case's judgement PDF (judgements.py)."""
+    with _db() as cur:
+        cur.execute('SELECT case_key, file, size, class, reason, version FROM case_judgements')
+        return {r["case_key"]: dict(r) for r in cur.fetchall()}
+
+
+def save_judgement(case_key, file, size, reason, version, **kw):
+    """Store (or replace) a case's judgement classification; the class is passed as class=... ."""
+    with _db() as cur:
+        cur.execute("INSERT INTO case_judgements (case_key, file, size, class, reason, version) VALUES (%s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (case_key) DO UPDATE SET file = EXCLUDED.file, size = EXCLUDED.size, class = EXCLUDED.class, "
+                    "reason = EXCLUDED.reason, version = EXCLUDED.version, classified_at = now()",
+                    (case_key, file, size, kw["class"], reason or "", version))
+
+
+def delete_judgements_except(case_keys):
+    """Drop the classifications of cases not in `case_keys` (their judgement PDF is gone); returns how many."""
+    with _db() as cur:
+        cur.execute("DELETE FROM case_judgements WHERE NOT (case_key = ANY(%s))", (list(case_keys),))
+        return cur.rowcount
+
+
 def has_analysis(court):
     """Has this court been analysed (so that load_analysis has something to give)?"""
     with _db() as cur:
@@ -316,7 +339,7 @@ def load_enquiries(court):
 
 TABLES = ["courts", "crawl_state", "case_links", "cause_lists", "case_documents", "case_document_versions",
           "analysis_status", "analysis_parties", "analysis_advocates", "analysis_timeline", "analysis_enquiries",
-          "case_metrics", "hearing_metrics"]
+          "case_metrics", "hearing_metrics", "case_judgements"]
 
 
 def status():

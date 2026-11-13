@@ -7,7 +7,7 @@ what the case manager's `deploy/README.md` ("Case tracker") already asks for.
 
 - **What runs:** `run-crawl.sh` -- `downloader.py` (KMC hearing PDFs, consumer cause lists and case
   details), then `analysis.py` (needs poppler's `pdftotext`, which the deploy installs), then
-  `analysis_consumer.py`, then `metrics.py` (fills `case_metrics` and `hearing_metrics`) -- as the `case-manager` user, using the web app's venv.
+  `analysis_consumer.py`, then `metrics.py` (fills `case_metrics` and `hearing_metrics`), then `judgements.py` (classifies new judgement PDFs into `case_judgements`) -- as the `case-manager` user, using the web app's venv.
 - **When:** every day at 3 am India time (`case-progress-crawl.timer`; a run missed while the droplet was off is made
   up when it next boots).
 - **Where it writes:** the `case_progress` database (`CASE_PROGRESS_DATABASE_URL`), and `pdfs/` and

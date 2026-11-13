@@ -48,6 +48,7 @@ import fitz  # PyMuPDF
 from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 import progress_storage as storage
+from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, judgement_of
 from courts.providers import MATCHER
 from metrics import OUTCOMES, case_pace, outcome_of
 from advocates import advocate_display, advocate_key, advocate_names
@@ -815,15 +816,8 @@ def pdf_page(kind, name, n):
     return Response(png, mimetype="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
-ORDER_RE = re.compile(r"(?P<date>[0-9-]+)_(?P<kind>daily_order|judgement)(?:_v(?P<v>\d+))?\.(?P<ext>pdf|html)")
 ORDER_KINDS = {"daily_order": "Daily order", "judgement": "Judgement"}
 _text_cache = {}  # (path, mtime) -> extracted text
-
-
-def _iso_date(s):
-    """The portal's date as YYYY-MM-DD (it may come as DD-MM-YYYY); unchanged if unrecognised."""
-    m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", s)
-    return f"{m[3]}-{m[2]}-{m[1]}" if m else s
 
 
 def order_text(path):
@@ -859,73 +853,6 @@ def orders_of(case_key):
     for lst in found.values():
         lst.sort(key=lambda o: (o["label"].split()[0], int(re.search(r"\d+", o["label"]).group()) if "version" in o["label"] else 1))
     return found
-
-
-JUDGEMENT_CLASSES = [("dismissed", "Dismissed"), ("part", "Allowed in part"), ("full", "Allowed in full"),
-                     ("unclear", "Unclear"), ("scanned", "Scanned (not read)")]
-# why a dismissed case was dismissed, first match wins (a keyword pass over the end of the judgement)
-DISMISSAL_REASONS = [
-    ("nonpros", "Non-prosecution (no one appeared)", r"non[- ]?prosecution|no representation|not interested in|failed to appear|remained absent|\bnemo\b|not turn(?:ed)? up"),
-    ("limitation", "Time-barred or no jurisdiction", r"time[- ]barred|barred by (?:limitation|time)|beyond (?:the )?(?:period of )?limitation|delay (?:is )?not condon|jurisdiction|not a consumer|free of charge"),
-    ("withdrawn", "Withdrawn or settled", r"withdr[ae]w|settle|compromise"),
-    ("appeal", "Appeal: lower commission's order upheld", r"no interference|(?:is|are) (?:hereby )?confirmed|devoid of merit|does not call for interference|no (?:valid )?grounds"),
-    ("merits", "Negligence or deficiency not proved", r"no (?:any )?(?:medical )?negligence|not proved|failed to prove|not established|no deficiency|burden of proof|failed to establish"),
-    ("other", "Other or unclear", r""),
-]
-_judgement_cache = {}  # case_key -> (order folder's mtime, result)
-
-
-def classify_judgement(text):
-    """Which of JUDGEMENT_CLASSES a judgement's text falls in, by the wording of its operative end. Rough: a keyword
-    pass, not a reading of the order."""
-    if len(text) < 200:
-        return "scanned"  # no text layer
-    tail = text[-3000:]
-    if re.search(r"partly|partially|in part", tail, re.I) and re.search(r"allow", tail, re.I):
-        return "part"
-    if re.search(r"(?:complaint|case)\s+(?:is|stands)\s+(?:hereby\s+)?allowed|is\s+allowed", tail, re.I):
-        return "full"
-    if re.search(r"dismissed", tail, re.I):
-        return "dismissed"
-    return "unclear"
-
-
-def dismissal_reason(text):
-    """Which of DISMISSAL_REASONS a dismissed judgement gives (from the wording at its end)."""
-    tail = text[-3500:]
-    return next((k for k, _, rx in DISMISSAL_REASONS if rx and re.search(rx, tail, re.I)), "other")
-
-
-def judgement_of(case_key):
-    """{"name", "class", "label"} for a case's judgement PDF (latest date, then latest version), or None."""
-    folder = storage.order_dir(case_key)
-    try:
-        stamp = folder.stat().st_mtime
-    except OSError:
-        return None
-    hit = _judgement_cache.get(case_key)
-    if hit and hit[0] == stamp:
-        return hit[1]
-    best = None
-    for p in storage.order_files(case_key):
-        m = ORDER_RE.fullmatch(p.name)
-        if m and m["kind"] == "judgement" and m["ext"] == "pdf":
-            k = (_iso_date(m["date"]), int(m["v"] or 1))
-            if best is None or k > best[0]:
-                best = (k, p)
-    result = None
-    if best:
-        reason = None
-        try:
-            text = order_text(best[1])
-            cls = classify_judgement(text)
-            if cls == "dismissed":
-                reason = dismissal_reason(text)
-        except Exception:
-            cls = "scanned"
-        result = {"name": best[1].name, "class": cls, "label": dict(JUDGEMENT_CLASSES)[cls], "reason": reason}
-    _judgement_cache[case_key] = (stamp, result)
-    return result
 
 
 @bp.app_template_global()

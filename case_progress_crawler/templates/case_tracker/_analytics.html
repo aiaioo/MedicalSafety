@@ -32,7 +32,7 @@
   </div>
   <div class="triple">
   {% if stats.judgements and stats.judgements.total %}
-  {% set linked = request.endpoint == 'case_tracker.home' %}
+  {% set linked = true %}
   <div class="judgements">
     <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.judgements.bars %}
@@ -49,7 +49,7 @@
   </div>
   {% endif %}
   {% if stats.dismissals and stats.dismissals.total %}
-  {% set linked = request.endpoint == 'case_tracker.home' %}
+  {% set linked = true %}
   <div class="judgements">
     <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.dismissals.bars %}

@@ -168,3 +168,15 @@ CREATE TABLE IF NOT EXISTS hearing_metrics (
     from_history    boolean NOT NULL DEFAULT false  -- the hearing is known only from the portal's history, not a cause list
 );
 CREATE INDEX IF NOT EXISTS hearing_metrics_case ON hearing_metrics (court, case_key);
+
+-- ---- how each case's judgement PDF reads (judgements.py; the daily crawl keeps it current) ----------------
+
+CREATE TABLE IF NOT EXISTS case_judgements (
+    case_key       text PRIMARY KEY,
+    file           text NOT NULL,                   -- the judgement PDF classified (name and size say whether it has changed)
+    size           bigint NOT NULL,
+    class          text NOT NULL,                   -- dismissed / part / full / unclear / scanned
+    reason         text NOT NULL DEFAULT '',        -- why, for a dismissal (see DISMISSAL_REASONS)
+    version        integer NOT NULL,                -- judgements.CLASSIFIER_VERSION it was classified with
+    classified_at  timestamptz NOT NULL DEFAULT now()
+);
