@@ -4,6 +4,7 @@
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
+<p><a href="{{ url_for('case_tracker.hospitals') }}">Hospitals &rarr;</a></p>
 <p class="muted">{{ advocates|length }} advocates and law firms named in the consumer cases, on the cause lists and in the case details.
   The hospital/doctor side of each case is worked out from the party names (hospital, clinic, Dr. ...); where neither side looks medical the respondent is assumed, and where both do it is left unclear. Names are as the court prints them, so one advocate may still appear under a spelling that was not merged.</p>
 <form class="search" method="get" action="{{ url_for('case_tracker.advocates') }}">
