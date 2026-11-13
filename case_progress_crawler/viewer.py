@@ -388,7 +388,7 @@ def side_comparison(cases):
         for key, n in c["adjournments"].items():
             totals[key] += n
     out = {"hearings": hearings, "cases": len(known), "rates": None, "lawyers": None}
-    if hearings >= MIN_SIDE_HEARINGS:
+    if hearings >= MIN_SIDE_HEARINGS and any(totals.values()):  # a court whose record never names a side (the KMC) has no rates, not 0.0
         out["rates"] = {kind: {w: {"n": totals[(w, kind)], "per100": round(100 * totals[(w, kind)] / hearings, 1)} for w in ("patient", "hospital")}
                         for kind in ("time", "absent")}
     cases_of = {slug: len(a["cases"]) for slug, a in load("all")["advocates"].items()}

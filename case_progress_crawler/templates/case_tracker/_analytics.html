@@ -1,4 +1,21 @@
 {# The "At a glance" panel; needs stats, and year, q and outcome (None / "" when not filtering). #}
+{% macro against_list() %}
+  {% if stats.against %}
+  <div class="judgements">
+    <h3>Hospitals by share of closed cases decided against them <span class="muted">(at least 3 closed cases{{ '; ' ~ year if year }})</span></h3>
+    {% for r in stats.against %}
+    <div class="jrow">
+      <a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">
+      <span class="jlabel">{{ r.name }}</span>
+      <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * r.ratio)|round|int }}%"></span></span>
+      <span class="jn">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
+      </a>
+    </div>
+    {% endfor %}
+    <p class="muted" style="font-size:.85em">Share of the hospital's closed cases decided against it: complaints or appeals against it that were allowed, and its own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled or returned, are not counted as against.</p>
+  </div>
+  {% endif %}
+{% endmacro %}
 {% if stats.total %}
 <section class="panel">
   <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' in ' ~ year if year }})</span></h2>
@@ -45,34 +62,12 @@
     {% if t.gap_weeks is not none %}<div class="tile"><span class="tile-n">{{ t.gap_weeks }} wk</span><span class="tile-l">between hearings</span><span class="muted">median &middot; {{ t.n_gaps }} gaps</span></div>{% endif %}
     {% if t.ended_early_pct is not none %}<div class="tile"><span class="tile-n">{{ t.ended_early_pct }}%</span><span class="tile-l">settled or withdrawn</span><span class="muted">of {{ t.n_closed }} closed cases</span></div>{% endif %}
     {% if t.ended %}{% for e in t.ended.tiles %}<div class="tile"><span class="tile-n">{{ e.pct }}%</span><span class="tile-l">{{ e.label }}</span><span class="muted">{{ e.n }} of {{ e.of }} closed cases{{ ' with a readable judgement' if e.basis == 'read' }}</span></div>{% endfor %}{% endif %}
+    {% if stats.sides and (stats.sides.lawyers or stats.sides.rates) %}{% for side, who in [('patient', "patients' lawyers"), ('hospital', "hospitals' lawyers")] %}
+    {% if stats.sides.lawyers %}{% set l = stats.sides.lawyers[side] %}<div class="tile"><span class="tile-n">{{ l.mean }}</span><span class="tile-l">cases on average, {{ who }}</span><span class="muted">median {{ l.median }} &middot; {{ l.n }} lawyer appearances &middot; cases seen in the tracker, not years at the bar</span></div>{% endif %}
+    {% if stats.sides.rates %}{% set r = stats.sides.rates.absent[side] %}<div class="tile"><span class="tile-n">{{ r.per100 }}</span><span class="tile-l">no-shows per 100 hearings, {{ who }}</span><span class="muted">{{ r.n }} hearings where the record says that side was absent, of {{ stats.sides.hearings }} &middot; a minimum</span></div>{% endif %}
+    {% endfor %}{% endif %}
     </div>
     <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. {% if t.ended %}Outcome shares are of all {{ t.ended.closed }} closed cases. A dismissal's reason is read from the judgement itself, so its share is of the {{ t.ended.read }} closed cases whose judgement could be read (the rest are scanned or have no judgement yet). {% endif %}Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
-  </div>
-  {% endif %}
-  {% if stats.sides and (stats.sides.rates or stats.sides.lawyers) %}
-  {% set sd = stats.sides %}
-  <div class="sides">
-    <h3>Lawyers for patients and hospitals compared{% if year %} <span class="muted">({{ year }})</span>{% endif %}</h3>
-    <ul class="legend key" aria-label="Key"><li><i class="seg pat"></i>Patient's side</li><li><i class="seg hosp"></i>Hospital's side</li></ul>
-    {% macro pair(title, pv, hv, unit, vmax) %}
-    <div class="pairrow"><span class="pairlabel">{{ title }}</span>
-      <span class="pairbars">
-        <span class="pairline"><span class="jtrack"><span class="jfill pat" style="width:{{ (100 * pv / vmax)|round|int }}%"></span></span><span class="jn">{{ pv }} {{ unit }}</span></span>
-        <span class="pairline"><span class="jtrack"><span class="jfill hosp" style="width:{{ (100 * hv / vmax)|round|int }}%"></span></span><span class="jn">{{ hv }} {{ unit }}</span></span>
-      </span></div>
-    {% endmacro %}
-    {% if sd.rates %}
-      {% set tp = sd.rates.time.patient.per100 %}{% set th = sd.rates.time.hospital.per100 %}
-      {% set ap = sd.rates.absent.patient.per100 %}{% set ah = sd.rates.absent.hospital.per100 %}
-      {% set rmax = [tp, th, ap, ah, 0.1]|max %}
-      {{ pair("Asked for more time", tp, th, "per 100 hearings", rmax) }}
-      {{ pair("Failed to appear", ap, ah, "per 100 hearings", rmax) }}
-    {% endif %}
-    {% if sd.lawyers %}
-      {% set lp = sd.lawyers.patient.mean %}{% set lh = sd.lawyers.hospital.mean %}
-      {{ pair("Lawyers' experience", lp, lh, "cases on average", [lp, lh, 0.1]|max) }}
-    {% endif %}
-    <p class="muted" style="font-size:.85em">{% if sd.rates %}Per 100 hearings held in {{ sd.cases }} cases where the hospital's side is known ({{ sd.hearings }} hearings). Counted only where the court's record says which side asked for time or was absent, so the true rates are higher; compare the two sides, not the totals. {% endif %}{% if sd.lawyers %}A lawyer's experience is the number of cases they appear in across the tracker (median: {{ sd.lawyers.patient.median }} for patients' lawyers, {{ sd.lawyers.hospital.median }} for hospitals'), counted once per case from {{ sd.lawyers.patient.n }} and {{ sd.lawyers.hospital.n }} lawyer appearances. It is not years at the bar, which no court record gives.{% endif %}</p>
   </div>
   {% endif %}
   <div class="triple">
@@ -109,24 +104,37 @@
     <p class="muted" style="font-size:.85em">Reasons are picked automatically from the wording at the end of each readable judgement; one reason per case.</p>
   </div>
   {% endif %}
-  {% if stats.against %}
-  <div class="judgements">
-    <h3>Hospitals by share of closed cases decided against them <span class="muted">(at least 3 closed cases{{ '; ' ~ year if year }})</span></h3>
-    {% for r in stats.against %}
-    <div class="jrow">
-      <a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">
-      <span class="jlabel">{{ r.name }}</span>
-      <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * r.ratio)|round|int }}%"></span></span>
-      <span class="jn">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
-      </a>
-    </div>
-    {% endfor %}
-    <p class="muted" style="font-size:.85em">Share of the hospital's closed cases decided against it: complaints or appeals against it that were allowed, and its own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled or returned, are not counted as against.</p>
+  {% if stats.sides and (stats.sides.rates or stats.sides.lawyers) %}
+  {% set sd = stats.sides %}
+  <div class="sides">
+    <h3>Lawyers for patients and hospitals compared{% if year %} <span class="muted">({{ year }})</span>{% endif %}</h3>
+    <ul class="legend key" aria-label="Key"><li><i class="seg pat"></i>Patient's side</li><li><i class="seg hosp"></i>Hospital's side</li></ul>
+    {% macro pair(title, pv, hv, unit, vmax) %}
+    <div class="pairrow"><span class="pairlabel">{{ title }}</span>
+      <span class="pairbars">
+        <span class="pairline"><span class="jtrack"><span class="jfill pat" style="width:{{ (100 * pv / vmax)|round|int }}%"></span></span><span class="jn">{{ pv }} {{ unit }}</span></span>
+        <span class="pairline"><span class="jtrack"><span class="jfill hosp" style="width:{{ (100 * hv / vmax)|round|int }}%"></span></span><span class="jn">{{ hv }} {{ unit }}</span></span>
+      </span></div>
+    {% endmacro %}
+    {% if sd.rates %}
+      {% set tp = sd.rates.time.patient.per100 %}{% set th = sd.rates.time.hospital.per100 %}
+      {% set ap = sd.rates.absent.patient.per100 %}{% set ah = sd.rates.absent.hospital.per100 %}
+      {% set rmax = [tp, th, ap, ah, 0.1]|max %}
+      {{ pair("Asked for more time", tp, th, "per 100 hearings", rmax) }}
+      {{ pair("Failed to appear", ap, ah, "per 100 hearings", rmax) }}
+    {% endif %}
+    {% if sd.lawyers %}
+      {% set lp = sd.lawyers.patient.mean %}{% set lh = sd.lawyers.hospital.mean %}
+      {{ pair("Lawyers' experience", lp, lh, "cases on average", [lp, lh, 0.1]|max) }}
+    {% endif %}
+    <p class="muted" style="font-size:.85em">{% if sd.rates %}Per 100 hearings held in {{ sd.cases }} cases where the hospital's side is known ({{ sd.hearings }} hearings). Counted only where the court's record says which side asked for time or was absent, so the true rates are higher; compare the two sides, not the totals. {% endif %}{% if sd.lawyers %}A lawyer's experience is the number of cases they appear in across the tracker (median: {{ sd.lawyers.patient.median }} for patients' lawyers, {{ sd.lawyers.hospital.median }} for hospitals'), counted once per case from {{ sd.lawyers.patient.n }} and {{ sd.lawyers.hospital.n }} lawyer appearances. It is not years at the bar, which no court record gives.{% endif %}</p>
+    <p class="tophosp-all"><a href="{{ url_for('case_tracker.advocates') }}">View all lawyers &rarr;</a></p>
   </div>
   {% endif %}
   </div>
   {% if stats.years|length > 1 %}
-  <details class="by-year"{{ " open" if year }}><summary><h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
+  <details class="by-year"{{ " open" if year }}><summary><h3>By year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
+  {{ against_list() }}
   <table class="years">
     {% for y in stats.years %}
     <tr{{ ' class=on' if y.year == year }}>
@@ -140,6 +148,7 @@
   <div class="notes muted"><h4>About these figures</h4><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></div>
   </details>
   {% else %}
+  {% if stats.against %}<details class="by-year"><summary><h3>Hospital ranking</h3></summary>{{ against_list() }}</details>{% endif %}
   <details class="notes muted"><summary>About these figures</summary><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></details>
   {% endif %}
 </section>
