@@ -70,6 +70,9 @@
     .public-flow .public-section.beside-panel > h2,
     .public-flow .public-section.beside-panel > .public-section-description { grid-column: 1 / -1; }
     .public-flow > .legal-tools { grid-row: auto; margin-top: 0; }
+    /* Narrow screens: hero, then the sign-in box, then the analytics. */
+    .public-flow > .public-hero-col:first-child { order: -2; }
+    .public-flow > .legal-tools { order: -1; }
   }
 
   /* Administrator's editing view (static/public-admin.js): the real public
