@@ -30,6 +30,7 @@
     </div>
   {% endif %}
   </div>
+  <div class="triple">
   {% if stats.judgements and stats.judgements.total %}
   {% set linked = request.endpoint == 'case_tracker.home' %}
   <div class="judgements">
@@ -54,7 +55,7 @@
     {% for k, label, n, pct in stats.dismissals.bars %}
     <div class="jrow{{ ' on' if linked and reason == k }}">
       {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, reason=k) }}#cases">{% endif %}
-      <span class="jlabel" style="width:15rem">{{ label }}</span>
+      <span class="jlabel">{{ label }}</span>
       <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * n / stats.dismissals.max)|round|int }}%"></span></span>
       <span class="jn">{{ n }}</span>
       {% if linked %}</a>{% endif %}
@@ -69,15 +70,16 @@
     {% for r in stats.against %}
     <div class="jrow">
       <a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">
-      <span class="jlabel" style="width:15rem">{{ r.name }}</span>
+      <span class="jlabel">{{ r.name }}</span>
       <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * r.ratio)|round|int }}%"></span></span>
-      <span class="jn" style="width:7rem">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
+      <span class="jn">{{ (100 * r.ratio)|round|int }}% <span class="muted">({{ r.against }}/{{ r.closed }})</span></span>
       </a>
     </div>
     {% endfor %}
     <p class="muted" style="font-size:.85em">Share of the hospital's closed cases decided against it: complaints or appeals against it that were allowed, and its own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled or returned, are not counted as against.</p>
   </div>
   {% endif %}
+  </div>
   {% if stats.years|length > 1 %}
   <details class="by-year"{{ " open" if year }}><summary><h3>By year <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
   <table class="years">
