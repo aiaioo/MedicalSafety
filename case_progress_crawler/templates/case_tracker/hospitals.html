@@ -1,24 +1,94 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}Hospitals{% endblock %}
+{% macro hosp_row(r, rank) %}
+  <tr><td class="muted">{{ rank }}</td><td><a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">{{ r.name }}</a></td><td>{{ r.cases }}</td>
+    <td>{% if r.ratio is not none %}{{ (100 * r.ratio)|round|int }}%{% else %}<span class="muted">&ndash;</span>{% endif %}</td>
+    <td>{{ r.closed }}{% if r.closed %} <span class="muted">({{ r.against }} against)</span>{% endif %}</td>
+    <td>{{ r.years if r.years is not none else '–' }}</td><td>{{ r.hearings if r.hearings is not none else '–' }}</td>
+    <td>{{ r.adjourned ~ '%' if r.adjourned is not none else '–' }}</td>
+    <td>{% for a, n, k in r.lawyers %}<a href="{{ url_for('case_tracker.advocate', slug=a) }}">{{ n }}</a> <span class="muted">{{ k }}</span>{{ '; ' if not loop.last }}{% else %}<span class="muted">&ndash;</span>{% endfor %}</td></tr>
+{% endmacro %}
 {% block body %}
 <p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>
 <h1>Hospitals</h1>
-<p class="muted">{{ hospitals|length }} hospitals, clinics and nursing homes named among the respondents.</p>
-<h2>Cases that went against the hospital</h2>
-{% if ranking %}
-<table>
-  <tr><th>#</th><th>Hospital</th><th>Against</th><th>Closed cases</th><th>Share</th></tr>
-  {% for r in ranking %}
-  <tr><td>{{ loop.index }}</td><td><a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">{{ r.name }}</a></td><td>{{ r.against }}</td><td>{{ r.closed }}</td><td>{{ (100 * r.ratio)|round|int }}%</td></tr>
+<p class="muted">{{ total }} hospitals, clinics and nursing homes named in the cases. A case counts against a hospital when the court allowed a complaint or appeal against it, or dismissed its own appeal or complaint. Lists that rank by an outcome or an average include hospitals with at least {{ min_closed }} closed cases.</p>
+<form class="search" method="get" action="{{ url_for('case_tracker.hospitals') }}">
+  <input type="search" name="q" value="{{ q }}" placeholder="Filter hospitals" aria-label="Filter hospitals" list="suggestions" autocomplete="off">
+  <datalist id="suggestions"></datalist>
+  <button type="submit">Filter</button>
+</form>
+<script>
+  (() => {
+    const box = document.querySelector('form.search input[name=q]'), list = document.getElementById('suggestions');
+    let timer;
+    box.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const r = await fetch('{{ url_for("case_tracker.suggest") }}?kind=hospital&q=' + encodeURIComponent(box.value));
+        list.replaceChildren(...(await r.json()).map(s => Object.assign(document.createElement('option'), {value: s})));
+      }, 150);
+    });
+  })();
+</script>
+<style>
+  .boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .5rem 1.5rem; margin: 1rem 0; }
+  .boards h3 { font-size: .95rem; margin: 0 0 .2rem; }
+  .boards ol { margin: .2rem 0; padding-left: 1.5rem; font-size: .9em; }
+  .boards li { margin: .15rem 0; }
+  .boards .n { white-space: nowrap; }
+  th.on { text-decoration: underline; }
+  tr.divider td { background: #e7eefa; border-top: 2px solid #0b5cad; border-bottom: 1px solid #0b5cad; font-weight: 600; font-size: .9em; padding: .35rem .6rem; }
+</style>
+{% for group, caption in [('volume', 'Who has the most cases'), ('outcome', 'Whose cases most often go against them'), ('pace', 'Where cases take longest')] %}
+<p class="muted" style="margin:.8rem 0 0;font-size:.9em">{{ caption }}</p>
+<div class="boards">
+  {% for b in boards if b.group == group %}
+  <div>
+    <h3>{{ b.title }}</h3>
+    {% if b.rows %}<ol>{% for r in b.rows %}<li><a href="{{ url_for('case_tracker.hospital', slug=r.slug) }}">{{ r.name }}</a> <span class="n muted">{{ r.text }}</span></li>{% endfor %}</ol>
+    {% else %}<p class="muted">No hospitals.</p>{% endif %}
+  </div>
   {% endfor %}
-</table>
-{% endif %}
-<p class="muted">Hospitals with at least 3 closed cases, ranked by the share of their closed cases decided against them: complaints or appeals against the hospital that were allowed, and the hospital's own appeals or complaints that were dismissed. Open cases, and cases withdrawn, settled, returned or disposed without a stated result, are not counted as against. {{ ranking|length }} hospital{{ 's' if ranking|length != 1 }} qualif{{ 'ies' if ranking|length == 1 else 'y' }}.</p>
-<h2>All hospitals</h2>
+</div>
+{% endfor %}
+<div id="ranking">
+<form class="rank" method="get" action="{{ url_for('case_tracker.hospitals') }}" style="margin:.2rem 0 1rem">
+  <input type="hidden" name="q" value="{{ q }}">
+  <label>Full table ranked by <select name="sort" data-ajax>{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
+  <noscript><button type="submit">Rank</button></noscript>
+</form>
 <table>
-  <tr><th>Hospital</th><th>Cases</th></tr>
-  {% for h in hospitals %}
-  <tr><td><a href="{{ url_for('case_tracker.hospital', slug=h.slug) }}">{{ h.name }}</a></td><td>{{ h.cases|length }}</td></tr>
+  <tr><th>#</th><th>Hospital</th><th{{ ' class=on' if sort == 'cases' }}>Cases</th>
+    <th title="Share of its closed cases decided against it"{{ ' class=on' if sort == 'against' }}>% against</th><th>Closed cases</th>
+    <th title="Average years from filing to the last hearing in its closed cases (consumer cases only)"{{ ' class=on' if sort == 'years' }}>Avg years</th>
+    <th title="Average hearings held in its closed cases"{{ ' class=on' if sort == 'hearings' }}>Avg hearings</th>
+    <th title="Share of hearings where the record says its side asked for time"{{ ' class=on' if sort == 'adjourned' }}>% adjourned</th>
+    <th>Most used lawyers</th></tr>
+  {% for r in hospitals %}{{ hosp_row(r, loop.index) }}
+  {% else %}<tr><td colspan="9">No hospital {{ 'matches.' if q else 'has the figures to rank by.' }}</td></tr>
   {% endfor %}
+  {% if below %}
+  <tr class="divider"><td colspan="9">Without the figure to rank by (fewer than {{ min_closed }} closed cases, or no data): {{ below|length }} hospital{{ 's' if below|length != 1 }}, by cases, not ranked</td></tr>
+  {% for r in below %}{{ hosp_row(r, '') }}
+  {% endfor %}
+  {% endif %}
 </table>
+<p class="muted" style="font-size:.9em">% against is of the hospital's closed cases, as in the analytics dashboard; it is shown only for hospitals with at least {{ min_closed }} closed cases. Open cases, and cases withdrawn, settled, returned or disposed without a stated result, are not counted as against. Averages are over closed cases; years need a filing date, so the KMC cases are not covered. % adjourned is a minimum: the record names the side that asked for time only some of the time. Most used lawyers are those on the hospital's side, with the number of its cases they appear in. The tracker holds only the cases the crawler has found.</p>
+</div>
+<script>
+  // Changing "Full table ranked by" replaces just the ranking section, not the whole page.
+  document.addEventListener('change', async e => {
+    const sel = e.target;
+    if (!sel.matches('#ranking select[data-ajax]')) return;
+    const url = new URL(sel.form.action, location.href);
+    new URLSearchParams(new FormData(sel.form)).forEach((v, k) => url.searchParams.set(k, v));
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      document.getElementById('ranking').replaceWith(doc.getElementById('ranking'));
+      history.replaceState(null, '', url);
+    } catch (err) { location.href = url; }
+  });
+</script>
 {% endblock %}

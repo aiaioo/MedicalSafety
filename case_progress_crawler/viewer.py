@@ -779,6 +779,10 @@ def suggest():
     if len(q) < 2:
         return jsonify([])
     data = load()
+    if request.args.get("kind") in ("advocate", "hospital"):  # a list page's filter box: that list's names only
+        pool = {x["name"] for x in (visible_advocates(data) if request.args["kind"] == "advocate" else visible_hospitals(data))}
+        hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
+        return jsonify(hits[:12])
     shown = [c for c in data["ordered"] if visible(c)]
     pool = {c["enquiry_id"] for c in shown}
     pool |= {p for c in shown for p in c["complainants"] + c["respondents"]}
@@ -830,10 +834,78 @@ def hospital_ranking(cases):
     return sorted(rows, key=lambda r: (-r["ratio"], -r["closed"], r["name"].lower()))
 
 
+def hospital_table(cases):
+    """One row per hospital in `cases` (visible ones): {"slug", "name", "cases", "closed", "against", "ratio" (share of the closed
+    cases, counted as hospital_ranking does, decided against it; None below MIN_CLOSED_FOR_RANKING closed), "years" and "hearings"
+    (averages over its closed cases with a filing date / a hearing held), "adjourned" (% of its side's hearings where the record
+    says it asked for time, None if unknown), "lawyers" (its side's most used: [(slug, name, cases)], up to 3)}."""
+    best = load("all")["hospitals"]
+    by = defaultdict(dict)
+    for c in cases:
+        for slug in {**c["hospitals"], **c["provider_hospitals"]}:
+            if slug:
+                by[slug][c["case_key"]] = c
+    mean = lambda xs, nd: round(sum(xs) / len(xs), nd) if xs else None
+    rows = []
+    for slug, cs in by.items():
+        cs = list(cs.values())
+        prov = [c for c in cs if slug in c["provider_hospitals"] and c["outcome"] != "open"]
+        against = sum(case_verdict(c) == "against" for c in prov)
+        closed = [c for c in cs if c["outcome"] != "open"]
+        asked = held = 0
+        lawyers = defaultdict(lambda: [0, ""])
+        for c in cs:
+            side = c["provider_side"] or "respondent"
+            if c["provider_side"]:
+                asked += c["adjournments"][(side, "time")]
+                held += c["n_held"]
+            for aslug, name in c["advocate_links"][side]:
+                lawyers[aslug][0] += 1
+                lawyers[aslug][1] = name
+        name = HOSPITAL_DISPLAY.get(slug) or best.get(slug, {}).get("name") or next(iter({**cs[0]["hospitals"], **cs[0]["provider_hospitals"]}.values()))
+        rows.append({"slug": slug, "name": name, "cases": len(cs), "closed": len(prov), "n_closed": len(closed), "against": against,
+                     "ratio": against / len(prov) if len(prov) >= MIN_CLOSED_FOR_RANKING else None,
+                     "years": mean([c["days_to_close"] / 365.25 for c in closed if c["days_to_close"] is not None], 1),
+                     "hearings": mean([c["n_held"] for c in closed if c["n_held"]], 1),
+                     "adjourned": round(100 * asked / held) if held else None,
+                     "lawyers": [(a, n, k) for a, (k, n) in sorted(lawyers.items(), key=lambda t: (-t[1][0], t[1][1].lower()))[:3]]})
+    return rows
+
+
+HOSPITAL_SORTS = [("against", "Share of closed cases decided against the hospital"), ("cases", "Number of cases"),
+                  ("years", "Average years per closed case"), ("hearings", "Average hearings per closed case"),
+                  ("adjourned", "Share of hearings adjourned at its request")]
+# sort key -> (value of a row or None if it has no rank, whether the largest comes first, how the value reads)
+HOSPITAL_RANKS = {
+    "against": (lambda r: r["ratio"], True, lambda r: f"{round(100 * r['ratio'])}% ({r['against']}/{r['closed']})"),
+    "cases": (lambda r: r["cases"], True, lambda r: f"{r['cases']} cases"),
+    "years": (lambda r: r["years"] if r["n_closed"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['years']} years ({r['n_closed']} closed)"),
+    "hearings": (lambda r: r["hearings"] if r["n_closed"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['hearings']} hearings ({r['n_closed']} closed)"),
+    "adjourned": (lambda r: r["adjourned"] if r["cases"] >= MIN_CLOSED_FOR_RANKING else None, True, lambda r: f"{r['adjourned']}% adjourned ({r['cases']} cases)"),
+}
+HOSPITAL_BOARDS = [("volume", "Most cases", "cases"), ("outcome", "Most often decided against", "against"),
+                   ("pace", "Slowest: average years from filing to the end", "years"), ("pace", "Most hearings per closed case", "hearings")]
+
+
+def rank_hospitals(rows, sort):
+    """(ranked rows, the rest): the rows that have the value `sort` ranks by, largest first, and those that do not, by cases."""
+    key = HOSPITAL_RANKS[sort][0]
+    ranked = sorted((r for r in rows if key(r) is not None), key=lambda r: (-key(r), -r["cases"], r["name"].lower()))
+    rest = sorted((r for r in rows if key(r) is None), key=lambda r: (-r["cases"], r["name"].lower()))
+    return ranked, rest
+
+
 @bp.route("/hospitals/")
 def hospitals():
-    hs = sorted(visible_hospitals(load()), key=lambda h: (-len(h["cases"]), h["name"].lower()))
-    return render_template("case_tracker/hospitals.html", hospitals=hs, ranking=hospital_ranking([c for c in load()["ordered"] if visible(c)]))
+    q = request.args.get("q", "").strip().lower()
+    sort = request.args.get("sort")
+    sort = sort if sort in HOSPITAL_RANKS else "against"
+    rows = hospital_table([c for c in load()["ordered"] if visible(c)])
+    found = [r for r in rows if not q or q in r["name"].lower()]
+    boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
+    ranked, below = rank_hospitals(found, sort)
+    return render_template("case_tracker/hospitals.html", hospitals=ranked, below=below, boards=boards, total=len(rows), q=q, sort=sort,
+                           sorts=HOSPITAL_SORTS, min_closed=MIN_CLOSED_FOR_RANKING)
 
 
 @bp.route("/hospital/<slug>")

@@ -49,28 +49,6 @@
     </div>
   {% endif %}
   </div>
-  {% if stats.timing and stats.timing.shown %}
-  {% set t = stats.timing %}
-  <div class="typical">
-    <h3>A typical case <span class="muted">(closed cases only{{ '; ' ~ year if year }})</span></h3>
-    <div class="tiles">
-    {% if t.per_case.closed %}<div class="tile"><span class="tile-n">{{ t.per_case.closed.mid }}</span><span class="tile-l">hearings per closed case</span><span class="muted">median &middot; {{ t.per_case.closed.n }} cases<br>The average ({{ t.per_case.closed.mean }}){% if t.per_case.closed.mean > t.per_case.closed.mid %} is higher because a few very long cases pull it up; the median is the better guide to a typical case{% else %} is close to the median{% endif %}.</span></div>{% endif %}
-    {% for g in t.groups if g.months %}
-      <div class="tile"><span class="tile-n">{{ g.months.mid }} mo</span><span class="tile-l">to be {{ g.label|lower }}</span><span class="muted">usually {{ g.months.low }}&ndash;{{ g.months.high }} months &middot; {{ g.months.n }} cases</span></div>
-    {% endfor %}
-    {% for g in t.groups if g.hearings %}
-      <div class="tile"><span class="tile-n">{{ g.hearings.mid }}</span><span class="tile-l">hearings before {{ g.label|lower }}</span><span class="muted">median &middot; {{ g.hearings.n }} cases</span></div>
-    {% endfor %}
-    {% if t.gap_weeks is not none %}<div class="tile"><span class="tile-n">{{ t.gap_weeks }} wk</span><span class="tile-l">between hearings</span><span class="muted">median &middot; {{ t.n_gaps }} gaps</span></div>{% endif %}
-    {% if t.ended_early_pct is not none %}<div class="tile"><span class="tile-n">{{ t.ended_early_pct }}%</span><span class="tile-l">settled or withdrawn</span><span class="muted">of {{ t.n_closed }} closed cases</span></div>{% endif %}
-    {% if t.ended %}{% for e in t.ended.tiles %}<div class="tile"><span class="tile-n">{{ e.pct }}%</span><span class="tile-l">{{ e.label }}</span><span class="muted">{{ e.n }} of {{ e.of }} {{ 'cases' if e.basis == 'all' else 'closed cases' }}{{ ' with a readable judgement' if e.basis == 'read' }}</span></div>{% endfor %}{% endif %}
-    {% set sides_of = [('patient', "patients' lawyers"), ('hospital', "hospitals' lawyers")] %}
-    {% if stats.sides and stats.sides.lawyers %}{% for side, who in sides_of %}{% set l = stats.sides.lawyers[side] %}<div class="tile"><span class="tile-n">{{ l.mean }}</span><span class="tile-l">cases on average, {{ who }}</span><span class="muted">median {{ l.median }} &middot; {{ l.n }} lawyer appearances &middot; cases seen in the tracker, not years at the bar</span></div>{% endfor %}{% endif %}
-    {% if stats.sides and stats.sides.rates %}{% for side, who in sides_of %}{% set r = stats.sides.rates.absent[side] %}<div class="tile"><span class="tile-n">{{ r.per100 }}</span><span class="tile-l">no-shows per 100 hearings, {{ who }}</span><span class="muted">{{ r.n }} hearings where the record says that side was absent, of {{ stats.sides.hearings }} &middot; a minimum</span></div>{% endfor %}{% endif %}
-    </div>
-    <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. {% if t.ended %}Outcome shares are of all {{ t.ended.closed }} closed cases (still open: of all {{ t.ended.cases }} cases). A dismissal's reason is read from the judgement itself, so its share is of the {{ t.ended.read }} closed cases whose judgement could be read (the rest are scanned or have no judgement yet). {% endif %}Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
-  </div>
-  {% endif %}
   <div class="triple">
   {% if stats.judgements and stats.judgements.total %}
   {% set linked = true %}
@@ -108,7 +86,7 @@
   {% if stats.sides and (stats.sides.rates or stats.sides.lawyers) %}
   {% set sd = stats.sides %}
   <div class="sides">
-    <h3>Lawyers for patients and hospitals compared{% if year %} <span class="muted">({{ year }})</span>{% endif %}</h3>
+    <h3>Lawyers compared{% if year %} <span class="muted">({{ year }})</span>{% endif %}</h3>
     <ul class="legend key" aria-label="Key"><li><i class="seg pat"></i>Patient's side</li><li><i class="seg hosp"></i>Hospital's side</li></ul>
     {% macro pair(title, pv, hv, unit, vmax) %}
     <div class="pairrow"><span class="pairlabel">{{ title }}</span>
@@ -133,6 +111,28 @@
   </div>
   {% endif %}
   </div>
+  {% if stats.timing and stats.timing.shown %}
+  {% set t = stats.timing %}
+  <div class="typical">
+    <h3>A typical case <span class="muted">(closed cases only{{ '; ' ~ year if year }})</span></h3>
+    <div class="tiles">
+    {% if t.per_case.closed %}<div class="tile"><span class="tile-n">{{ t.per_case.closed.mid }}</span><span class="tile-l">hearings per closed case</span><span class="muted">median &middot; {{ t.per_case.closed.n }} cases<br>The average ({{ t.per_case.closed.mean }}){% if t.per_case.closed.mean > t.per_case.closed.mid %} is higher because a few very long cases pull it up; the median is the better guide to a typical case{% else %} is close to the median{% endif %}.</span></div>{% endif %}
+    {% for g in t.groups if g.months %}
+      <div class="tile"><span class="tile-n">{{ g.months.mid }} mo</span><span class="tile-l">to be {{ g.label|lower }}</span><span class="muted">usually {{ g.months.low }}&ndash;{{ g.months.high }} months &middot; {{ g.months.n }} cases</span></div>
+    {% endfor %}
+    {% for g in t.groups if g.hearings %}
+      <div class="tile"><span class="tile-n">{{ g.hearings.mid }}</span><span class="tile-l">hearings before {{ g.label|lower }}</span><span class="muted">median &middot; {{ g.hearings.n }} cases</span></div>
+    {% endfor %}
+    {% if t.gap_weeks is not none %}<div class="tile"><span class="tile-n">{{ t.gap_weeks }} wk</span><span class="tile-l">between hearings</span><span class="muted">median &middot; {{ t.n_gaps }} gaps</span></div>{% endif %}
+    {% if t.ended_early_pct is not none %}<div class="tile"><span class="tile-n">{{ t.ended_early_pct }}%</span><span class="tile-l">settled or withdrawn</span><span class="muted">of {{ t.n_closed }} closed cases</span></div>{% endif %}
+    {% if t.ended %}{% for e in t.ended.tiles %}<div class="tile"><span class="tile-n">{{ e.pct }}%</span><span class="tile-l">{{ e.label }}</span><span class="muted">{{ e.n }} of {{ e.of }} {{ 'cases' if e.basis == 'all' else 'closed cases' }}{{ ' with a readable judgement' if e.basis == 'read' }}</span></div>{% endfor %}{% endif %}
+    {% set sides_of = [('patient', "patients' lawyers"), ('hospital', "hospitals' lawyers")] %}
+    {% if stats.sides and stats.sides.lawyers %}{% for side, who in sides_of %}{% set l = stats.sides.lawyers[side] %}<div class="tile"><span class="tile-n">{{ l.mean }}</span><span class="tile-l">cases on average, {{ who }}</span><span class="muted">median {{ l.median }} &middot; {{ l.n }} lawyer appearances &middot; cases seen in the tracker, not years at the bar</span></div>{% endfor %}{% endif %}
+    {% if stats.sides and stats.sides.rates %}{% for side, who in sides_of %}{% set r = stats.sides.rates.absent[side] %}<div class="tile"><span class="tile-n">{{ r.per100 }}</span><span class="tile-l">no-shows per 100 hearings, {{ who }}</span><span class="muted">{{ r.n }} hearings where the record says that side was absent, of {{ stats.sides.hearings }} &middot; a minimum</span></div>{% endfor %}{% endif %}
+    </div>
+    <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. {% if t.ended %}Outcome shares are of all {{ t.ended.closed }} closed cases (still open: of all {{ t.ended.cases }} cases). A dismissal's reason is read from the judgement itself, so its share is of the {{ t.ended.read }} closed cases whose judgement could be read (the rest are scanned or have no judgement yet). {% endif %}Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
+  </div>
+  {% endif %}
   {% if stats.years|length > 1 %}
   <details class="by-year"{{ " open" if year }}><summary><h3>By year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected; click a year to filter)</span></h3></summary>
   {{ against_list() }}

@@ -7,9 +7,23 @@
 <p class="muted">{{ advocates|length }} advocates and law firms named in the consumer cases, on the cause lists and in the case details.
   The hospital/doctor side of each case is worked out from the party names (hospital, clinic, Dr. ...); where neither side looks medical the respondent is assumed, and where both do it is left unclear. Names are as the court prints them, so one advocate may still appear under a spelling that was not merged.</p>
 <form class="search" method="get" action="{{ url_for('case_tracker.advocates') }}">
-  <input type="search" name="q" value="{{ q }}" placeholder="Filter advocates" aria-label="Filter advocates">
+  <input type="search" name="q" value="{{ q }}" placeholder="Filter advocates" aria-label="Filter advocates" list="suggestions" autocomplete="off">
+  <datalist id="suggestions"></datalist>
   <button type="submit">Filter</button>
 </form>
+<script>
+  (() => {
+    const box = document.querySelector('form.search input[name=q]'), list = document.getElementById('suggestions');
+    let timer;
+    box.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const r = await fetch('{{ url_for("case_tracker.suggest") }}?kind=advocate&q=' + encodeURIComponent(box.value));
+        list.replaceChildren(...(await r.json()).map(s => Object.assign(document.createElement('option'), {value: s})));
+      }, 150);
+    });
+  })();
+</script>
 <style>
   .boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .5rem 1.5rem; margin: 1rem 0; }
   .boards h3 { font-size: .95rem; margin: 0 0 .2rem; }
@@ -37,9 +51,10 @@
   {% endfor %}
 </div>
 {% endfor %}
+<div id="ranking">
 <form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 1rem">
   <input type="hidden" name="q" value="{{ q }}">
-  <label>Full table ranked by <select name="sort" onchange="this.form.submit()">{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Full table ranked by <select name="sort" data-ajax>{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
   <input type="hidden" name="min" value="{{ min_cases }}">{% if sort_kind == 'share' %} <span class="muted">(lawyers with at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }})</span>{% endif %}
   <noscript><button type="submit">Rank</button></noscript>
   {% if sort == 'win_done' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Win rate: the share of a lawyer's completed cases (those that have ended, however they ended) that they won for their client, whichever side that was: the complaint allowed for a patient's lawyer, dismissed for a hospital's. Settled, withdrawn and returned cases count as completed but not as wins. Treat small numbers with care.</p>{% endif %}
@@ -79,4 +94,23 @@
   {% endif %}
 </table>
 <p class="muted" style="font-size:.9em">% closed is of the advocate's cases in the tracker. % won is of the cases the court decided (allowed or dismissed): a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed (including for non-prosecution); settled, withdrawn, returned and open cases are not counted. % adjourned and % absent are shares of the hearings in their cases (where the hospital's side is known) in which the court's record says their side asked for time or was absent. The record names the side, not the lawyer, and names a side only some of the time, so these are minimums. Hearings per case is the median number of hearings held, separately for their closed and their open cases (open cases are still going, so that number keeps rising); the median gap is the days between one hearing day and the next across all their cases. Figures in grey rest on very few cases, hearings or gaps. The tracker holds only the cases the crawler has found, and the KMC records name no lawyers, so these are not a lawyer's full record.</p>
+</div>
+<script>
+  // Changing "Full table ranked by" replaces just the ranking section, not the whole page.
+  document.addEventListener('change', async e => {
+    const sel = e.target;
+    if (!sel.matches('#ranking select[data-ajax]')) return;
+    const url = new URL(sel.form.action, location.href);
+    new URLSearchParams(new FormData(sel.form)).forEach((v, k) => url.searchParams.set(k, v));
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      document.getElementById('ranking').replaceWith(doc.getElementById('ranking'));
+      const top = document.querySelector('form.rank input[name=sort]');
+      if (top) top.value = url.searchParams.get('sort');
+      history.replaceState(null, '', url);
+    } catch (err) { location.href = url; }
+  });
+</script>
 {% endblock %}
