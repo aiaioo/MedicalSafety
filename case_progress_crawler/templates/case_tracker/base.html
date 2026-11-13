@@ -39,6 +39,8 @@
   nav.courts { margin: .4rem 0 .8rem; }
   nav.courts a { padding: .25rem .8rem; border: 1px solid #0b5cad; border-radius: 1rem; text-decoration: none; margin-right: .3rem; font-size: .9em; }
   nav.courts a.on { background: #0b5cad; color: #fff; }
+  nav.courts label.state { margin-right: .6rem; font-size: .9em; }
+  nav.courts label.state select { font-size: 1em; padding: .2rem .4rem; border: 1px solid #0b5cad; border-radius: .4rem; background: #fff; }
 </style>
 {% include "case_tracker/_panel_styles.html" %}
 </head>
@@ -46,7 +48,7 @@
 {% block top %}{% endblock %}
 {% set tracker_home = url_for('case_tracker.home') %}
 <header><a href="{{ '/' if tracker_home != '/' else tracker_home }}" title="Home" aria-label="Home"><svg class="home" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg> Case progress</a></header>
-<nav class="courts" aria-label="Courts">{% for id, label in selections.items() %}<a href="{{ url_for('case_tracker.select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% if non_medical_count %}<a href="{{ url_for('case_tracker.non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
+<nav class="courts" aria-label="Courts"><label class="state">State <select name="state" aria-label="State">{% for st in states %}<option value="{{ st }}"{% if loop.first %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>{% for id, label in selections.items() %}<a href="{{ url_for('case_tracker.select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% if non_medical_count %}<a href="{{ url_for('case_tracker.non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
 {% block body %}{% endblock %}
 </body>
 </html>

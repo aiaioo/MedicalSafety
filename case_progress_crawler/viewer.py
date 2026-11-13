@@ -64,6 +64,7 @@ COURT_DESCRIPTIONS = {  # court id -> what the court is, shown under its figures
     "kmc": "KMC: cases before the Karnataka Medical Council.",
     "consumer": "CPA: medical negligence cases before the consumer courts of Karnataka (Consumer Protection Act).",
 }
+STATES = ["Karnataka"]  # the states the crawl covers; the first is selected (the page's State dropdown is not yet a filter)
 SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
 PDF_COURT = "kmc"  # only the KMC has original PDFs
@@ -285,7 +286,9 @@ def analytics(cases, all_years=None):
                   "bars": sorted(((k, label, reasons[k], round(100 * reasons[k] / n_dismissed)) for k, label, _ in DISMISSAL_REASONS if reasons[k]),
                                  key=lambda b: (b[0] == "other", -b[2]))}
     n_judgements = sum(counts.values())
-    judgements = {"total": n_judgements, "bars": [(k, label, counts[k], round(100 * counts[k] / n_judgements)) for k, label in JUDGEMENT_CLASSES if counts[k]],
+    n_read = n_judgements - counts["scanned"]  # a scanned judgement has no text to read, so the shares are of the rest
+    judgements = {"total": n_judgements, "read": n_read,
+                  "bars": [(k, label, counts[k], round(100 * counts[k] / n_read) if k != "scanned" and n_read else None) for k, label in JUDGEMENT_CLASSES if counts[k]],
                   "max": max(counts.values(), default=0)}
     return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years, "judgements": judgements, "dismissals": dismissals, "against": against, "timing": timing, "sides": sides}
 
@@ -299,6 +302,39 @@ def _quartiles(values):
     """(25th, median, 75th percentile) of a list of numbers."""
     q = statistics.quantiles(values, n=4, method="inclusive")
     return q[0], q[1], q[2]
+
+
+# the key outcomes shown as a share of closed cases: (key, tile label, what it comes from)
+ENDED_OUTCOMES = [("allowed", "allowed (in full or in part)", "outcome"), ("dismissed", "dismissed, for any reason", "outcome"),
+                  ("nonpros", "dismissed for non-prosecution", "reason"), ("merits", "dismissed: negligence not proven", "reason"),
+                  ("limitation", "dismissed: time-barred or no jurisdiction", "reason"), ("appeal", "appeals dismissed, order upheld", "reason"),
+                  ("returned", "returned or transferred", "outcome")]
+MIN_REASON_CASES = 3  # a dismissal reason is not shown from fewer cases than this
+
+
+def ended_shares(closed):
+    """How closed cases ended, as a share of all closed cases, for the panel's tiles: allowed, dismissed (any reason),
+    each dismissal reason (non-prosecution, negligence not proven ...), returned. The court's own outcome gives
+    allowed, dismissed and returned, as a share of all closed cases. A dismissal's reason is known only from the
+    judgement PDF, so a reason's share is of the closed cases whose judgement could be read (basis "read", "of" the
+    number of them, "read" in the result), not of all closed cases."""
+    if len(closed) < MIN_TIMING_CASES:
+        return None
+    reasons, read = defaultdict(int), 0
+    for c in closed:
+        j = judgement_of(c["case_key"])
+        if j and j["class"] != "scanned":
+            read += 1
+        if j and j["reason"]:
+            reasons[j["reason"]] += 1
+    tiles = []
+    for key, label, source in ENDED_OUTCOMES:
+        n = sum(c["outcome"] == key for c in closed) if source == "outcome" else reasons[key]
+        of = len(closed) if source == "outcome" else read
+        if n and of >= MIN_TIMING_CASES and (source == "outcome" or n >= MIN_REASON_CASES):
+            pct = 100 * n / of
+            tiles.append({"key": key, "label": label, "n": n, "of": of, "pct": round(pct, 1) if pct < 10 else round(pct), "basis": "closed" if source == "outcome" else "read"})
+    return {"tiles": tiles, "closed": len(closed), "read": read}
 
 
 def case_timing(cases):
@@ -326,7 +362,7 @@ def case_timing(cases):
     for key, label, subset in (("closed", "closed", closed), ("open", "open", [c for c in cases if c["outcome"] == "open"])):
         held = [c["n_held"] for c in subset if c["n_held"]]
         per_case[key] = {"mid": round(statistics.median(held)), "mean": round(statistics.mean(held)), "n": len(held)} if len(held) >= MIN_TIMING_CASES else None
-    return {"groups": groups, "per_case": per_case,
+    return {"groups": groups, "per_case": per_case, "ended": ended_shares(closed),
             "gap_weeks": round(statistics.median(gaps) / 7, 1) if len(gaps) >= MIN_TIMING_CASES else None, "n_gaps": len(gaps),
             "ended_early_pct": round(100 * ended_early / len(closed)) if len(closed) >= MIN_TIMING_CASES else None, "n_closed": len(closed),
             "shown": any(g["months"] or g["hearings"] for g in groups) or any(per_case.values())}
@@ -548,7 +584,7 @@ def signed_in_accounts_only():
 def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
-    return {"selections": SELECTIONS, "selected": selection(), "non_medical_count": hidden,
+    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "non_medical_count": hidden,
             "show_non_medical": show_non_medical(), "can_edit_links": can_manage_links()}
 
 

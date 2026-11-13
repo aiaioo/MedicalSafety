@@ -44,14 +44,16 @@
     {% endfor %}
     {% if t.gap_weeks is not none %}<div class="tile"><span class="tile-n">{{ t.gap_weeks }} wk</span><span class="tile-l">between hearings</span><span class="muted">median &middot; {{ t.n_gaps }} gaps</span></div>{% endif %}
     {% if t.ended_early_pct is not none %}<div class="tile"><span class="tile-n">{{ t.ended_early_pct }}%</span><span class="tile-l">settled or withdrawn</span><span class="muted">of {{ t.n_closed }} closed cases</span></div>{% endif %}
+    {% if t.ended %}{% for e in t.ended.tiles %}<div class="tile"><span class="tile-n">{{ e.pct }}%</span><span class="tile-l">{{ e.label }}</span><span class="muted">{{ e.n }} of {{ e.of }} closed cases{{ ' with a readable judgement' if e.basis == 'read' }}</span></div>{% endfor %}{% endif %}
     </div>
-    <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
+    <p class="muted" style="font-size:.85em">Months run from filing to the last hearing, for consumer cases (the KMC does not record filing dates). Cases still open are not counted, so the real wait for a case filed today is likely longer. {% if t.ended %}Outcome shares are of all {{ t.ended.closed }} closed cases. A dismissal's reason is read from the judgement itself, so its share is of the {{ t.ended.read }} closed cases whose judgement could be read (the rest are scanned or have no judgement yet). {% endif %}Figures are hidden where fewer than 20 cases back them.{% if stats.as_of %} Worked out {{ stats.as_of }}.{% endif %}</p>
   </div>
   {% endif %}
   {% if stats.sides and (stats.sides.rates or stats.sides.lawyers) %}
   {% set sd = stats.sides %}
   <div class="sides">
-    <h3>Patients and hospitals compared <span class="muted">(blue: patient side, orange: hospital side{{ '; ' ~ year if year }})</span></h3>
+    <h3>Lawyers for patients and hospitals compared{% if year %} <span class="muted">({{ year }})</span>{% endif %}</h3>
+    <ul class="legend key" aria-label="Key"><li><i class="seg pat"></i>Patient's side</li><li><i class="seg hosp"></i>Hospital's side</li></ul>
     {% macro pair(title, pv, hv, unit, vmax) %}
     <div class="pairrow"><span class="pairlabel">{{ title }}</span>
       <span class="pairbars">
@@ -77,13 +79,13 @@
   {% if stats.judgements and stats.judgements.total %}
   {% set linked = true %}
   <div class="judgements">
-    <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
+    <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' in ' ~ year if year }}{% if stats.judgements.read is defined %}; {{ stats.judgements.read }} could be read, and the percentages are of those{% endif %}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.judgements.bars %}
     <div class="jrow{{ ' on' if linked and judgement == k }}">
       {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement=k) }}#cases">{% endif %}
       <span class="jlabel">{{ label }}</span>
       <span class="jtrack"><span class="jfill seg {{ k }}" style="width:{{ (100 * n / stats.judgements.max)|round|int }}%"></span></span>
-      <span class="jn">{{ n }}</span>
+      <span class="jn">{{ n }}{% if pct is not none and stats.judgements.read is defined %} <span class="muted">({{ pct }}%)</span>{% endif %}</span>
       {% if linked %}</a>{% endif %}
     </div>
     {% endfor %}
@@ -94,13 +96,13 @@
   {% if stats.dismissals and stats.dismissals.total %}
   {% set linked = true %}
   <div class="judgements">
-    <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements{{ ' in ' ~ year if year }}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
+    <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements read{{ ' in ' ~ year if year }}; percentages are of those{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.dismissals.bars %}
     <div class="jrow{{ ' on' if linked and reason == k }}">
       {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, reason=k) }}#cases">{% endif %}
       <span class="jlabel">{{ label }}</span>
       <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * n / stats.dismissals.max)|round|int }}%"></span></span>
-      <span class="jn">{{ n }}</span>
+      <span class="jn">{{ n }} <span class="muted">({{ pct }}%)</span></span>
       {% if linked %}</a>{% endif %}
     </div>
     {% endfor %}
