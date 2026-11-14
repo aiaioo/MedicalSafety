@@ -1,5 +1,6 @@
 import base64
 import collections
+import hashlib
 import io
 import json
 import os
@@ -3495,6 +3496,16 @@ def api_render(doc_id, page):
         if mode in ("blackouts", "all"):
             annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
         cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str))
+        # The browser may keep this image on its own (the user's) disk, but only revalidates it: access
+        # to the document was checked above on every request, and the ETag covers everything that
+        # changes the picture (uploaded PDFs never change, and annotations drawn are part of the key),
+        # so an unchanged page costs a 304 instead of a render and a download.
+        etag = hashlib.sha1(repr(cache_key).encode()).hexdigest()
+        if etag in request.if_none_match:
+            resp = Response(status=304)
+            resp.set_etag(etag)
+            resp.headers["Cache-Control"] = "private, no-cache"
+            return resp
         png_bytes = _page_png_cache_get(cache_key)
         if png_bytes is None:
             png_bytes = _render_region_png(f, page, dpi / 72, annotations,
@@ -3508,7 +3519,8 @@ def api_render(doc_id, page):
         raise DocumentError("Page out of range", 404)
 
     resp = Response(png_bytes, mimetype="image/png")
-    resp.headers["Cache-Control"] = "no-store"
+    resp.set_etag(etag)
+    resp.headers["Cache-Control"] = "private, no-cache"
     return resp
 
 

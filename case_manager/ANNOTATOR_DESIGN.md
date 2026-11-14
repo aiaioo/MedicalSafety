@@ -41,7 +41,7 @@ the app once resolved.
 |---|---|---|
 | `/annotations?doc=&type=&page=` | GET | Renders `annotations.html`. `page` is clamped into `[1, page_count]` and used as the initial/single page — see § Continuous view for how the client decides how many pages to actually mount. |
 | `/api/doc/<id>/info` | GET | Page count + each page's PDF-point dimensions. Used by the client to pre-size every page's wrapper (from the width/height ratio) before that page's raster has even been requested — see § Continuous view. |
-| `/api/doc/<id>/render/<page>?dpi=` | GET | Rasterizes that page to PNG (`dpi` clamped 50–600, default 150). No caching header (`Cache-Control: no-store`) since annotations aren't baked into this raster — see § Annotation rendering. |
+| `/api/doc/<id>/render/<page>?dpi=` | GET | Rasterizes that page to PNG (`dpi` clamped 50–600, default 150). `Cache-Control: private, no-cache` plus an ETag over (doc, page, dpi, annotations drawn): the browser may keep the image on the user's own disk but revalidates every time (access is re-checked; an unchanged page is a 304 with no render). Never cached by shared caches or stored server-side beyond the small in-memory LRU. |
 | `/api/doc/<id>/annotations` | GET | All pages' annotation lists in one call, `{"<page>": [...]}`. One request instead of one-per-page when mounting many pages at once. |
 | `/api/doc/<id>/annotations/<page>` | GET/POST | Load/save the raw annotation list for one page. |
 | `/api/doc/<id>/snippet/<page>` | POST | Crop a rectangular region (fractional coords) out of the page at high DPI, optionally with the current annotation markup burned in, save it as a PNG + metadata entry. |
