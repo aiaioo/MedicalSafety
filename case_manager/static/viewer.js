@@ -560,7 +560,7 @@
     const imageSettled = (ok) => {
       if (controller.imgState !== "loading") return;
       controller.imgState = ok ? "done" : "idle";
-      if (ok) bgDone.add(pageNum);
+      if (ok) bgMark(pageNum);
       if (controller.blobUrl) {
         URL.revokeObjectURL(controller.blobUrl);
         controller.blobUrl = null;
@@ -1124,6 +1124,17 @@
   // finishes renders the browser has cancelled. Leaving the document (or hiding the tab) stops it.
   const BG_IDLE_MS = 1500;
   const bgDone = new Set(); // pages already fetched (here or by the viewer) or that failed
+  const loadProgress = document.getElementById("loadProgress");
+  const loadProgressBar = document.getElementById("loadProgressBar");
+  const loadProgressText = document.getElementById("loadProgressText");
+  // Shown only while pages are still arriving; hidden once every page has been fetched.
+  function bgMark(p) {
+    bgDone.add(p);
+    const n = bgDone.size;
+    loadProgress.hidden = n >= pageCount;
+    loadProgressBar.value = n / pageCount;
+    loadProgressText.textContent = `Loading ${n}/${pageCount}`;
+  }
   let bgTimer = null;
   let bgAbort = null;
   let bgStopped = false;
@@ -1172,7 +1183,7 @@
     try {
       const res = await fetch(renderUrlBase.replace("__PAGE__", p) + "&dpi=150", { signal: ctrl.signal });
       const blob = res.ok ? await res.blob() : null; // read it all so the browser stores it
-      bgDone.add(p); // also on an error status: don't retry in a loop
+      bgMark(p); // also on an error status: don't retry in a loop
       // If the page is mounted (continuous view) and nothing else has started it, display it now
       // from the fetched bytes, so it is already there when the reader scrolls to it.
       const mc = mounted.get(p);
@@ -1182,7 +1193,7 @@
       }
     } catch (e) {
       if (e.name === "AbortError") return; // activity paused us; the next quiet moment resumes
-      bgDone.add(p);
+      bgMark(p);
     }
     if (bgAbort === ctrl) bgAbort = null;
     bgSchedule();
