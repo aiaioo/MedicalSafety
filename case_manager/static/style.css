@@ -1260,9 +1260,10 @@ label.toggle-label #continuousToggle:focus-visible,
 .splitter-icon { border: none; background: none; cursor: pointer; padding: 3px 4px; border-radius: 3px; color: #5f6368; font-size: 12px; line-height: 1; }
 .splitter-icon:hover { background: #e4e6e8; }
 .splitter-empty { font-size: 12px; color: #8a92a5; }
-.splitter-summary { font-size: 12px; color: #3c4043; border-top: 1px solid #e0e2e8; padding-top: 6px; }
+/* A long list of splits scrolls inside the strip (it shrinks to make room) instead of pushing the Split button below the screen. */
+.splitter-summary { flex: 0 1 auto; min-height: 56px; overflow-y: auto; font-size: 12px; color: #3c4043; border-top: 1px solid #e0e2e8; padding-top: 6px; }
 .splitter-summary-title { font-weight: 600; margin-bottom: 2px; }
-.splitter-foot { margin-top: auto; }
+.splitter-foot { margin-top: auto; flex-shrink: 0; }
 .splitter-split { width: 100%; padding: 8px 10px; border: 1px solid #2266dd; border-radius: 5px; background: #2266dd; color: white; font-weight: 600; cursor: pointer; }
 .splitter-split:disabled { background: #e4e6e8; border-color: #cfd4e0; color: #9aa0ad; cursor: default; }
 .splitter-confirm { padding: 8px; border: 1px solid #c0392b; border-radius: 5px; background: #fdf1ef; }
