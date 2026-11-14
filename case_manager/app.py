@@ -3483,7 +3483,7 @@ def _page_png_cache_forget(doc_id):
 # Browsers may reuse a page image for this long without asking the server at all; after that they
 # revalidate with the ETag (a 304 when unchanged). The cost: losing access to a document, or a guest
 # view's blackouts changing, takes up to this long to show in a browser that already has the page.
-_RENDER_MAX_AGE = 600
+_RENDER_MAX_AGE = 180 * 24 * 3600  # six months
 _RENDER_CACHE_CONTROL = f"private, max-age={_RENDER_MAX_AGE}"
 
 

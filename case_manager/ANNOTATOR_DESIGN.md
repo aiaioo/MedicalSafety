@@ -283,14 +283,14 @@ for the image's `load` event, exactly as before.
 Page rasters are the slow part of opening a document, so three layers keep them fast. All three
 are deliberately conservative about access control and server load.
 
-**1. The browser may cache page images on the user's disk, for ten minutes without asking.**
-`/api/doc/<id>/render/<page>` sends `Cache-Control: private, max-age=600` (`_RENDER_MAX_AGE`)
+**1. The browser may cache page images on the user's disk, for six months without asking.**
+`/api/doc/<id>/render/<page>` sends `Cache-Control: private, max-age=15552000` (`_RENDER_MAX_AGE`)
 plus an `ETag` (sha1 of `(doc_id, page, dpi, annotations drawn)`). It used to send `no-store`.
-`private` keeps shared caches out. For ten minutes Chrome reuses a page it has with no request
+`private` keeps shared caches out. For six months Chrome reuses a page it has with no request
 at all; after that it revalidates, access to the document is re-checked, and an unchanged page
 costs a `304` with no render and no download. The ETag covers everything that changes the
 picture: uploaded PDFs never change, and the annotations drawn into the raster are part of the
-key. Cost of the `max-age`: within the ten minutes, losing access to a document, or a guest
+key. Cost of the `max-age`: within the six months, losing access to a document, or a guest
 view's blackouts changing, is not noticed by a browser that already has the page. (The owner's
 own view bakes no annotations into the raster, so annotating never makes a cached page stale.)
 Nothing is stored server-side beyond the small in-memory render LRU (`_page_png_cache`, 48 MB).
