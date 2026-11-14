@@ -278,6 +278,62 @@ points) â€” available immediately at mount time regardless of image load state â
 `canvas.width`/`height` (the actual bitmap resolution used by drawing/hit-testing) waits
 for the image's `load` event, exactly as before.
 
+### Page-image loading and caching
+
+Page rasters are the slow part of opening a document, so three layers keep them fast. All three
+are deliberately conservative about access control and server load.
+
+**1. The browser may cache page images on the user's disk, but always revalidates.**
+`/api/doc/<id>/render/<page>` sends `Cache-Control: private, no-cache` plus an `ETag`
+(sha1 of `(doc_id, page, dpi, annotations drawn)`). It used to send `no-store`. `private`
+keeps shared caches out; `no-cache` makes Chrome ask the server on every use, so access to the
+document is re-checked each time (a user who loses access gets nothing) and an unchanged page
+costs a `304` with no render and no download. The ETag covers everything that changes the
+picture: uploaded PDFs never change, and the annotations drawn into the raster are part of the
+key, so editing an annotation changes the ETag. Nothing new is stored server-side; the small
+in-memory render LRU (`_page_png_cache`, 48 MB) is unchanged. A short `max-age` would skip the
+revalidation round trip, but was left out on purpose: access changes and fresh annotations
+would then take effect only after it expired.
+
+**2. Foreground loading: only pages near the viewport, through a small queue.** An
+`IntersectionObserver` (`imageObserver`, 100% root margin) asks for a page's image only when it
+is within about two screens; `pumpImages()` runs at most `MAX_IMAGES_IN_FLIGHT` (3) requests,
+always starting the pending page nearest the centre of the viewer. Leaving the margin cancels a
+still-loading image (`removeAttribute("src")`). This exists because the server renders one page
+at a time and *finishes renders the browser has cancelled*, so a request per page scrolled past
+used to make the page you stopped on wait behind all of them.
+
+**3. Background loading: the rest of the document, when the reader is idle.**
+Implemented in `viewer.js` beside `pumpImages()` (`bgSchedule` / `bgStep` / `bgPause`).
+
+- After `BG_IDLE_MS` (1.5 s) with no activity, it fetches the next not-yet-loaded page with
+  `fetch()` (same URL as the viewer's own `<img>`, `dpi=150`) and reads the body, so Chrome
+  stores it in its HTTP cache. When the page is later reached the `<img>` request is a
+  revalidation (`304`) and appears at once.
+- **One request at a time**, nearest page to `currentPage` first, preferring pages ahead of
+  the reader to those behind. All pages of the document are loaded, in both single-page and
+  continuous mode (it works from URLs, not from mounted page controllers).
+- **The viewer always has priority.** Scroll (on the viewer container), wheel, pointerdown and
+  keydown abort the request in flight (`AbortController`) and restart the idle timer. It also
+  does not run while the viewer itself has images pending or in flight; `pumpImages()`
+  reschedules it when the queue empties. Pages the viewer already loaded (`bgDone`) and pages
+  that failed (no retry loop) are skipped.
+- **It stops when the user leaves.** `pagehide` sets `bgStopped` and aborts; a hidden tab
+  (`visibilitychange`) pauses it and a visible one resumes it. Navigating to another document
+  is a full page load (see "No SPA routing"), so document 1's loop cannot outlive its page.
+
+Why this is JavaScript and not an HTML/CSS attribute: `loading="lazy"` is the opposite of
+background loading; `fetchpriority="low"` and `<link rel="prefetch">` only reorder requests
+the browser already has, can't wait for the reader to stop scrolling, and can't be cancelled
+when the reader jumps. And because the server serialises renders and completes cancelled ones,
+low browser-side priority would not stop background requests from queueing in front of the page
+the reader jumped to; only keeping one in flight and aborting it on activity does.
+
+Known limits: an aborted background request's render still finishes on the server, so a jump
+made just as one starts can wait for that single render. The server renders every page of every
+document that is opened and left idle, which was accepted as the right trade for a small number
+of users on a single CPU. Not verified in a browser at the time of writing.
+
 ## Server-side
 
 ### Annotation validation (`sanitize_annotations`)
