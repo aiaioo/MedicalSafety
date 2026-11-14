@@ -1116,13 +1116,13 @@
   }
 
   // ---- background loading of the pages nobody has asked for yet ----
-  // Once the reader has been idle for a moment, fetch the document's remaining page images one at
-  // a time (into the browser's HTTP cache, so the page shows at once when it is reached). Any
-  // activity -- scrolling, a click, a key, a page the viewer itself is loading -- aborts the
-  // request in flight and waits for another quiet moment, so the page being looked at always goes
-  // first. Only one request runs at a time because the server renders one page at a time and
-  // finishes renders the browser has cancelled. Leaving the document (or hiding the tab) stops it.
-  const BG_IDLE_MS = 1500;
+  // Fetch the document's remaining page images one at a time (into the browser's HTTP cache, and
+  // onto the page when it is mounted), starting as soon as the viewer has nothing of its own to
+  // load. Scrolling does not interrupt it: it yields only when the viewer wants a page itself (one
+  // pending or loading), so the page being looked at always goes first, and carries on once the
+  // viewer is idle again. Only one request runs at a time because the server renders one page at a
+  // time and finishes renders the browser has cancelled. Leaving the document (or hiding the tab)
+  // stops it.
   const bgDone = new Set(); // pages already fetched (here or by the viewer) or that failed
   const loadProgress = document.getElementById("loadProgress");
   const loadProgressBar = document.getElementById("loadProgressBar");
@@ -1167,15 +1167,14 @@
       bgAbort = null;
     }
   }
-  let lastActivityAt = performance.now(); // opening the document counts as activity
-  // Wait for a quiet moment (BG_IDLE_MS since the last activity) before starting; once started,
-  // the next page follows straight after the previous one, as long as it stays quiet. (Waiting
-  // the full idle time between every page capped loading at one page per BG_IDLE_MS.)
-  function bgSchedule() {
+  // After the viewer has been loading pages of its own (or on opening, or on the tab coming back)
+  // background loading waits BG_START_MS, so it doesn't start in the middle of the viewer's work;
+  // between one background page and the next there is no wait.
+  const BG_START_MS = 500;
+  function bgSchedule(delay = BG_START_MS) {
     if (bgStopped || document.hidden) return;
     clearTimeout(bgTimer);
-    const quietFor = performance.now() - lastActivityAt;
-    bgTimer = setTimeout(bgStep, Math.max(0, BG_IDLE_MS - quietFor));
+    bgTimer = setTimeout(bgStep, delay);
   }
   async function bgStep() {
     bgTimer = null;
@@ -1201,25 +1200,9 @@
       bgMark(p);
     }
     if (bgAbort === ctrl) bgAbort = null;
-    bgSchedule();
+    bgSchedule(0);
   }
-  for (const [target, evt] of [
-    [container, "scroll"],
-    [container, "wheel"],
-    [window, "pointerdown"],
-    [window, "keydown"],
-  ]) {
-    target.addEventListener(
-      evt,
-      () => {
-        lastActivityAt = performance.now();
-        if (evt === "scroll") lastScrollAt = performance.now();
-        bgPause();
-        bgSchedule();
-      },
-      { passive: true }
-    );
-  }
+  container.addEventListener("scroll", () => (lastScrollAt = performance.now()), { passive: true });
   document.addEventListener("visibilitychange", () => (document.hidden ? bgPause() : bgSchedule()));
   window.addEventListener("pagehide", () => {
     bgStopped = true;

@@ -303,21 +303,25 @@ still-loading image (`removeAttribute("src")`). This exists because the server r
 at a time and *finishes renders the browser has cancelled*, so a request per page scrolled past
 used to make the page you stopped on wait behind all of them.
 
-**3. Background loading: the rest of the document, when the reader is idle.**
+**3. Background loading: the rest of the document, whenever the viewer has nothing of its own to load.**
 Implemented in `viewer.js` beside `pumpImages()` (`bgSchedule` / `bgStep` / `bgPause`).
 
-- After `BG_IDLE_MS` (1.5 s) with no activity, it fetches the next not-yet-loaded page with
-  `fetch()` (same URL as the viewer's own `<img>`, `dpi=150`) and reads the body, so Chrome
-  stores it in its HTTP cache. When the page is later reached the `<img>` request is a
-  revalidation (`304`) and appears at once.
-- **One request at a time**, nearest page to `currentPage` first, preferring pages ahead of
-  the reader to those behind. All pages of the document are loaded, in both single-page and
-  continuous mode (it works from URLs, not from mounted page controllers).
-- **The viewer always has priority.** Scroll (on the viewer container), wheel, pointerdown and
-  keydown abort the request in flight (`AbortController`) and restart the idle timer. It also
-  does not run while the viewer itself has images pending or in flight; `pumpImages()`
-  reschedules it when the queue empties. Pages the viewer already loaded (`bgDone`) and pages
-  that failed (no retry loop) are skipped.
+- It fetches the next not-yet-loaded page with `fetch()` (same URL as the viewer's own `<img>`,
+  `dpi=150`) and reads the body, so Chrome stores it in its HTTP cache. In continuous view, if
+  that page is mounted and nothing else has started it, the bytes are also shown on the page at
+  once (`startImageFromBlob`, a blob URL, no second request), so it is already drawn when the
+  reader scrolls there. In single-page view the other pages aren't mounted, so they are only cached.
+- **One request at a time**, the next one starting straight after the previous finishes (no wait
+  between pages; only 0.5 s, `BG_START_MS`, after opening the document or after the viewer has been
+  loading a page of its own, so it runs as fast as the server answers), nearest page to `currentPage`
+  first, preferring pages ahead of the reader. All pages are loaded, in both view modes.
+- **Scrolling does not interrupt it.** It yields only when the viewer wants a page itself (one
+  pending or loading in `pumpImages`): `bgStep` then does nothing, and `pumpImages()` restarts it
+  when the viewer is idle again. So if you scroll only over pages already loaded, it carries on;
+  scrolling to an unloaded page puts that page first. A request already in flight is never aborted
+  (the server finishes the render anyway), so at most one render is ahead of the page you want.
+  Pages the viewer already loaded (`bgDone`) and pages that failed (no retry loop) are skipped.
+- A progress bar next to the mode hint shows `Loading n/N` until every page is in (`bgMark`).
 - **It stops when the user leaves.** `pagehide` sets `bgStopped` and aborts; a hidden tab
   (`visibilitychange`) pauses it and a visible one resumes it. Navigating to another document
   is a full page load (see "No SPA routing"), so document 1's loop cannot outlive its page.
