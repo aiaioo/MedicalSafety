@@ -102,10 +102,14 @@
     const cursor = newMode === null ? "default" : "crosshair";
     for (const controller of mounted.values()) {
       controller.canvas.style.cursor = cursor;
-      controller.liveRect = null;
-      controller.currentStroke = null;
-      controller.drawing = false;
-      controller.redraw();
+      // Only a page with a shape half-drawn needs resetting and repainting; redrawing every page
+      // made the tool buttons take a second to respond in a long document.
+      if (controller.liveRect || controller.currentStroke || controller.drawing) {
+        controller.liveRect = null;
+        controller.currentStroke = null;
+        controller.drawing = false;
+        controller.redraw();
+      }
     }
     modeHint.textContent = HINTS[newMode] || "";
   }
@@ -478,7 +482,11 @@
     };
 
     function redraw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // A page with nothing drawn on it (and nothing to wipe) is left alone: clearing a page-sized
+      // canvas costs real time and memory, and a 500-page document has 500 of them.
+      const ink = state.annotations.length > 0 || !!controller.liveRect || !!controller.currentStroke;
+      if (ink || controller.inked) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      controller.inked = ink;
       for (const a of state.annotations) {
         if (a.kind === "rect") drawRect(ctx, canvas, a);
         else if (a.kind === "blackout") drawBlackout(ctx, canvas, a);
