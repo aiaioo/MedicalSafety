@@ -1167,14 +1167,10 @@
       bgAbort = null;
     }
   }
-  // After the viewer has been loading pages of its own (or on opening, or on the tab coming back)
-  // background loading waits BG_START_MS, so it doesn't start in the middle of the viewer's work;
-  // between one background page and the next there is no wait.
-  const BG_START_MS = 500;
-  function bgSchedule(delay = BG_START_MS) {
+  function bgSchedule() {
     if (bgStopped || document.hidden) return;
     clearTimeout(bgTimer);
-    bgTimer = setTimeout(bgStep, delay);
+    bgTimer = setTimeout(bgStep, 0);
   }
   async function bgStep() {
     bgTimer = null;
@@ -1200,7 +1196,7 @@
       bgMark(p);
     }
     if (bgAbort === ctrl) bgAbort = null;
-    bgSchedule(0);
+    bgSchedule();
   }
   container.addEventListener("scroll", () => (lastScrollAt = performance.now()), { passive: true });
   document.addEventListener("visibilitychange", () => (document.hidden ? bgPause() : bgSchedule()));

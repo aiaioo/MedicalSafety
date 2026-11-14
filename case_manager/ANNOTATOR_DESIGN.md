@@ -311,9 +311,8 @@ Implemented in `viewer.js` beside `pumpImages()` (`bgSchedule` / `bgStep` / `bgP
   that page is mounted and nothing else has started it, the bytes are also shown on the page at
   once (`startImageFromBlob`, a blob URL, no second request), so it is already drawn when the
   reader scrolls there. In single-page view the other pages aren't mounted, so they are only cached.
-- **One request at a time**, the next one starting straight after the previous finishes (no wait
-  between pages; only 0.5 s, `BG_START_MS`, after opening the document or after the viewer has been
-  loading a page of its own, so it runs as fast as the server answers), nearest page to `currentPage`
+- **One request at a time**, the next one starting straight after the previous finishes (no wait at
+  all, so it runs as fast as the server answers), nearest page to `currentPage`
   first, preferring pages ahead of the reader. All pages are loaded, in both view modes.
 - **Scrolling does not interrupt it.** It yields only when the viewer wants a page itself (one
   pending or loading in `pumpImages`): `bgStep` then does nothing, and `pumpImages()` restarts it
