@@ -1412,16 +1412,16 @@
     if (!controller || !controller.state.annotations.length) return;
     if (!clearBtn.classList.contains("confirming")) {
       clearBtn.classList.add("confirming");
-      clearBtn.textContent = "Confirm clear?";
+      clearBtn.querySelector(".lbl").textContent = "Confirm clear?";
       clearBtn._confirmTimer = setTimeout(() => {
         clearBtn.classList.remove("confirming");
-        clearBtn.textContent = "Clear";
+        clearBtn.querySelector(".lbl").textContent = "Clear Page";
       }, 3000);
       return;
     }
     clearTimeout(clearBtn._confirmTimer);
     clearBtn.classList.remove("confirming");
-    clearBtn.textContent = "Clear";
+    clearBtn.querySelector(".lbl").textContent = "Clear Page";
     await controller.clearAll();
   });
 
