@@ -535,6 +535,12 @@
       controller.imgState = "loading";
       img.src = imgUrl;
     };
+    // Show an image the background loader has already fetched, without a second request.
+    controller.startImageFromBlob = (blob) => {
+      controller.imgState = "loading";
+      controller.blobUrl = URL.createObjectURL(blob);
+      img.src = controller.blobUrl;
+    };
     controller.wantImage = (want) => {
       if (want && controller.imgState === "idle") {
         controller.imgState = "pending";
@@ -555,6 +561,10 @@
       if (controller.imgState !== "loading") return;
       controller.imgState = ok ? "done" : "idle";
       if (ok) bgDone.add(pageNum);
+      if (controller.blobUrl) {
+        URL.revokeObjectURL(controller.blobUrl);
+        controller.blobUrl = null;
+      }
       imagesInFlight = Math.max(0, imagesInFlight - 1); // a remount may have reset the count already
       pumpImages();
     };
@@ -1161,8 +1171,15 @@
     bgAbort = ctrl;
     try {
       const res = await fetch(renderUrlBase.replace("__PAGE__", p) + "&dpi=150", { signal: ctrl.signal });
-      if (res.ok) await res.blob(); // read it all so the browser stores it
+      const blob = res.ok ? await res.blob() : null; // read it all so the browser stores it
       bgDone.add(p); // also on an error status: don't retry in a loop
+      // If the page is mounted (continuous view) and nothing else has started it, display it now
+      // from the fetched bytes, so it is already there when the reader scrolls to it.
+      const mc = mounted.get(p);
+      if (blob && mc && mc.imgState === "idle" && mc.startImageFromBlob) {
+        imagesInFlight++;
+        mc.startImageFromBlob(blob);
+      }
     } catch (e) {
       if (e.name === "AbortError") return; // activity paused us; the next quiet moment resumes
       bgDone.add(p);
