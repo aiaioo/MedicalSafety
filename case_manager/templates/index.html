@@ -30,27 +30,12 @@
 
 <div class="container">
 
-  <div id="advanced-sections" class="collapsible{% if g.user.show_advanced %} open{% endif %}"{% if not g.user.show_advanced %} inert{% endif %}>
-  <div class="collapsible-inner">
-  <div class="advanced-box">
-
-  <h1>Cases</h1>
+  <h1>Documents</h1>
 
   <section class="index-section">
-    <p class="empty">Track cases by court, case identifier and hearings, grouped under causes.</p>
-    <p><a class="btn" href="{{ url_for('cases_view') }}">Open cases workspace</a></p>
+    <p class="empty">Upload document PDFs or Word files and mark them up with boxes, freehand and snippets.</p>
+    <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
   </section>
-
-  <h1>Allegations</h1>
-
-  <section class="index-section">
-    <p class="empty">Track the main allegations and the inculpatory/exculpatory evidence for each.</p>
-    <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
-  </section>
-
-  </div>
-  </div>
-  </div>
 
   <h1>Reports</h1>
 
@@ -59,12 +44,27 @@
     <p><a class="btn" href="{{ url_for('documents_view') }}">Open reports workspace</a></p>
   </section>
 
-  <h1>Documents</h1>
+  <div id="advanced-sections" class="collapsible{% if g.user.show_advanced %} open{% endif %}"{% if not g.user.show_advanced %} inert{% endif %}>
+  <div class="collapsible-inner">
+  <div class="advanced-box">
+
+  <h1>Allegations</h1>
 
   <section class="index-section">
-    <p class="empty">Upload document PDFs or Word files and mark them up with boxes, freehand and snippets.</p>
-    <p><a class="btn" href="{{ url_for('page_view') }}">Open annotations workspace</a></p>
+    <p class="empty">Track the main allegations and the inculpatory/exculpatory evidence for each.</p>
+    <p><a class="btn" href="{{ url_for('allegations_view') }}">Open allegations workspace</a></p>
   </section>
+
+  <h1>Cases</h1>
+
+  <section class="index-section">
+    <p class="empty">Track cases by court, case identifier and hearings, grouped under causes.</p>
+    <p><a class="btn" href="{{ url_for('cases_view') }}">Open cases workspace</a></p>
+  </section>
+
+  </div>
+  </div>
+  </div>
 
   <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
 
