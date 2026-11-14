@@ -1413,6 +1413,11 @@ def annexure_ref_data(report_id):
         info = meta[d["id"]] = {"label": label, "order": numbered - 1, "numbered": number_docs, "pages": {}}
         for i, p in enumerate(pages):
             number = annexure_page_range(shown + i, shown + i, pn) if pn["position"] != "none" else "-"
+            if number == "-" and pn["position"] != "none" and pn.get("alternate") and (shown + i) % 2 == 1 and i > 0:
+                # Only the front of each sheet is numbered: this page is the back of the previous one.
+                front = annexure_page_range(shown + i - 1, shown + i - 1, pn)
+                if front != "-":
+                    number = f"{front} verso"
             info["pages"].setdefault(p, {"pos": shown + i, "number": number})
             texts.setdefault(p, label if number == "-" else f"{label}, page {number}")
             positions.setdefault((d["id"], p), shown + i)
@@ -1480,7 +1485,10 @@ def group_ref_pieces(entries, meta):
         for page, info in pages:
             if info["number"] == "-":
                 continue
-            if ranges and info["pos"] == ranges[-1][3] + 1:
+            if info["number"].endswith(" verso"):  # "6 verso" stands alone, never inside a range like "5-6 verso"
+                ranges.append([page, info["number"], info["number"], None])
+                continue
+            if ranges and ranges[-1][3] is not None and info["pos"] == ranges[-1][3] + 1:
                 ranges[-1][2], ranges[-1][3] = info["number"], info["pos"]
             else:
                 ranges.append([page, info["number"], info["number"], info["pos"]])
