@@ -55,6 +55,9 @@ a.tag:hover { background: #d7deec; }
   padding: 8px 16px; background: white; border-bottom: 1px solid #e0e2e8; flex-shrink: 0;
 }
 .mode-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* Inside the group the gap is 4px, not the toolbar's 10px: widen the bar's margin
+   so it has the same 12px each side as the bars between toolbar groups. */
+.mode-group .toolbar-sep { margin: 0 8px; }
 .mode-btn {
   border: 1px solid #cfd4e0; background: white; padding: 6px 12px; border-radius: 4px;
   cursor: pointer; font-size: 13px;
