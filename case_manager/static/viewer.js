@@ -99,7 +99,7 @@
     document.querySelectorAll(".mode-btn").forEach((b) => {
       b.classList.toggle("active", b.dataset.mode === (newMode === null ? "select" : newMode));
     });
-    const cursor = newMode === null ? "default" : "crosshair";
+    const cursor = newMode === null ? "pointer" : "crosshair";
     for (const controller of mounted.values()) {
       controller.canvas.style.cursor = cursor;
       controller.liveRect = null;
@@ -455,7 +455,7 @@
       e.stopPropagation();
       deleteSelected();
     });
-    canvas.style.cursor = mode === null ? "default" : "crosshair";
+    canvas.style.cursor = mode === null ? "pointer" : "crosshair";
 
     wrap.appendChild(label);
     wrap.appendChild(img);
@@ -801,7 +801,7 @@
           canvas.style.cursor =
             a && a.kind === "text"
               ? textEdgeCursor(textEdgeHit(canvas, a, x * canvas.width, y * canvas.height))
-              : idx >= 0 ? "pointer" : "default";
+              : "pointer";
         }
         return;
       }
