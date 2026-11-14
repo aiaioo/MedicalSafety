@@ -183,7 +183,16 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   newDocBtn.addEventListener("click", () => {
     newDocName.value = "";
     newDocError.style.display = "none";
-    newDocSource.value = sourceSelect && sourceSelect.value ? sourceSelect.value : "";
+    // Default to the last source document viewed, else the report's own.
+    newDocSource.value = "";
+    try {
+      const last = localStorage.getItem("lastSourceUrl");
+      if (last) {
+        const q = new URL(last, location.origin).searchParams;
+        if (q.get("doc")) newDocSource.value = `${q.get("doc")}|${q.get("type") || "pdf"}`;
+      }
+    } catch (e) {}
+    if (!newDocSource.value && sourceSelect && sourceSelect.value) newDocSource.value = sourceSelect.value;
     openModal(newDocModal);
     setTimeout(() => newDocName.focus(), 0);
   });

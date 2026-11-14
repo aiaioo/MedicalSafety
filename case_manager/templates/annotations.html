@@ -207,6 +207,13 @@ try { localStorage.setItem("lastSourceUrl", location.pathname + location.search)
     a.classList.remove("disabled");
     a.removeAttribute("aria-disabled");
     a.title = "Back to the last viewed report";
+  } else if (a) {
+    // No report viewed yet: offer "New report..." for this document instead.
+    a.innerHTML = "&laquo; Create report";
+    a.title = "Create a new report";
+    a.href = {{ url_for('documents_view')|tojson }}{% if doc_id %} + "?source=" + encodeURIComponent({{ doc_id|tojson }}) + "&type=" + encodeURIComponent({{ doc_type|tojson }}){% endif %};
+    a.classList.remove("disabled");
+    a.removeAttribute("aria-disabled");
   }
 })();
 </script>
