@@ -555,6 +555,7 @@
     const imageSettled = (ok) => {
       if (controller.imgState !== "loading") return;
       controller.imgState = ok ? "done" : "idle";
+      if (ok) bgDone.add(pageNum);
       imagesInFlight--;
       pumpImages();
     };
@@ -1092,7 +1093,81 @@
       imagesInFlight++;
       best.startImage();
     }
+    bgSchedule();
   }
+
+  // ---- background loading of the pages nobody has asked for yet ----
+  // Once the reader has been idle for a moment, fetch the document's remaining page images one at
+  // a time (into the browser's HTTP cache, so the page shows at once when it is reached). Any
+  // activity -- scrolling, a click, a key, a page the viewer itself is loading -- aborts the
+  // request in flight and waits for another quiet moment, so the page being looked at always goes
+  // first. Only one request runs at a time because the server renders one page at a time and
+  // finishes renders the browser has cancelled. Leaving the document (or hiding the tab) stops it.
+  const BG_IDLE_MS = 1500;
+  const bgDone = new Set(); // pages already fetched (here or by the viewer) or that failed
+  let bgTimer = null;
+  let bgAbort = null;
+  let bgStopped = false;
+  function bgNextPage() {
+    let best = null,
+      bestScore = Infinity;
+    for (let p = 1; p <= pageCount; p++) {
+      if (bgDone.has(p)) continue;
+      const mc = mounted.get(p);
+      if (mc && mc.imgState !== "idle") continue; // the viewer has it, or is getting it
+      const score = Math.abs(p - currentPage) + (p < currentPage ? 0.5 : 0); // nearest first, ahead of behind
+      if (score < bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    return best;
+  }
+  function bgPause() {
+    clearTimeout(bgTimer);
+    bgTimer = null;
+    if (bgAbort) {
+      bgAbort.abort();
+      bgAbort = null;
+    }
+  }
+  function bgSchedule() {
+    if (bgStopped || document.hidden) return;
+    clearTimeout(bgTimer);
+    bgTimer = setTimeout(bgStep, BG_IDLE_MS);
+  }
+  async function bgStep() {
+    bgTimer = null;
+    if (bgStopped || document.hidden || bgAbort) return;
+    if (imagesInFlight || pendingImages.size) return; // the viewer is busy; pumpImages reschedules when it is done
+    const p = bgNextPage();
+    if (p === null) return;
+    const ctrl = new AbortController();
+    bgAbort = ctrl;
+    try {
+      const res = await fetch(renderUrlBase.replace("__PAGE__", p) + "&dpi=150", { signal: ctrl.signal });
+      if (res.ok) await res.blob(); // read it all so the browser stores it
+      bgDone.add(p); // also on an error status: don't retry in a loop
+    } catch (e) {
+      if (e.name === "AbortError") return; // activity paused us; the next quiet moment resumes
+      bgDone.add(p);
+    }
+    if (bgAbort === ctrl) bgAbort = null;
+    bgSchedule();
+  }
+  for (const [target, evt] of [
+    [container, "scroll"],
+    [container, "wheel"],
+    [window, "pointerdown"],
+    [window, "keydown"],
+  ]) {
+    target.addEventListener(evt, () => { bgPause(); bgSchedule(); }, { passive: true });
+  }
+  document.addEventListener("visibilitychange", () => (document.hidden ? bgPause() : bgSchedule()));
+  window.addEventListener("pagehide", () => {
+    bgStopped = true;
+    bgPause();
+  });
 
   const imageObserver = new IntersectionObserver(
     (entries) => {
