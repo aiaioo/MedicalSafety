@@ -366,3 +366,36 @@ Download annotated PDF → GET /api/doc/<id>/download
                         → for each page: sanitize_annotations(stored) → draw_annotations_on_page (in-memory)
                         → d.tobytes() → application/pdf response (source file on disk never modified)
 ```
+
+## Splitting a document (File > Split document...)
+
+`static/splitter.js` draws a narrow strip down the left of the page (fixed, in front of the document and the
+snippets panel; open state is remembered in `localStorage` until its x is clicked). Each page number in it is the
+first page of a new document; page 1 always starts the first. Numbers can be added, edited, removed, dragged to
+reorder, and clicked to go to that page (`window.AnnotatorHooks.goToPage` in `viewer.js`, which works in both
+continuous and page-wise mode). The Split button turns into a red confirmation panel, then the job is started
+with `POST /api/doc/<id>/split` and followed by polling `GET` on the same URL. Only the document's owner can split.
+
+The job (`splitter.py`, journalled in `document_splits`, migration 051) is crash-recoverable:
+
+1. `begin_split`: one transaction writes the plan (parts, their new ids and titles "<title> split N", and every
+   snippet's move) and sets `documents.splitting`. That flag is the lock: annotation, snippet, title and delete
+   writes check it inside their own transaction (`storage._require_unlocked`, a `FOR SHARE` row lock), so none
+   can slip in after the split starts. The browser also disables the editing controls.
+2. Files: each part is made by opening the source (decrypting lazily), deleting every other page and saving as a
+   stream into encrypted storage (`pdf_stream.py`), so memory stays flat (about 60 MB for a 225 MB PDF).
+   Snippet images are copied to their new names. Every write is atomic and skipped if already done.
+3. `commit_split`: one transaction creates the new documents (same owner, sharing, causes and cases) and moves
+   annotations (page renumbered), snippets (same ids, new page and file name), report bodies (every
+   `/media/snippets/<doc>/...` address), report source documents, annexure entries (all pages / snippet pages /
+   custom range mapped to the parts they reach) and hearing document links.
+4. Old snippet image files are deleted, then the job is `done`.
+
+Recovery: a job left `building` or `committed` is restarted by `splitter.resume_unfinished()`, on the first
+request after the encryption key is entered (the key is only in memory, so it cannot run at start-up). A failure
+before the commit removes the new files, unlocks the document and marks the job `cancelled`.
+
+The original document is kept (without its annotations/snippets) and can be deleted. The finished job also maps
+old addresses to new ones: the media route follows it, and `save_report` rewrites old addresses, so a report that
+was open in an editor during the split still ends up pointing at the new parts. Secret share keys are not copied
+to the parts. PDF bookmarks, named destinations, form fields and internal links are not carried into the parts.

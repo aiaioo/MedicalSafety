@@ -47,6 +47,7 @@ import encryptor
 import psycopg2
 import psycopg2.errors
 import psycopg2.extras
+import split_plan
 from psycopg2.pool import ThreadedConnectionPool
 
 from db.storage_backend import (
@@ -106,6 +107,22 @@ class _Cursor:
 
 def _cursor() -> _Cursor:
     return _Cursor()
+
+
+class DocumentLocked(Exception):
+    """A change refused because the document is being split into smaller ones (see split_document below);
+    the message says so."""
+
+
+def _require_unlocked(cur, document_id: str) -> None:
+    """Raises DocumentLocked if the document is being split. Takes a shared lock on the document's row for the
+    rest of the transaction: the job that starts a split updates that row, so it waits for changes already in
+    flight, and any change that starts after it sees the flag. A change therefore can't slip in once the split
+    has begun."""
+    cur.execute("SELECT splitting FROM documents WHERE id = %s FOR SHARE", (document_id,))
+    row = cur.fetchone()
+    if row is not None and row["splitting"]:
+        raise DocumentLocked("This document is being split into smaller documents, so it can't be changed right now.")
 
 
 class DeleteBlocked(Exception):
@@ -259,6 +276,7 @@ def get_document_title(document_id: str) -> str:
 
 def set_document_title(document_id: str, title: str) -> None:
     with _cursor() as cur:
+        _require_unlocked(cur, document_id)
         cur.execute("UPDATE documents SET title = %s WHERE id = %s", (_enc_text(title), document_id))
 
 
@@ -271,6 +289,7 @@ def get_document_description(document_id: str) -> str:
 
 def set_document_description(document_id: str, description: str) -> None:
     with _cursor() as cur:
+        _require_unlocked(cur, document_id)
         cur.execute("UPDATE documents SET description = %s WHERE id = %s", (_enc_text(description), document_id))
 
 
@@ -332,6 +351,8 @@ def delete_document(document_id: str) -> None:
     with _cursor() as cur:
         if not _lock(cur, "documents", document_id):
             return
+        _refuse_if_any(cur, "SELECT 1 FROM documents WHERE id = %s AND splitting", (document_id,),
+                       "Cannot delete a document while it is being split.")
         _refuse_if_any(cur, "SELECT 1 FROM document_annotations WHERE document_id = %s LIMIT 1",
                        (document_id,), "Cannot delete a document that has annotations. Remove them first.")
         _refuse_if_any(cur, "SELECT 1 FROM snippets WHERE document_id = %s LIMIT 1", (document_id,),
@@ -408,6 +429,7 @@ def get_page_annotations(document_id: str, page: int) -> list:
 
 def set_page_annotations(document_id: str, page: int, annotations: list) -> None:
     with _cursor() as cur:
+        _require_unlocked(cur, document_id)
         if annotations:
             cur.execute(
                 """
@@ -464,21 +486,30 @@ def create_snippet(document_id: str, page: int, rect: dict, annotated: bool, png
         raise StorageError(f"No document with id {document_id!r}")
     doc_type, owner = location
 
+    with _cursor() as cur:
+        _require_unlocked(cur, document_id)  # before the image is written, so a refusal leaves nothing behind
+
     snippet_id = uuid.uuid4().hex[:12]
     filename = f"p{page}_{snippet_id}.png"
-    get_storage_backend().write_bytes(snippet_storage_key(document_id, doc_type, filename, owner), png_bytes)
+    key = snippet_storage_key(document_id, doc_type, filename, owner)
+    get_storage_backend().write_bytes(key, png_bytes)
 
     created_at = datetime.now(timezone.utc).isoformat()
-    with _cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO snippets (id, document_id, page_number, filename, rect_x, rect_y, rect_w, rect_h,
-                                   annotated, created_at, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (snippet_id, document_id, page, filename, rect["x"], rect["y"], rect["w"], rect["h"],
-             annotated, created_at, created_by),
-        )
+    try:
+        with _cursor() as cur:
+            _require_unlocked(cur, document_id)  # a split may have started while the image was being written
+            cur.execute(
+                """
+                INSERT INTO snippets (id, document_id, page_number, filename, rect_x, rect_y, rect_w, rect_h,
+                                       annotated, created_at, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (snippet_id, document_id, page, filename, rect["x"], rect["y"], rect["w"], rect["h"],
+                 annotated, created_at, created_by),
+            )
+    except BaseException:
+        get_storage_backend().delete(key)
+        raise
     return {"id": snippet_id, "page": page, "filename": filename, "rect": rect, "annotated": annotated,
             "created_at": created_at}
 
@@ -499,6 +530,7 @@ def delete_snippet(document_id: str, snippet_id: str) -> bool:
     """Refused while a report's content embeds the snippet's image (reports
     reference it by URL; save_report mirrors those URLs into report_snippets)."""
     with _cursor() as cur:
+        _require_unlocked(cur, document_id)
         cur.execute("SELECT filename FROM snippets WHERE id = %s AND document_id = %s", (snippet_id, document_id))
         row = cur.fetchone()
         if row is None:
@@ -524,6 +556,338 @@ def read_snippet_bytes(document_id: str, filename: str) -> bytes | None:
     if not backend.exists(key):
         return None
     return backend.read_bytes(key)
+
+
+# ---------------------------------------------------------------------------
+# Splitting a document into smaller ones (db/migrations/051_document_splits.sql).
+#
+# A split is a journalled job, so a crash part-way can be recovered from:
+#   begin_split    one transaction: writes the plan to document_splits (status "building") and locks the
+#                  document (documents.splitting) -- from then on no annotation, snippet, title or delete
+#                  change is accepted for it.
+#   (files)        the new PDFs and snippet images are written, encrypted, to their final places. Each write is
+#                  atomic and skipped if already done, so the step can simply be run again.
+#   commit_split   one transaction: creates the new documents and moves the annotations, snippets, report
+#                  images, annexure entries, hearing links and report sources over to them. Status "committed".
+#   finish_split   after the old snippet image files are deleted: status "done".
+# cancel_split undoes a "building" split (the files are removed first, by the caller).
+# ---------------------------------------------------------------------------
+
+class SplitError(Exception):
+    """A split refused because of the request itself (bad page numbers, already split, ...); the message says why."""
+
+
+def _split_dict(row: dict) -> dict:
+    return {"id": row["id"], "document_id": row["document_id"], "status": row["status"], "plan": row["plan"],
+            "created_by": row["created_by"], "error": row["error"],
+            "created_at": _iso(row["created_at"]), "updated_at": _iso(row["updated_at"])}
+
+
+def is_document_splitting(document_id: str) -> bool:
+    with _cursor() as cur:
+        cur.execute("SELECT splitting FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+    return bool(row and row["splitting"])
+
+
+def get_split(split_id: str) -> dict | None:
+    with _cursor() as cur:
+        cur.execute("SELECT * FROM document_splits WHERE id = %s", (split_id,))
+        row = cur.fetchone()
+    return _split_dict(row) if row else None
+
+
+def get_document_split(document_id: str) -> dict | None:
+    """The split job of this document that has not been cancelled (there is at most one), or None."""
+    with _cursor() as cur:
+        cur.execute("SELECT * FROM document_splits WHERE document_id = %s AND status <> 'cancelled'", (document_id,))
+        row = cur.fetchone()
+    return _split_dict(row) if row else None
+
+
+def list_unfinished_splits() -> list[dict]:
+    with _cursor() as cur:
+        cur.execute("SELECT * FROM document_splits WHERE status IN ('building', 'committed') ORDER BY created_at")
+        return [_split_dict(r) for r in cur.fetchall()]
+
+
+def _unused_document_id(cur, base: str) -> str:
+    candidate = base
+    while True:
+        cur.execute("SELECT 1 FROM documents WHERE id = %s", (candidate,))
+        if cur.fetchone() is None:
+            return candidate
+        candidate = f"{base}-{uuid.uuid4().hex[:6]}"
+
+
+def begin_split(document_id: str, points: list, page_count: int, user_id: int | None) -> dict:
+    """Plans the split of `document_id` (which has `page_count` pages) at `points` -- the first page of each
+    new document; page 1 is implied -- journals it and locks the document. Raises SplitError if it can't be done."""
+    try:
+        points = split_plan.normalize_points(points, page_count)
+    except ValueError as exc:
+        raise SplitError(str(exc)) from exc
+    if len(points) < 2:
+        raise SplitError("Add at least one split page after page 1.")
+    with _cursor() as cur:
+        cur.execute("SELECT doc_type, title FROM documents WHERE id = %s FOR UPDATE", (document_id,))
+        doc = cur.fetchone()
+        if doc is None:
+            raise SplitError("No such document.")
+        if doc["doc_type"] != "pdf":
+            raise SplitError("Only PDF documents can be split.")
+        cur.execute("SELECT status FROM document_splits WHERE document_id = %s AND status <> 'cancelled'", (document_id,))
+        existing = cur.fetchone()
+        if existing is not None:
+            raise SplitError("This document has already been split." if existing["status"] == "done"
+                             else "This document is already being split.")
+        title = _dec_text(doc["title"]) or document_id
+        count = len(points)
+        ids = [_unused_document_id(cur, f"{document_id}-split-{i + 1}") for i in range(count)]
+        titles = [f"{title} split {i + 1}" for i in range(count)]
+        cur.execute("SELECT id, page_number AS page, filename FROM snippets WHERE document_id = %s", (document_id,))
+        plan = split_plan.build_plan(page_count, points, ids, titles, cur.fetchall())
+        split_id = uuid.uuid4().hex[:12]
+        cur.execute(
+            "INSERT INTO document_splits (id, document_id, status, plan, created_by) VALUES (%s, %s, 'building', %s, %s)",
+            (split_id, document_id, psycopg2.extras.Json(plan), user_id),
+        )
+        cur.execute("UPDATE documents SET splitting = TRUE WHERE id = %s", (document_id,))
+    return get_split(split_id)
+
+
+def _split_owner(split: dict) -> str | None:
+    location = _document_location(split["document_id"])
+    if location is None:
+        raise StorageError(f"No document with id {split['document_id']!r}")
+    return location[1]
+
+
+def _segment_key(split: dict, index: int, owner: str | None) -> str:
+    return document_storage_key(split["plan"]["segments"][index]["id"], "pdf", owner)
+
+
+def _snippet_keys(split: dict, sn: dict, owner: str | None) -> tuple[str, str]:
+    """(old key, new key) of a snippet image that is moving."""
+    old = snippet_storage_key(split["document_id"], "pdf", sn["filename"], owner)
+    new = snippet_storage_key(split["plan"]["segments"][sn["segment"]]["id"], "pdf", sn["new_filename"], owner)
+    return old, new
+
+
+def split_open_source(split: dict):
+    """The document being split, as a seekable decrypting file object (close it when done)."""
+    return open_document_pdf(split["document_id"])
+
+
+def split_segment_exists(split: dict, index: int) -> bool:
+    return get_storage_backend().exists(_segment_key(split, index, _split_owner(split)))
+
+
+def split_write_segment(split: dict, index: int, chunks) -> None:
+    """Stores segment `index`'s PDF, encrypted as the chunks arrive; it appears whole or not at all."""
+    get_storage_backend().write_stream(_segment_key(split, index, _split_owner(split)), chunks)
+
+
+def split_open_segment(split: dict, index: int):
+    return get_storage_backend().open_read(_segment_key(split, index, _split_owner(split)))
+
+
+def split_copy_snippet_images(split: dict) -> None:
+    """Writes each moving snippet's image to its new place (encrypted afresh). Skips one already there."""
+    owner = _split_owner(split)
+    backend = get_storage_backend()
+    for sn in split["plan"]["snippets"]:
+        old, new = _snippet_keys(split, sn, owner)
+        if backend.exists(new):
+            continue
+        if backend.exists(old):
+            backend.write_bytes(new, backend.read_bytes(old))
+
+
+def split_remove_old_snippet_images(split: dict) -> None:
+    owner = _split_owner(split)
+    backend = get_storage_backend()
+    for sn in split["plan"]["snippets"]:
+        backend.delete(_snippet_keys(split, sn, owner)[0])
+
+
+def split_discard_new_files(split: dict) -> None:
+    """Removes whatever new files a split that never committed had written."""
+    owner = _split_owner(split)
+    backend = get_storage_backend()
+    for index in range(len(split["plan"]["segments"])):
+        backend.delete(_segment_key(split, index, owner))
+    for sn in split["plan"]["snippets"]:
+        backend.delete(_snippet_keys(split, sn, owner)[1])
+
+
+def commit_split(split_id: str) -> None:
+    """Points the database at the new documents, all in one transaction: either everything below moves or
+    nothing does. Does nothing if the split is no longer "building"."""
+    with _cursor() as cur:
+        cur.execute("SELECT * FROM document_splits WHERE id = %s FOR UPDATE", (split_id,))
+        row = cur.fetchone()
+        if row is None or row["status"] != "building":
+            return
+        old, plan = row["document_id"], row["plan"]
+        segs = plan["segments"]
+        seg_ids = [s["id"] for s in segs]
+        cur.execute("SELECT description, storage_owner FROM documents WHERE id = %s FOR UPDATE", (old,))
+        doc = cur.fetchone()
+
+        for seg in segs:
+            cur.execute(
+                "INSERT INTO documents (id, doc_type, title, description, storage_owner) VALUES (%s, 'pdf', %s, %s, %s)",
+                (seg["id"], _enc_text(seg["title"]), doc["description"], doc["storage_owner"]),
+            )
+            # Whoever could see or edit the document, and every cause and case it was filed under, gets the same on each part.
+            cur.execute("INSERT INTO user_sources (user_id, document_id, role, created_at) "
+                        "SELECT user_id, %s, role, created_at FROM user_sources WHERE document_id = %s", (seg["id"], old))
+            cur.execute("INSERT INTO source_causes (document_id, cause_id, created_at) "
+                        "SELECT %s, cause_id, created_at FROM source_causes WHERE document_id = %s", (seg["id"], old))
+            cur.execute("INSERT INTO source_cases (document_id, case_id, created_at) "
+                        "SELECT %s, case_id, created_at FROM source_cases WHERE document_id = %s", (seg["id"], old))
+            # Annotations are per page: each goes to the part that now holds its page, renumbered.
+            cur.execute(
+                "UPDATE document_annotations SET document_id = %s, page_number = page_number - %s + 1 "
+                "WHERE document_id = %s AND page_number BETWEEN %s AND %s",
+                (seg["id"], seg["start"], old, seg["start"], seg["end"]),
+            )
+        # Snippets keep their ids (so a report's link to one holds); only their document, page and image name change.
+        for sn in plan["snippets"]:
+            cur.execute(
+                "UPDATE snippets SET document_id = %s, page_number = %s, filename = %s WHERE id = %s AND document_id = %s",
+                (segs[sn["segment"]]["id"], sn["new_page"], sn["new_filename"], sn["id"], old),
+            )
+
+        _split_reports(cur, old, plan, seg_ids)
+        _split_annexures(cur, old, segs, seg_ids)
+        _split_hearing_documents(cur, old, seg_ids)
+
+        cur.execute("UPDATE documents SET splitting = FALSE WHERE id = %s", (old,))
+        cur.execute("UPDATE document_splits SET status = 'committed', updated_at = now() WHERE id = %s", (split_id,))
+
+
+def _split_reports(cur, old: str, plan: dict, seg_ids: list[str]) -> None:
+    """Points the images inside reports, and each report's source document, at the new documents."""
+    remap = split_plan.url_remapper(old, plan)
+    cur.execute("SELECT id FROM reports")
+    for report_id in [r["id"] for r in cur.fetchall()]:
+        cur.execute("SELECT doc_enc, thumbnail_url, source_document_id FROM reports WHERE id = %s FOR UPDATE", (report_id,))
+        r = cur.fetchone()
+        new_blob, changed = r["doc_enc"], False
+        if r["doc_enc"] is not None:
+            doc, changed = split_plan.remap_json(_decrypt_report_doc(r["doc_enc"]), remap)
+            if changed:
+                new_blob = encrypt_report_doc(doc)
+        thumb = remap(r["thumbnail_url"]) if r["thumbnail_url"] else r["thumbnail_url"]
+        source = r["source_document_id"]
+        if source == old:
+            # The part holding most of the report's snippets; the first part if it has none from this document.
+            cur.execute(
+                "SELECT s.document_id FROM report_snippets rs JOIN snippets s ON s.id = rs.snippet_id "
+                "WHERE rs.report_id = %s AND s.document_id = ANY(%s) GROUP BY s.document_id "
+                "ORDER BY count(*) DESC, s.document_id LIMIT 1",
+                (report_id, seg_ids),
+            )
+            best = cur.fetchone()
+            source = best["document_id"] if best else seg_ids[0]
+        if changed or thumb != r["thumbnail_url"] or source != r["source_document_id"]:
+            cur.execute("UPDATE reports SET doc_enc = %s, thumbnail_url = %s, source_document_id = %s WHERE id = %s",
+                        (new_blob, thumb, source, report_id))
+
+
+def _split_annexures(cur, old: str, segs: list[dict], seg_ids: list[str]) -> None:
+    """Replaces the old document in each report's annexure with the new ones, in its place, keeping what it
+    showed: all pages -> every part; only the snippet pages -> the parts the report has snippets in; a custom
+    page range -> the parts that range reaches, renumbered."""
+    cur.execute("SELECT DISTINCT report_id FROM report_annexure_documents WHERE document_id = %s", (old,))
+    for report_id in [r["report_id"] for r in cur.fetchall()]:
+        cur.execute(
+            "SELECT document_id, page_mode, page_range FROM report_annexure_documents "
+            "WHERE report_id = %s ORDER BY position FOR UPDATE", (report_id,))
+        rows = cur.fetchall()
+        cur.execute(
+            "SELECT DISTINCT s.document_id FROM report_snippets rs JOIN snippets s ON s.id = rs.snippet_id "
+            "WHERE rs.report_id = %s AND s.document_id = ANY(%s)", (report_id, seg_ids))
+        with_snippets = {r["document_id"] for r in cur.fetchall()}
+        out: list[tuple[str, str, str]] = []
+        for r in rows:
+            if r["document_id"] != old:
+                out.append((r["document_id"], r["page_mode"], r["page_range"]))
+                continue
+            for seg in segs:
+                if r["page_mode"] == "custom":
+                    pages = split_plan.map_page_range(r["page_range"], seg["start"], seg["end"])
+                    if pages:
+                        out.append((seg["id"], "custom", pages))
+                elif r["page_mode"] == "snippets" and with_snippets:
+                    if seg["id"] in with_snippets:
+                        out.append((seg["id"], "snippets", ""))
+                else:  # every page (also what "snippet pages" means when the report has no snippet from the document)
+                    out.append((seg["id"], "all", ""))
+        seen, position = set(), 0
+        cur.execute("DELETE FROM report_annexure_documents WHERE report_id = %s", (report_id,))
+        for doc_id, mode, page_range in out:
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            cur.execute(
+                "INSERT INTO report_annexure_documents (report_id, document_id, position, page_mode, page_range) "
+                "VALUES (%s, %s, %s, %s, %s)", (report_id, doc_id, position, mode, page_range))
+            position += 1
+
+
+def _split_hearing_documents(cur, old: str, seg_ids: list[str]) -> None:
+    """A document submitted to / received at a hearing becomes all its parts, in the same place in the list."""
+    cur.execute("SELECT id, hearing_id, direction, position FROM hearing_documents WHERE document_id = %s "
+                "ORDER BY hearing_id, direction, position DESC", (old,))
+    for r in cur.fetchall():
+        cur.execute("UPDATE hearing_documents SET position = position + %s "
+                    "WHERE hearing_id = %s AND direction = %s AND position > %s",
+                    (len(seg_ids) - 1, r["hearing_id"], r["direction"], r["position"]))
+        cur.execute("DELETE FROM hearing_documents WHERE id = %s", (r["id"],))
+        for i, seg_id in enumerate(seg_ids):
+            cur.execute(
+                "INSERT INTO hearing_documents (id, hearing_id, direction, document_id, position) VALUES (%s, %s, %s, %s, %s)",
+                (uuid.uuid4().hex[:12], r["hearing_id"], r["direction"], seg_id, r["position"] + i))
+
+
+def finish_split(split_id: str) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE document_splits SET status = 'done', updated_at = now() WHERE id = %s AND status = 'committed'",
+                    (split_id,))
+
+
+def cancel_split(split_id: str, error: str) -> bool:
+    """Gives up on a split that has not committed (its new files must already have been removed): the document
+    is unlocked and the job kept, as "cancelled", only as a record. False if it had already committed."""
+    with _cursor() as cur:
+        cur.execute("UPDATE document_splits SET status = 'cancelled', error = %s, updated_at = now() "
+                    "WHERE id = %s AND status = 'building' RETURNING document_id", (error[:500], split_id))
+        row = cur.fetchone()
+        if row is None:
+            return False
+        cur.execute("UPDATE documents SET splitting = FALSE WHERE id = %s", (row["document_id"],))
+        return True
+
+
+def split_media_target(document_id: str, filename: str) -> tuple[str, str] | None:
+    """Where a snippet image of a document that has been split now lives: (new document id, new filename), for a
+    `/media/snippets/<document id>/<filename>` address that was valid before the split; None if the document
+    wasn't split or the file isn't one the split moved."""
+    with _cursor() as cur:
+        cur.execute("SELECT plan FROM document_splits WHERE document_id = %s AND status IN ('committed', 'done')",
+                    (document_id,))
+        row = cur.fetchone()
+    if row is None:
+        return None
+    url = f"/media/snippets/{document_id}/{filename}"
+    new = split_plan.url_remapper(document_id, row["plan"])(url)
+    if new == url:
+        return None
+    _, _, new_doc, new_name = new.rsplit("/", 3)
+    return new_doc, new_name
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +1022,22 @@ def _snippet_refs(node, found: set | None = None) -> set[tuple[str, str]]:
     return found
 
 
+def _heal_split_refs(cur, doc):
+    """A report body (parsed JSON) with any image of a document that has since been split pointed at the new
+    document -- for an editor that was open, with the old addresses, while the split ran."""
+    if doc is None:
+        return None
+    cur.execute("SELECT document_id, plan FROM document_splits WHERE status IN ('committed', 'done')")
+    splits = cur.fetchall()
+    if not splits:
+        return doc
+    raw = json.dumps(doc, ensure_ascii=False)
+    for sp in splits:
+        if f"/media/snippets/{sp['document_id']}/" in raw:
+            doc, _ = split_plan.remap_json(doc, split_plan.url_remapper(sp["document_id"], sp["plan"]))
+    return doc
+
+
 def save_report(report_id: str, data: dict, owner_id: int | None = None,
                 link: tuple[str, str] | None = None) -> None:
     """Creates or overwrites a report. When creating, pass `owner_id` and
@@ -665,6 +1045,7 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
     the same transaction. Associations are otherwise managed with
     link_to/unlink_from, never by a save."""
     with _cursor() as cur:
+        data = {**data, "doc": _heal_split_refs(cur, data["doc"])}
         cur.execute(
             """
             INSERT INTO reports (id, name, doc_enc, thumbnail_url, source_document_id, margins, page_numbers, created_at, updated_at)

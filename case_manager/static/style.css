@@ -1217,3 +1217,61 @@ label.toggle-label #continuousToggle:focus-visible,
 .annex-collapse { margin-top: 6px; }
 .annex-collapse > summary { cursor: pointer; font-size: 13px; color: #555; padding: 4px 0; }
 .source-picker .source-group { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; border: 1px solid #e0e2e8; border-radius: 8px; background: #f8f9fb; }
+
+/* ---- document splitter strip (static/splitter.js) ----
+   Fixed down the left, in front of the document and of the slid-out snippets panel (z-index 30 on narrow
+   screens), behind modals. `top` is set by the script, to sit below the toolbar. */
+.splitter {
+  position: fixed; left: 0; bottom: 0; z-index: 40; width: 188px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; font-size: 13px; color: #1c1c1c;
+  background: rgba(255, 255, 255, 0.72); border-right: 1px solid rgba(207, 212, 224, 0.9);
+  box-shadow: 4px 0 14px rgba(0, 0, 0, 0.2);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.splitter[hidden] { display: none; }
+.splitter-head { display: flex; align-items: center; gap: 6px; }
+.splitter-head h3 { margin: 0; font-size: 14px; }
+.splitter-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; border-radius: 4px; color: #3c4043; }
+.splitter-close:hover:not(:disabled) { background: #f1f3f4; }
+.splitter-close:disabled { color: #b0b4bd; cursor: default; }
+.splitter-hint { margin: 0; font-size: 12px; color: #5f6368; line-height: 1.35; }
+.splitter-add { display: flex; gap: 6px; }
+.splitter-add input { flex: 1; min-width: 0; width: 0; padding: 5px 6px; border: 1px solid #cfd4e0; border-radius: 4px; font-size: 13px; }
+.splitter button { font: inherit; }
+.splitter-add-btn { border: 1px solid #cfd4e0; background: #f7f8fa; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+.splitter-add-btn:disabled { color: #b0b4bd; cursor: default; }
+.splitter-error { margin: 0; min-height: 0; font-size: 12px; color: #c0392b; }
+.splitter-error:empty { display: none; }
+.splitter-list { flex: 1 1 auto; min-height: 60px; margin: 0; padding: 0; list-style: none; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.splitter-card { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border: 1px solid #cfd4e0; border-radius: 5px; background: #f7f8fa; }
+.splitter-card[draggable="true"] { cursor: grab; }
+.splitter-card.dragging { opacity: 0.4; }
+.splitter-card.drop-before { box-shadow: 0 -3px 0 #2266dd; }
+.splitter-list.drop-end { box-shadow: inset 0 -3px 0 #2266dd; }
+.splitter-grip { color: #9aa0ad; font-size: 11px; letter-spacing: -2px; user-select: none; }
+.splitter-num { flex: 1; min-width: 0; text-align: left; border: none; background: none; cursor: pointer; padding: 3px 2px; border-radius: 3px; font-weight: 600; color: #1a4db3; }
+.splitter-num:hover { background: #e4ecfb; }
+.splitter-card input { flex: 1; min-width: 0; width: 0; padding: 3px 4px; border: 1px solid #2266dd; border-radius: 3px; font-size: 13px; }
+.splitter-icon { border: none; background: none; cursor: pointer; padding: 3px 4px; border-radius: 3px; color: #5f6368; font-size: 12px; line-height: 1; }
+.splitter-icon:hover { background: #e4e6e8; }
+.splitter-empty { font-size: 12px; color: #8a92a5; }
+.splitter-summary { font-size: 12px; color: #3c4043; border-top: 1px solid #e0e2e8; padding-top: 6px; }
+.splitter-summary-title { font-weight: 600; margin-bottom: 2px; }
+.splitter-foot { margin-top: auto; }
+.splitter-split { width: 100%; padding: 8px 10px; border: 1px solid #2266dd; border-radius: 5px; background: #2266dd; color: white; font-weight: 600; cursor: pointer; }
+.splitter-split:disabled { background: #e4e6e8; border-color: #cfd4e0; color: #9aa0ad; cursor: default; }
+.splitter-confirm { padding: 8px; border: 1px solid #c0392b; border-radius: 5px; background: #fdf1ef; }
+.splitter-confirm p { margin: 0 0 8px; color: #c0392b; font-weight: 600; font-size: 12px; line-height: 1.35; }
+.splitter-confirm-actions { display: flex; gap: 6px; }
+.splitter-confirm-actions button { flex: 1; padding: 6px 4px; border-radius: 4px; cursor: pointer; border: 1px solid #cfd4e0; background: white; }
+.splitter-confirm-actions .splitter-confirm-yes { background: #c0392b; border-color: #c0392b; color: white; font-weight: 600; }
+.splitter-working p, .splitter-done p { margin: 0 0 6px; }
+.splitter-note { font-size: 12px; color: #5f6368; }
+.splitter-done-title { font-weight: 600; }
+.splitter-done ul { margin: 0 0 8px; padding-left: 16px; font-size: 12px; }
+.splitter-done li { margin-bottom: 3px; overflow-wrap: anywhere; }
+.splitter-pages { color: #5f6368; white-space: nowrap; }
+.splitter [hidden] { display: none !important; }
+.splitter-card { background: rgba(247, 248, 250, 0.85); }
+.splitter-add input, .splitter-card input { background: rgba(255, 255, 255, 0.9); }
+.splitter-confirm { background: rgba(253, 241, 239, 0.92); }

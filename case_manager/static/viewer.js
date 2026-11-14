@@ -17,7 +17,9 @@
   const titleUrl = appEl.dataset.titleUrl;
   // Viewers can look at a document and its annotations but not change them
   // (the server rejects their saves with a 403).
-  const canEdit = !!appEl.dataset.canEdit;
+  const mayEdit = !!appEl.dataset.canEdit;
+  // Cleared while the document is locked for splitting (see splitter.js): no change is accepted then.
+  let canEdit = mayEdit;
 
   const container = document.getElementById("viewerContainer");
   const statusMsg = document.getElementById("statusMsg");
@@ -990,13 +992,7 @@
 
   function selectAnnotation(p, index) {
     if (!mounted.has(p)) { // single-page mode: switch the shown page in place
-      currentPage = p;
-      applyMode();
-      const url = new URL(window.location.href);
-      url.searchParams.set("page", p);
-      history.replaceState(null, "", url);
-      prevLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.max(1, p - 1)}`;
-      nextLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.min(pageCount, p + 1)}`;
+      showPageInPlace(p);
     } else {
       setCurrentPage(p);
     }
@@ -1005,6 +1001,24 @@
     controller.redraw();
     const icon = controller.wrap.querySelector(".annotation-delete-icon");
     (icon && icon.style.display !== "none" ? icon : controller.wrap).scrollIntoView({ block: icon ? "center" : "start" });
+  }
+
+  // Single-page mode: shows page `p` without reloading, keeping the URL and the Prev/Next links in step.
+  function showPageInPlace(p) {
+    currentPage = p;
+    applyMode();
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", p);
+    history.replaceState(null, "", url);
+    prevLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.max(1, p - 1)}`;
+    nextLink.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${Math.min(pageCount, p + 1)}`;
+  }
+
+  // Shows page `p` in whichever display mode is on: scrolls to it in continuous mode, switches to it in page-wise mode.
+  function goToPage(p) {
+    p = Math.min(Math.max(1, p), pageCount);
+    if (continuousMode) scrollToPage(p);
+    else if (p !== currentPage) showPageInPlace(p);
   }
 
   function stepAnnotation(dir) {
@@ -1314,6 +1328,34 @@
     }, 0);
   });
 
+  // Saves every page with unsaved annotations, and the title if it was edited.
+  async function saveAllDirty() {
+    const dirtyPages = Array.from(pageState.entries()).filter(([, s]) => s.dirty).map(([p]) => p);
+    const tasks = dirtyPages.map(saveOnePage);
+    if (titleDirty) tasks.push(saveTitle());
+    await Promise.all(tasks);
+  }
+
+  // What the document splitter (splitter.js) uses.
+  function setLocked(locked) {
+    canEdit = mayEdit && !locked;
+    appEl.classList.toggle("doc-readonly", !canEdit);
+    titleInput.readOnly = descInput.readOnly = !canEdit;
+    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #pageSetupBtn").forEach((el) => {
+      el.disabled = !canEdit;
+    });
+    if (!canEdit) setMode(null);
+  }
+  window.AnnotatorHooks = {
+    docId,
+    pageCount,
+    getCurrentPage: () => currentPage,
+    goToPage,
+    saveAllDirty,
+    setLocked,
+    hasUnsavedChanges: () => titleDirty || Array.from(pageState.values()).some((s) => s.dirty),
+  };
+
   document.getElementById("saveBtn").addEventListener("click", async () => {
     const dirtyPages = Array.from(pageState.entries())
       .filter(([, s]) => s.dirty)
@@ -1556,6 +1598,7 @@
       el.disabled = true;
     });
   }
+  if (appEl.dataset.splitting) setLocked(true); // being split: the splitter strip says so
   setMode(null);
   (async () => {
     await Promise.all([loadInfo(), loadAllAnnotations()]);

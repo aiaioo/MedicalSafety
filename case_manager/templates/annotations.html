@@ -92,6 +92,9 @@
      data-download-original-url="{{ url_for('api_download_original', doc_id=doc_id) }}?type={{ doc_type }}"
      data-title-url="{{ title_url }}"
      data-description-url="{{ description_url }}"
+     data-split-url="{{ split_url }}"
+     data-can-split="{{ '1' if can_split and page_count > 1 else '' }}"
+     data-splitting="{{ '1' if splitting else '' }}"
 >
   <header class="topbar">
     <div class="doc-title">
@@ -117,6 +120,7 @@
       <button type="button" class="menu-trigger" id="fileMenuBtn" title="Page setup and download options">File</button>
       <div class="menu-dropdown" id="fileMenuDropdown">
         <button type="button" id="pageSetupBtn" title="Choose paper size, margins and page numbering for downloads">Page setup&hellip;</button>
+        <button type="button" id="splitDocBtn" {% if not can_split %}disabled title="Only the owner can split this document"{% elif page_count < 2 %}disabled title="A one-page document can't be split"{% else %}title="Split this document into smaller documents at page numbers you choose"{% endif %}>Split document&hellip;</button>
         <hr>
         <button type="button" id="downloadBtn" title="Download the whole document with your annotations drawn on it">Download annotated PDF</button>
         <button type="button" id="downloadPagesBtn" disabled title="Download only the pages that have annotations or snippets">Download annotated pages only</button>
@@ -208,6 +212,7 @@ try { localStorage.setItem("lastSourceUrl", location.pathname + location.search)
 <script src="{{ url_for('static', filename='sidebar-swipe.js') }}"></script>
 <script src="{{ url_for('static', filename='page-number-palette.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>
+<script src="{{ url_for('static', filename='splitter.js') }}"></script>
 {% endif %}
 </body>
 </html>

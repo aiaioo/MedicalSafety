@@ -3,7 +3,6 @@ import collections
 import io
 import json
 import os
-import queue
 import re
 import sys
 import threading
@@ -32,7 +31,9 @@ import auth
 import key_gate
 import key_manager
 import mailer
+import splitter
 import storage
+from pdf_stream import stream_pikepdf as _stream_pikepdf
 from cities import CITIES_BY_COUNTRY, DEFAULT_CITY_BY_COUNTRY
 
 DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -292,6 +293,32 @@ def handle_key_not_available(err):
 @app.errorhandler(storage.DeleteBlocked)
 def handle_delete_blocked(err):
     return handle_document_error(DocumentError(str(err), 400))
+
+
+@app.errorhandler(storage.DocumentLocked)
+def handle_document_locked(err):
+    return handle_document_error(DocumentError(str(err), 423))
+
+
+_splits_resumed = False
+
+
+@app.before_request
+def resume_interrupted_splits():
+    """Once the encryption key is in memory (it is lost on every restart), carries on with any document split that
+    a crash or restart cut short -- the journal says exactly where it was. Tried once per process."""
+    global _splits_resumed
+    if _splits_resumed or not key_manager.KeyManager().is_key_in_memory():
+        return None
+    _splits_resumed = True
+    try:
+        n = splitter.resume_unfinished()
+        if n:
+            app.logger.warning("Resumed %d interrupted document split(s)", n)
+    except Exception:
+        _splits_resumed = False  # try again on the next request
+        app.logger.exception("Could not resume interrupted document splits")
+    return None
 
 
 @app.errorhandler(DocumentError)
@@ -2776,6 +2803,9 @@ def page_view():
         doc_description=storage.get_document_description(doc_id),
         description_url=url_for("api_doc_description", doc_id=doc_id),
         can_edit=has_role("source", doc_id, "editor"),
+        can_split=has_role("source", doc_id, "owner") and not g.user.is_guest,
+        split_url=url_for("api_doc_split", doc_id=doc_id),
+        splitting=storage.is_document_splitting(doc_id),
         shared_with_me=is_shared_with_me("source", doc_id),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
@@ -3307,6 +3337,51 @@ def api_delete_document(doc_id):
     return jsonify({"ok": True})
 
 
+def _split_response(split):
+    """What the splitter strip needs to know about a document's split job (None: never split)."""
+    if split is None:
+        return {"state": "none"}
+    plan = split["plan"]
+    return {
+        "state": split["status"],  # building | committed | done
+        "documents": [{"id": s["id"], "title": s["title"], "start": s["start"], "end": s["end"],
+                       "url": url_for("page_view", doc=s["id"], type="pdf", page=1)} for s in plan["segments"]],
+        "interrupted": split["status"] != "done" and not splitter.is_running(split["id"]),
+    }
+
+
+@app.route("/api/doc/<doc_id>/split", methods=["GET", "POST"])
+def api_doc_split(doc_id):
+    """GET: the document's split job, if any (also restarts one that was cut short). POST {"points": [page, ...]}:
+    splits the document -- each point is the first page of a new document, page 1 being the first implicitly. The
+    document is locked from the moment this returns until the split is done; poll GET to see it finish."""
+    check_doc_id(doc_id)
+    if request.method == "GET":
+        require_role("source", doc_id, "viewer")
+        split = storage.get_document_split(doc_id)
+        if split is not None and split["status"] != "done" and not splitter.is_running(split["id"]):
+            splitter.start(split["id"])  # cut short by a restart and not resumed yet
+        return jsonify(_split_response(split))
+
+    require_role("source", doc_id, "owner")  # it rewrites other people's reports and annexures too
+    if g.user.is_guest:
+        raise DocumentError("You don't have permission to split this document", 403)
+    body = request.get_json(silent=True) or {}
+    points = body.get("points")
+    if not isinstance(points, list):
+        raise DocumentError("Body must contain a 'points' list of page numbers", 400)
+    page_count, _ = _page_count(doc_id, request.args.get("type", "pdf"))
+    try:
+        split = storage.begin_split(doc_id, points, page_count, g.user.id)
+    except storage.SplitError as exc:
+        raise DocumentError(str(exc), 400) from exc
+    log_activity("save", "source", doc_id, f"Split into {len(split['plan']['segments'])} documents")
+    splitter.start(split["id"])
+    response = jsonify(_split_response(split))
+    response.status_code = 202
+    return response
+
+
 def _render_region_png(f, page, zoom, annotations, clip=None, load_bytes=None, doc_id=None, png_level=6):
     """PNG bytes of `page` (or the `clip` region of it) of the PDF in seekable file `f`, with the
     sanitized `annotations` drawn on. Returns None if the page is out of range. If PDFium cannot read the
@@ -3604,74 +3679,6 @@ def _burn_annotations_into_page(src, index, annotations):
     src.pages.insert(index, new.pages[0])
     del src.pages[index + 1]
     new.close()
-
-
-def _stream_pikepdf(pdf):
-    """Yields the bytes of saving `pdf` as it is written, so a big PDF is never assembled in memory. qpdf
-    pulls page data out of its sources as it writes; saving runs in a worker thread feeding a small
-    bounded queue, which also gives backpressure when the client is slow."""
-    q = queue.Queue(maxsize=8)
-    finished = object()
-    stop = threading.Event()
-
-    class Writer(io.RawIOBase):
-        def __init__(self):
-            super().__init__()
-            self.buf = bytearray()
-
-        def writable(self):
-            return True
-
-        def _put(self, item):
-            while True:
-                if stop.is_set():
-                    raise BrokenPipeError("client went away")
-                try:
-                    q.put(item, timeout=0.5)
-                    return
-                except queue.Full:
-                    pass
-
-        def write(self, data):
-            self.buf += data
-            if len(self.buf) >= 64 * 1024:
-                self._put(bytes(self.buf))
-                self.buf.clear()
-            return len(data)
-
-        def flush_all(self):
-            if self.buf:
-                self._put(bytes(self.buf))
-                self.buf.clear()
-
-    def work():
-        try:
-            w = Writer()
-            pdf.save(w)
-            w.flush_all()
-            q.put(finished)
-        except BaseException as exc:  # reaches the consumer below; a stopped stream just ends
-            if not stop.is_set():
-                q.put(exc)
-
-    worker = threading.Thread(target=work, daemon=True)
-    worker.start()
-    try:
-        while True:
-            item = q.get()
-            if item is finished:
-                return
-            if isinstance(item, BaseException):
-                raise item
-            yield item
-    finally:
-        stop.set()
-        while worker.is_alive():  # unblock a writer waiting on a full queue
-            try:
-                q.get(timeout=0.1)
-            except queue.Empty:
-                pass
-        worker.join()
 
 
 class _PdfStream:
@@ -5803,6 +5810,9 @@ def api_snippet_file(doc_id, filename):
     normalize_type(request.args.get("type", "pdf"))
     if "/" in filename or "\\" in filename:
         abort(400)
+    moved = storage.split_media_target(doc_id, filename)  # an address from before the document was split
+    if moved is not None:
+        doc_id, filename = moved
     if not storage.can_view_snippet_images(g.user.id, doc_id):
         abort(404)
     data = read_media_snippet(doc_id, filename)
