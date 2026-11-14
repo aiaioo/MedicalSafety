@@ -14,13 +14,16 @@ WorkingDirectory=/opt/case_progress_crawler
 # Shared with the web app: the crawler reads CASE_PROGRESS_DATABASE_URL from it.
 EnvironmentFile=/etc/case-manager/case-manager.env
 ExecStart=/opt/case_progress_crawler/deploy/run-crawl.sh
-TimeoutStartSec=3h
+TimeoutStartSec=10h
 
 # The droplet is small and runs the web app too: run at low priority, and throttle
-# (not kill) the crawl if it grows past this.
+# (not kill) the crawl if it grows past MemoryHigh, and kill it at MemoryMax so a runaway
+# crawl can't take the web app down with it (peak seen in normal runs: ~300M).
 Nice=10
 IOSchedulingClass=idle
 MemoryHigh=450M
+MemoryMax=600M
+MemorySwapMax=0
 
 # It writes only under its own directory (pdfs/, case_details/) and talks to Postgres and the courts.
 NoNewPrivileges=true

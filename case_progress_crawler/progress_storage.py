@@ -42,15 +42,19 @@ _pool_lock = threading.Lock()  # the viewer warms its cache in a thread while re
 # ---------------------------------------------------------------------------------------------
 # Connection
 
-@contextmanager
-def _db():
-    """A cursor in a transaction: committed when the block ends, rolled back if it raises."""
+def _get_pool():
     global _pool
     if _pool is None:
         with _pool_lock:
             if _pool is None:
                 _pool = ThreadedConnectionPool(1, 8, os.environ.get("CASE_PROGRESS_DATABASE_URL", DEFAULT_DSN))
-    pool = _pool
+    return _pool
+
+
+@contextmanager
+def _db():
+    """A cursor in a transaction: committed when the block ends, rolled back if it raises."""
+    pool = _get_pool()
     conn = pool.getconn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -147,6 +151,25 @@ def latest_cause_lists():
         cur.execute("SELECT DISTINCT ON (commission_id, list_date) commission_id, list_date::text AS date, version, doc "
                     "FROM cause_lists ORDER BY commission_id, list_date, version DESC")
         return list(cur.fetchall())
+
+
+def iter_latest_cause_lists(batch=20):
+    """Like latest_cause_lists(), but yields one list at a time (a server-side cursor fetching `batch` rows
+    per round trip), so a caller that only digests each list never holds them all in memory."""
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor(name="latest_cause_lists", cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.itersize = batch
+            cur.execute("SELECT DISTINCT ON (commission_id, list_date) commission_id, list_date::text AS date, version, doc "
+                        "FROM cause_lists ORDER BY commission_id, list_date, version DESC")
+            yield from cur
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
 
 
 # ---------------------------------------------------------------------------------------------

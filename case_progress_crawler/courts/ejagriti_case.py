@@ -36,10 +36,11 @@ REQUEST_DELAY = 0.5     # seconds between requests, to go easy on the portal
 ORDER_KINDS = {1: "daily_order", 2: "judgement"}  # orderTypeId -> file name part
 RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?) is looked at this often
 RECENT = timedelta(days=3)  # a hearing this recent with no order is asked about again every run
+STALE_AFTER = timedelta(days=3)  # a case with nothing due (hearing still ahead, none recent) is looked at this often anyway
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=4096)
 def _india_date(utc_timestamp):
     return (datetime.strptime(utc_timestamp, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
 
@@ -77,10 +78,11 @@ def same_parties(status, parties):
 
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
-    that has appeared on a saved cause list (storage.latest_cause_lists); a later list's parties replace an earlier one's."""
+    that has appeared on a saved cause list (storage.iter_latest_cause_lists); a later list's parties replace an earlier one's.
+    The lists are read one at a time, so only the small result is held in memory, not every list."""
     from analysis_consumer import CASE_NO_RE  # a top-level module; imported late as it imports this package
     cases = {}
-    for cause_list in storage.latest_cause_lists():
+    for cause_list in storage.iter_latest_cause_lists():
         for row in cause_list["doc"]["causelists"]:
             for c in row["cases"]:
                 number = " ".join((c.get("caseNumber") or "").split())
@@ -180,10 +182,12 @@ class ConsumerCaseDownloader:
         data = self._get_data("//courtmaster/courtRoom/judgement/v1/getDailyOrderJudgementPdf",
                               filingReferenceNumber=filing_reference_number, dateOfHearing=date_of_hearing,
                               orderTypeId=order_type_id)
-        text = data.get("dailyOrderPdf") or ""
+        text = data.pop("dailyOrderPdf", None) or ""
+        del data
         if text.lstrip().lower().startswith(("<html", "<!doctype")):
             return text.encode("utf-8"), "html"
         pdf = base64.b64decode(text)
+        del text  # the base64 copy is a third larger than the PDF; don't keep both
         if not pdf.startswith(b"%PDF"):
             raise ValueError("order is neither a PDF nor HTML")
         return pdf, "pdf"
@@ -226,17 +230,28 @@ class ConsumerCaseDownloader:
         out["saved"].append("classification.json")
 
     def due(self, case_number, now=None):
-        """Is it time to ask the portal about this case? Always, unless it has no next hearing date (a
-        finished case), which is only rechecked weekly for a late judgement."""
+        """Is it time to ask the portal about this case? Not every day: a case is asked about when its next
+        hearing is today or past (the order and a new date are expected), when its last hearing was within RECENT
+        (orders are uploaded late), or when it was last looked at STALE_AFTER ago (a date moved, a late order).
+        A case with no next hearing date (a finished one) is only rechecked weekly for a late judgement."""
+        now = now or datetime.now()
         meta = self._json(case_number, "meta.json")
         if not meta:
             return True
         label = self._json(case_number, "classification.json")
         if not label or label.get("version") != CLASSIFIER_VERSION:
             return True  # labelled by older rules (or not at all)
-        if meta.get("next_hearing"):
+        age = now - datetime.fromisoformat(meta["fetched_at"])
+        if not meta.get("next_hearing"):
+            return age >= RECHECK_AFTER
+        if "last_hearing" not in meta:
+            return True  # meta.json from before last_hearing was kept; asked once more to fill it in
+        today = now.date()
+        if meta["next_hearing"] <= today.isoformat():
             return True
-        return (now or datetime.now()) - datetime.fromisoformat(meta["fetched_at"]) >= RECHECK_AFTER
+        if meta["last_hearing"] and today - datetime.strptime(meta["last_hearing"], "%Y-%m-%d").date() <= RECENT:
+            return True
+        return age >= STALE_AFTER
 
     def sync(self, case_number, now=None, parties=None):
         """Bring one case up to date. A case not seen before is fetched in full. For one already held: the status
@@ -332,8 +347,10 @@ class ConsumerCaseDownloader:
         if parties:
             self._classify(case_number, parties, status, now, out)
         next_hearing = (status.get("dateOfNextearing") or "")[:10] or None
+        held = history_hearing_dates(history)
         self.persister.save_json(case_number, "meta.json",
-                                 {"fetched_at": now.isoformat(timespec="seconds"), "next_hearing": next_hearing})
+                                 {"fetched_at": now.isoformat(timespec="seconds"), "next_hearing": next_hearing,
+                                  "last_hearing": max(held) if held else None})
         return out
 
     def sync_all(self, cases, dry_run=False):

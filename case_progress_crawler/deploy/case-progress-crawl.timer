@@ -1,10 +1,10 @@
-# Daily at 3 am India time, when nobody is using the site. Persistent=true runs a
+# Daily at 10 pm India time (the crawl can run for hours, so it starts in the evening). Persistent=true runs a
 # missed one when the droplet next boots.
 [Unit]
 Description=Daily case progress crawl
 
 [Timer]
-OnCalendar=*-*-* 03:00:00 Asia/Kolkata
+OnCalendar=*-*-* 22:00:00 Asia/Kolkata
 Persistent=true
 RandomizedDelaySec=300
 
