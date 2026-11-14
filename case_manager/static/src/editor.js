@@ -185,16 +185,18 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     newDocError.style.display = "none";
     // Default to the last source document viewed, else the report's own.
     newDocSource.value = "";
+    let hadLast = false;
     try {
       const last = localStorage.getItem("lastSourceUrl");
       if (last) {
+        hadLast = true;
         const q = new URL(last, location.origin).searchParams;
         if (q.get("doc")) newDocSource.value = `${q.get("doc")}|${q.get("type") || "pdf"}`;
       }
     } catch (e) {}
     // Last document not offered here (e.g. a different cause): show "none".
     if (newDocSource.value && newDocSource.value !== (newDocSource.selectedOptions[0] || {}).value) newDocSource.value = "";
-    if (!newDocSource.value && sourceSelect && sourceSelect.value) newDocSource.value = sourceSelect.value;
+    if (!hadLast && !newDocSource.value && sourceSelect && sourceSelect.value) newDocSource.value = sourceSelect.value;
     openModal(newDocModal);
     setTimeout(() => newDocName.focus(), 0);
   });
