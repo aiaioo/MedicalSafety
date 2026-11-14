@@ -544,19 +544,18 @@
         if (controller.imgState === "pending") {
           controller.imgState = "idle";
           pendingImages.delete(controller);
-        } else if (controller.imgState === "loading") {
-          img.removeAttribute("src"); // cancels the request
-          controller.imgState = "idle";
-          imagesInFlight--;
-          pumpImages();
         }
+        // A load already started is left to finish: cancelling it saves the server nothing (it
+        // finishes the render anyway, one page at a time), so scrolling past many pages used to
+        // leave it rendering hundreds of pages nobody wanted, with the page you stopped on queued
+        // behind them.
       }
     };
     const imageSettled = (ok) => {
       if (controller.imgState !== "loading") return;
       controller.imgState = ok ? "done" : "idle";
       if (ok) bgDone.add(pageNum);
-      imagesInFlight--;
+      imagesInFlight = Math.max(0, imagesInFlight - 1); // a remount may have reset the count already
       pumpImages();
     };
     img.addEventListener("load", () => imageSettled(true));
@@ -1075,7 +1074,17 @@
   const pendingImages = new Set();
   let imagesInFlight = 0;
   const MAX_IMAGES_IN_FLIGHT = 3;
+  // Foreground loads start only once scrolling has paused briefly, so pages flown past on the way
+  // to the one you stop at are never requested at all.
+  const FG_SETTLE_MS = 150;
+  let lastScrollAt = 0;
+  let fgTimer = null;
   function pumpImages() {
+    if (pendingImages.size && performance.now() - lastScrollAt < FG_SETTLE_MS) {
+      clearTimeout(fgTimer);
+      fgTimer = setTimeout(pumpImages, FG_SETTLE_MS);
+      return;
+    }
     while (imagesInFlight < MAX_IMAGES_IN_FLIGHT && pendingImages.size) {
       const cr = container.getBoundingClientRect();
       const mid = cr.top + cr.height / 2;
@@ -1123,9 +1132,15 @@
     }
     return best;
   }
+  // Activity only stops a *new* background request from starting. One already in flight is left to
+  // finish: aborting it saves the server nothing (it completes the render regardless) and loses a
+  // page that would otherwise be cached. At most one page's render is therefore ever ahead of you.
   function bgPause() {
     clearTimeout(bgTimer);
     bgTimer = null;
+  }
+  function bgAbortNow() {
+    bgPause();
     if (bgAbort) {
       bgAbort.abort();
       bgAbort = null;
@@ -1161,12 +1176,20 @@
     [window, "pointerdown"],
     [window, "keydown"],
   ]) {
-    target.addEventListener(evt, () => { bgPause(); bgSchedule(); }, { passive: true });
+    target.addEventListener(
+      evt,
+      () => {
+        if (evt === "scroll") lastScrollAt = performance.now();
+        bgPause();
+        bgSchedule();
+      },
+      { passive: true }
+    );
   }
   document.addEventListener("visibilitychange", () => (document.hidden ? bgPause() : bgSchedule()));
   window.addEventListener("pagehide", () => {
     bgStopped = true;
-    bgPause();
+    bgAbortNow();
   });
 
   const imageObserver = new IntersectionObserver(

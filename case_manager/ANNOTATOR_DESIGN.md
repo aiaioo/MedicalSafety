@@ -283,17 +283,17 @@ for the image's `load` event, exactly as before.
 Page rasters are the slow part of opening a document, so three layers keep them fast. All three
 are deliberately conservative about access control and server load.
 
-**1. The browser may cache page images on the user's disk, but always revalidates.**
-`/api/doc/<id>/render/<page>` sends `Cache-Control: private, no-cache` plus an `ETag`
-(sha1 of `(doc_id, page, dpi, annotations drawn)`). It used to send `no-store`. `private`
-keeps shared caches out; `no-cache` makes Chrome ask the server on every use, so access to the
-document is re-checked each time (a user who loses access gets nothing) and an unchanged page
+**1. The browser may cache page images on the user's disk, for ten minutes without asking.**
+`/api/doc/<id>/render/<page>` sends `Cache-Control: private, max-age=600` (`_RENDER_MAX_AGE`)
+plus an `ETag` (sha1 of `(doc_id, page, dpi, annotations drawn)`). It used to send `no-store`.
+`private` keeps shared caches out. For ten minutes Chrome reuses a page it has with no request
+at all; after that it revalidates, access to the document is re-checked, and an unchanged page
 costs a `304` with no render and no download. The ETag covers everything that changes the
 picture: uploaded PDFs never change, and the annotations drawn into the raster are part of the
-key, so editing an annotation changes the ETag. Nothing new is stored server-side; the small
-in-memory render LRU (`_page_png_cache`, 48 MB) is unchanged. A short `max-age` would skip the
-revalidation round trip, but was left out on purpose: access changes and fresh annotations
-would then take effect only after it expired.
+key. Cost of the `max-age`: within the ten minutes, losing access to a document, or a guest
+view's blackouts changing, is not noticed by a browser that already has the page. (The owner's
+own view bakes no annotations into the raster, so annotating never makes a cached page stale.)
+Nothing is stored server-side beyond the small in-memory render LRU (`_page_png_cache`, 48 MB).
 
 **2. Foreground loading: only pages near the viewport, through a small queue.** An
 `IntersectionObserver` (`imageObserver`, 100% root margin) asks for a page's image only when it
