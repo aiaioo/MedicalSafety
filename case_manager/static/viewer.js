@@ -1167,10 +1167,15 @@
       bgAbort = null;
     }
   }
+  let lastActivityAt = performance.now(); // opening the document counts as activity
+  // Wait for a quiet moment (BG_IDLE_MS since the last activity) before starting; once started,
+  // the next page follows straight after the previous one, as long as it stays quiet. (Waiting
+  // the full idle time between every page capped loading at one page per BG_IDLE_MS.)
   function bgSchedule() {
     if (bgStopped || document.hidden) return;
     clearTimeout(bgTimer);
-    bgTimer = setTimeout(bgStep, BG_IDLE_MS);
+    const quietFor = performance.now() - lastActivityAt;
+    bgTimer = setTimeout(bgStep, Math.max(0, BG_IDLE_MS - quietFor));
   }
   async function bgStep() {
     bgTimer = null;
@@ -1207,6 +1212,7 @@
     target.addEventListener(
       evt,
       () => {
+        lastActivityAt = performance.now();
         if (evt === "scroll") lastScrollAt = performance.now();
         bgPause();
         bgSchedule();
