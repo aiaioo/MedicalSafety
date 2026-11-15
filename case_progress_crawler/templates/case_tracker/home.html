@@ -3,8 +3,10 @@
 {% include "case_tracker/_search.html" %}
 {% endblock %}
 {% block body %}
+<div id="analytics">
 {% include "case_tracker/_period_nav.html" %}
 {% include "case_tracker/_analytics.html" %}
+</div>
 <div id="cases"></div>
 {% if not public %}
 <form method="get" style="margin:1rem 0">
