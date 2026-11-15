@@ -32,7 +32,8 @@ from datetime import date
 import progress_storage as storage
 from analysis import party_type
 
-COURT = "consumer"
+COURT = "consumer"  # the analysed court of the first state, Karnataka; another state's is court_id(state)
+DEFAULT_STATE = "Karnataka"
 
 CASE_NO_RE = re.compile(r"(?P<prefix>.+)/(?P<serial>\d+)/(?P<year>\d{4})$")
 TIME_RE = re.compile(r"\bAT\s+(\d{1,2}):(\d{2})\s*([AP])\.?\s*M", re.IGNORECASE)
@@ -99,11 +100,24 @@ def ist_date(value):
     return (datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
 
 
+def court_id(state):
+    """The analysed court of a state's consumer commissions: "consumer" for Karnataka (as it always was), else "consumer-<state>"."""
+    return COURT if state == DEFAULT_STATE else f"{COURT}-{re.sub(r'[^a-z0-9]+', '-', state.lower()).strip('-')}"
+
+
+def commission_states():
+    """{e-Jagriti commission id: state} from the stored court list."""
+    return {c["ejagriti_commission_id"]: c.get("state") or DEFAULT_STATE
+            for c in storage.load_courts().values() if c.get("ejagriti_commission_id")}
+
+
 def collect():
-    """{case number: case} from every cause list file."""
-    cases = {}
-    for cause_list in storage.latest_cause_lists():
+    """{state: {case number: case}} from every cause list, a list belonging to its commission's state."""
+    states = commission_states()
+    by_state = {}
+    for cause_list in storage.iter_latest_cause_lists():
         doc, source = cause_list["doc"], source_name(cause_list)
+        cases = by_state.setdefault(states.get(doc.get("ejagriti_commission_id"), DEFAULT_STATE), {})
         for row in doc["causelists"]:
             for c in row["cases"]:
                 number = " ".join((c.get("caseNumber") or "").split())
@@ -140,7 +154,7 @@ def collect():
                 case["hearings"].setdefault(list_date, {
                     "date": list_date, "stage": stage, "court": court_no, "bench": bench,
                     "time": list_time(stage), "sources": [source], "raw": raw})
-    return cases
+    return by_state
 
 
 def build(cases, today=None):
@@ -166,14 +180,14 @@ def build(cases, today=None):
     return result
 
 
-def write_outputs(result):
+def write_outputs(result, state=DEFAULT_STATE):
     party_rows = []
     for eid, r in result.items():
         for role, listed in (("complainant", r["complainants"]), ("respondent", r["respondents"])):
             for name in listed:
                 party_rows.append([eid, name, party_type(name, role), role, r["as_of"], r["case_key"]])
     advocate_rows = []
-    statuses = storage.load_case_documents("status.json")
+    statuses = storage.load_case_documents("status.json", case_keys=[r["case_key"] for r in result.values()])
     for eid, r in result.items():
         details = detail_advocates(statuses.get(r["case_key"]))
         for role in ("complainant", "respondent"):
@@ -193,14 +207,16 @@ def write_outputs(result):
                                   "yes" if h["held"] else "no", ", ".join(p["tags"]), p["text"],
                                   h["outcome"], h["next_date"] or "", h["postponed_from"] or "", "", "",
                                   "\n\n".join(h["raw"]), r["case_key"]])
-    storage.replace_analysis(COURT, result, status=status_rows, parties=party_rows, advocates=advocate_rows, timeline=timeline_rows)
+    storage.replace_analysis(court_id(state), result, state=state, status=status_rows, parties=party_rows, advocates=advocate_rows,
+                             timeline=timeline_rows)
 
 
 def main():
-    lists = len(storage.latest_cause_lists())
-    result = build(collect())
-    write_outputs(result)
-    print(f"{lists} cause lists, {len(result)} cases -> database ({COURT})")
+    by_state = collect()
+    for state, cases in sorted(by_state.items()):
+        result = build(cases)
+        write_outputs(result, state)
+        print(f"{state}: {len(result)} cases -> database ({court_id(state)})")
     for w in warnings:
         print("warning:", w, file=sys.stderr)
 

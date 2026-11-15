@@ -135,28 +135,36 @@ def days_to_close(filing_date, last_hearing, outcome):
     return days if days >= 0 else None
 
 
+def _add_rows(c, today, case_rows, hearing_rows):
+    """Append one case's row, and its hearings' rows, to the two tables' rows."""
+    labels = hearing_labels(c["hearings"], c["provider_side"], today)
+    gaps = [l["gap_days"] for l in labels if l["gap_days"] is not None]
+    counts = c["adjournments"]
+    held = [l for l in labels if l["held"]]
+    case_rows.append([
+        c["court"], c["case_key"], c["enquiry_id"], c["year"], c["kind"], c["outcome"], c["provider_side"],
+        c.get("label", ""), "; ".join(sorted(c["hospitals"].values())), len(labels), len(held),
+        min((l["date"] for l in held), default=None), max((l["date"] for l in held), default=None),
+        len(gaps), int(statistics.median(gaps)) if gaps else None, max(gaps, default=None),
+        counts[("patient", "time")], counts[("hospital", "time")], counts[("patient", "absent")], counts[("hospital", "absent")],
+        c["filing_date"] or None, c["days_to_close"]])
+    for h, l in zip(c["hearings"], labels):
+        hearing_rows.append([c["court"], c["case_key"], l["date"] or None, l["held"], l["gap_days"],
+                             l["time_asked_by"], l["absent_side"], c["provider_side"], bool(h.get("from_history"))])
+
+
 def rebuild():
     """Recompute both tables for every analysed court, from the viewer's merged view of each case (cause lists plus
     the portal's history), so the numbers stored are the numbers the viewer shows."""
     import viewer  # imported here: the viewer imports this module for the classifiers
-    data = viewer.load("all")
     today = datetime.date.today().isoformat()
     case_rows, hearing_rows = [], []
-    for c in data["ordered"]:
-        labels = hearing_labels(c["hearings"], c["provider_side"], today)
-        gaps = [l["gap_days"] for l in labels if l["gap_days"] is not None]
-        counts = c["adjournments"]
-        held = [l for l in labels if l["held"]]
-        case_rows.append([
-            c["court"], c["case_key"], c["enquiry_id"], c["year"], c["kind"], c["outcome"], c["provider_side"],
-            c.get("label", ""), "; ".join(sorted(c["hospitals"].values())), len(labels), len(held),
-            min((l["date"] for l in held), default=None), max((l["date"] for l in held), default=None),
-            len(gaps), int(statistics.median(gaps)) if gaps else None, max(gaps, default=None),
-            counts[("patient", "time")], counts[("hospital", "time")], counts[("patient", "absent")], counts[("hospital", "absent")],
-            c["filing_date"] or None, c["days_to_close"]])
-        for h, l in zip(c["hearings"], labels):
-            hearing_rows.append([c["court"], c["case_key"], l["date"] or None, l["held"], l["gap_days"],
-                                 l["time_asked_by"], l["absent_side"], c["provider_side"], bool(h.get("from_history"))])
+    for state in storage.analysis_states():  # one state's cases in memory at a time
+        with viewer.in_state(state):
+            ordered = viewer.load("all", state)["ordered"]
+            for c in ordered:
+                _add_rows(c, today, case_rows, hearing_rows)
+        viewer._cache.clear()
     storage.replace_metrics(case_rows, hearing_rows)
     return len(case_rows), len(hearing_rows)
 

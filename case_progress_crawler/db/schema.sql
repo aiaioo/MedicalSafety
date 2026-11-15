@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     court       text PRIMARY KEY,
     run_at      timestamptz NOT NULL DEFAULT now()
 );
+-- The state each analysed court belongs to: every page of the viewer is for one state, and loads only that state's courts.
+ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'Karnataka';
 
 CREATE TABLE IF NOT EXISTS analysis_status (
     id              bigserial PRIMARY KEY,
@@ -186,15 +188,33 @@ CREATE TABLE IF NOT EXISTS case_judgements (
     classified_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- ---- the "At a glance" panel, ready to show (dashboard_stats.py; the daily crawl rebuilds it after judgements.py) ----
--- One row per what a visitor can ask for: the court selection (kmc / consumer / all), whether not_medical cases are
--- shown, and a year (0 = all years). doc is viewer.analytics()'s result, so the page need not walk every case.
+-- ---- the analytics, ready to show (dashboard_stats.py; the daily crawl rebuilds it after judgements.py), one state at a time ----
+-- dashboard_stats_by_state: the "At a glance" panel. One row per what a visitor can ask for in a state: the court selection
+-- (kmc / consumer / all), whether not_medical cases are shown, and a year (0 = all years; below 0 a period of years, see
+-- viewer.period_code). doc is viewer.analytics()'s result, so the page need not walk every case.
 
-CREATE TABLE IF NOT EXISTS dashboard_stats (
+CREATE TABLE IF NOT EXISTS dashboard_stats_by_state (
+    state          text NOT NULL,
     sel            text NOT NULL,
     non_medical    boolean NOT NULL,
     year           integer NOT NULL,
     doc            jsonb NOT NULL,
     computed_at    timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (sel, non_medical, year)
+    PRIMARY KEY (state, sel, non_medical, year)
 );
+
+-- analytics_pages: the tables of the hospitals and advocates pages (page = 'hospitals' / 'advocates'), for a state, a
+-- period of years (viewer.period_specs keys) and whether not_medical cases are shown, so those pages read one row
+-- and never load the state's cases.
+CREATE TABLE IF NOT EXISTS analytics_pages (
+    state          text NOT NULL,
+    page           text NOT NULL,
+    period         text NOT NULL,
+    non_medical    boolean NOT NULL,
+    doc            jsonb NOT NULL,
+    computed_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (state, page, period, non_medical)
+);
+
+-- which state a case is in (the page of a case knows only its key)
+CREATE INDEX IF NOT EXISTS analysis_status_case ON analysis_status (case_key);

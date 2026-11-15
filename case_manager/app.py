@@ -5790,13 +5790,17 @@ def _case_tracker_panel(site) -> dict | None:
         specs = case_tracker_viewer.period_specs()
         chosen = request.args.get("period")
         chosen = chosen if chosen in {k for k, *_ in specs} else "all"
-        stats = case_tracker_viewer.front_page_stats(chosen)
+        states = case_tracker_viewer.states()
+        state = request.args.get("state")
+        state = state if state in states else case_tracker_viewer.default_state()
+        stats = case_tracker_viewer.front_page_stats(chosen, state)
     except Exception:
         app.logger.exception("case tracker panel for the public page")
         return None
     if not stats["total"]:
         return None
-    return {**stats, "states": getattr(case_tracker_viewer, "STATES", []),
+    return {**stats, "states": states, "state": state,
+            "state_url": lambda x: url_for("public_view", **{**request.args.to_dict(), "state": x}),
             "periods": [(k, label) for k, label, *_ in specs], "period": chosen,
             "plabel": next(label for k, label, *_ in specs if k == chosen) if chosen != "all" else None,
             "period_url": lambda k: url_for("public_view", **{**request.args.to_dict(), "period": None if k == "all" else k})}

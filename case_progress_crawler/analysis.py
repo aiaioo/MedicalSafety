@@ -42,6 +42,7 @@ from datetime import date
 import progress_storage as storage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE = "Karnataka"  # the Karnataka Medical Council
 COURT = "kmc"  # the analysis below parses KMC list layouts; another court would get its own parser
 PDF_DIR = os.path.join(BASE_DIR, "pdfs", COURT)
 FOLDERS = {"future": "pre_hearing", "past": "post_hearing"}  # pdfs/ sub-folders, by kind
@@ -757,7 +758,7 @@ def write_outputs(result):
                                   h["outcome"], h["next_date"] or "", h["postponed_from"] or "", ", ".join(h["next_stage_tags"]),
                                   "; ".join(h["next_stage_details"].get("cross_examination_of", [])),
                                   "\n\n".join(h["raw"]), case_key(eid)])
-    storage.replace_analysis(COURT, result, status=status_rows, parties=party_rows, timeline=timeline_rows)
+    storage.replace_analysis(COURT, result, state=STATE, status=status_rows, parties=party_rows, timeline=timeline_rows)
 
 
 def main():

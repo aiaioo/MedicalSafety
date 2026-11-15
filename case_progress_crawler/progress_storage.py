@@ -191,10 +191,17 @@ def save_case_document(case_key, name, doc):
                     (case_key, name, _json(doc)))
 
 
-def load_case_documents(name):
-    """{case key: document} of one kind of document, for every case that has it."""
+def load_case_documents(name, courts=None, case_keys=None):
+    """{case key: document} of one kind of document, for every case that has it -- or, with `courts` (analysed court ids),
+    for the cases of those courts only, or of those `case_keys`."""
     with _db() as cur:
-        cur.execute("SELECT case_key, doc FROM case_documents WHERE name = %s", (name,))
+        if case_keys is not None:
+            cur.execute("SELECT case_key, doc FROM case_documents WHERE name = %s AND case_key = ANY(%s)", (name, list(case_keys)))
+        elif courts is None:
+            cur.execute("SELECT case_key, doc FROM case_documents WHERE name = %s", (name,))
+        else:
+            cur.execute("SELECT case_key, doc FROM case_documents WHERE name = %s "
+                        "AND case_key IN (SELECT case_key FROM analysis_status WHERE court = ANY(%s))", (name, list(courts)))
         return {r["case_key"]: r["doc"] for r in cur.fetchall()}
 
 
@@ -264,8 +271,8 @@ ANALYSIS_TABLES = {  # table -> columns after `court`, in the order of the rows 
 }
 
 
-def replace_analysis(court, enquiries, **rows):
-    """Replace everything stored for `court`'s analysis. `enquiries` is {enquiry id: dict}; `rows` has a list of
+def replace_analysis(court, enquiries, state="Karnataka", **rows):
+    """Replace everything stored for `court`'s analysis (a court of `state`). `enquiries` is {enquiry id: dict}; `rows` has a list of
     row lists per table of ANALYSIS_TABLES (status, parties, advocates, timeline; a table may be left out, which
     empties it), each row in the column order given there. Values are stored as text; None becomes ''."""
     with _db() as cur:
@@ -281,7 +288,8 @@ def replace_analysis(court, enquiries, **rows):
             psycopg2.extras.execute_values(
                 cur, "INSERT INTO analysis_enquiries (court, enquiry_id, doc) VALUES %s",
                 [(court, eid, _json(doc)) for eid, doc in enquiries.items()], page_size=200)
-        cur.execute("INSERT INTO analysis_runs (court) VALUES (%s) ON CONFLICT (court) DO UPDATE SET run_at = now()", (court,))
+        cur.execute("INSERT INTO analysis_runs (court, state) VALUES (%s, %s) "
+                    "ON CONFLICT (court) DO UPDATE SET run_at = now(), state = EXCLUDED.state", (court, state))
 
 
 CASE_METRIC_COLUMNS = ["court", "case_key", "enquiry_id", "year", "kind", "outcome", "provider_side", "label", "hospitals", "n_hearings",
@@ -302,22 +310,40 @@ def replace_metrics(case_rows, hearing_rows):
                 psycopg2.extras.execute_values(cur, f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s", rows, page_size=2000)
 
 
-def replace_dashboard_stats(rows):
-    """Replace dashboard_stats (dashboard_stats.py) with rows of (sel, non_medical, year, doc), in one transaction."""
+def replace_dashboard_stats(state, rows):
+    """Replace a state's rows of dashboard_stats_by_state (dashboard_stats.py) with rows of (sel, non_medical, year, doc), in one transaction."""
     with _db() as cur:
-        cur.execute("DELETE FROM dashboard_stats")
+        cur.execute("DELETE FROM dashboard_stats_by_state WHERE state = %s", (state,))
         if rows:
-            psycopg2.extras.execute_values(cur, "INSERT INTO dashboard_stats (sel, non_medical, year, doc) VALUES %s",
-                                           [(sel, nm, year, _json(doc)) for sel, nm, year, doc in rows])
+            psycopg2.extras.execute_values(cur, "INSERT INTO dashboard_stats_by_state (state, sel, non_medical, year, doc) VALUES %s",
+                                           [(state, sel, nm, year, _json(doc)) for sel, nm, year, doc in rows])
 
 
-def load_dashboard_stats(sel, non_medical, year):
-    """The stored panel numbers for this selection (year 0 = all years) as {"doc", "computed_at"}, or None if there are none."""
+def load_dashboard_stats(state, sel, non_medical, year):
+    """The stored panel numbers for this state and selection (year 0 = all years) as {"doc", "computed_at"}, or None if there are none."""
     with _db() as cur:
-        cur.execute("SELECT doc, computed_at FROM dashboard_stats WHERE sel = %s AND non_medical = %s AND year = %s",
-                    (sel, non_medical, year))
+        cur.execute("SELECT doc, computed_at FROM dashboard_stats_by_state WHERE state = %s AND sel = %s AND non_medical = %s AND year = %s",
+                    (state, sel, non_medical, year))
         r = cur.fetchone()
         return {"doc": r["doc"], "computed_at": r["computed_at"]} if r else None
+
+
+def replace_analytics_pages(state, rows):
+    """Replace a state's rows of analytics_pages with rows of (page, period, non_medical, doc), in one transaction."""
+    with _db() as cur:
+        cur.execute("DELETE FROM analytics_pages WHERE state = %s", (state,))
+        if rows:
+            psycopg2.extras.execute_values(cur, "INSERT INTO analytics_pages (state, page, period, non_medical, doc) VALUES %s",
+                                           [(state, page, period, nm, _json(doc)) for page, period, nm, doc in rows], page_size=20)
+
+
+def load_analytics_page(state, page, period, non_medical):
+    """The stored table of an analytics page, or None if there is none."""
+    with _db() as cur:
+        cur.execute("SELECT doc FROM analytics_pages WHERE state = %s AND page = %s AND period = %s AND non_medical = %s",
+                    (state, page, period, non_medical))
+        r = cur.fetchone()
+        return r["doc"] if r else None
 
 
 def load_judgements():
@@ -341,6 +367,57 @@ def delete_judgements_except(case_keys):
     with _db() as cur:
         cur.execute("DELETE FROM case_judgements WHERE NOT (case_key = ANY(%s))", (list(case_keys),))
         return cur.rowcount
+
+
+def analysis_courts(state=None):
+    """The analysed courts' ids, of one state or of all of them."""
+    with _db() as cur:
+        if state:
+            cur.execute("SELECT court FROM analysis_runs WHERE state = %s ORDER BY court", (state,))
+        else:
+            cur.execute("SELECT court FROM analysis_runs ORDER BY court")
+        return [r["court"] for r in cur.fetchall()]
+
+
+def analysis_states():
+    """The states that have analysed courts, Karnataka first and the rest alphabetically."""
+    with _db() as cur:
+        cur.execute("SELECT state FROM analysis_runs GROUP BY state ORDER BY (state <> 'Karnataka'), state")
+        return [r["state"] for r in cur.fetchall()]
+
+
+def state_of_court(court):
+    with _db() as cur:
+        cur.execute("SELECT state FROM analysis_runs WHERE court = %s", (court,))
+        row = cur.fetchone()
+        return row["state"] if row else None
+
+
+def state_of_case(case_key):
+    """The state of the analysed case with this key, or None."""
+    with _db() as cur:
+        cur.execute("SELECT r.state FROM analysis_status s JOIN analysis_runs r ON r.court = s.court WHERE s.case_key = %s LIMIT 1", (case_key,))
+        row = cur.fetchone()
+        return row["state"] if row else None
+
+
+def state_version(courts):
+    """Something that changes whenever these courts' analysis is replaced or a status / history document of one of their
+    cases is added or changed, for caches: it looks at those courts' cases only, so another state's crawl changes nothing."""
+    with _db() as cur:
+        cur.execute("SELECT string_agg(court || '=' || run_at::text, ',' ORDER BY court) AS runs FROM analysis_runs WHERE court = ANY(%s)", (list(courts),))
+        runs = cur.fetchone()["runs"]
+        cur.execute("SELECT count(*) AS n, max(d.saved_at)::text AS latest FROM case_documents d WHERE d.name IN ('status.json', 'history.json') "
+                    "AND d.case_key IN (SELECT case_key FROM analysis_status WHERE court = ANY(%s))", (list(courts),))
+        row = cur.fetchone()
+        return (runs, row["n"], row["latest"])
+
+
+def count_label(courts, label):
+    """How many cases of these analysed courts carry this label (status rows)."""
+    with _db() as cur:
+        cur.execute("SELECT count(*) AS n FROM analysis_status WHERE court = ANY(%s) AND label = %s", (list(courts), label))
+        return cur.fetchone()["n"]
 
 
 def has_analysis(court):
