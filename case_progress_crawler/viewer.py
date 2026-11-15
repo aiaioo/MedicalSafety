@@ -179,19 +179,39 @@ def selection():
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
 
-PERIODS = (("all", "All years"), ("recent", "Last 5 years"), ("mid", "5\u201310 years ago"), ("old", "Before 10 years"))  # the analytics' own years filter, by the year a case was filed
+# The analytics' own years filter, by the year a case was filed: (key, label, first year, last year). The panel's stored rows
+# (dashboard_stats) keep a period under year code -first year, or -1 for "before"; 0 is all years.
+PERIOD_SPECS = (("all", "All years", None, None), ("2025", "2025 onwards", 2025, None), ("2020", "2020\u20132024", 2020, 2024),
+                ("2015", "2015\u20132019", 2015, 2019), ("old", "Before 2015", None, 2014))
+PERIODS = tuple((k, label) for k, label, _, _ in PERIOD_SPECS)
+PERIOD_LABELS = dict(PERIODS)
+PERIOD_CODES = {"all": 0, "2025": -2025, "2020": -2020, "2015": -2015, "old": -1}
 
 
 def period():
     p = request.args.get("period")
-    return p if p in dict(PERIODS) else "all"
+    return p if p in PERIOD_LABELS else "all"
 
 
 def in_period(c, p):
-    """Was the case filed in the period: the last 5 years (this year and the four before), the 5 years before those, or earlier."""
-    this_year = datetime.date.today().year
-    return (p == "all" or (p == "recent" and c["year"] > this_year - 5) or (p == "mid" and this_year - 10 < c["year"] <= this_year - 5)
-            or (p == "old" and c["year"] <= this_year - 10))
+    """Was the case filed in the period (see PERIOD_SPECS)?"""
+    for key, _, lo, hi in PERIOD_SPECS:
+        if key == p:
+            return (lo is None or c["year"] >= lo) and (hi is None or c["year"] <= hi)
+    return True
+
+
+_memo = {}  # (what, period, non_medical) -> (the data it was worked out from, result): the analytics pages' tables, ready to show
+
+
+def memoised(what, p, compute):
+    """compute(data) for the both-courts data, kept until the data is reloaded (so a page is not worked out again for each visitor)."""
+    data = load("all")
+    key = (what, p, show_non_medical())
+    hit = _memo.get(key)
+    if hit is None or hit[0] is not data:
+        hit = _memo[key] = (data, compute(data))
+    return hit[1]
 
 
 def show_non_medical():
@@ -443,7 +463,11 @@ def compute_stats(sel, year, non_medical):
     """The panel's numbers for a court selection, a year (0 = all years) and whether not_medical cases are shown,
     worked out from every case (dashboard_stats.py stores these; the page falls back to this when nothing is stored)."""
     in_scope = [c for c in load(sel)["ordered"] if non_medical or c.get("label") != "not_medical"]
-    cases = [c for c in in_scope if not year or c["year"] == year]
+    if year < 0:  # a period (PERIOD_CODES)
+        key = next(k for k, code in PERIOD_CODES.items() if code == year)
+        cases = [c for c in in_scope if in_period(c, key)]
+    else:
+        cases = [c for c in in_scope if not year or c["year"] == year]
     return analytics(cases, in_scope)
 
 
@@ -552,12 +576,23 @@ def load(sel=None):
     return data
 
 
+def warm_tables(p):
+    """Work out the hospitals and advocates tables of a period (without a request: not_medical cases hidden, the default)."""
+    data = load("all")
+    visible_cases = [c for c in data["ordered"] if c.get("label") != "not_medical" and in_period(c, p)]
+    _memo[("hospitals", p, False)] = (data, hospital_table(visible_cases))
+    _memo[("advocates", p, False)] = (data, visible_advocates(data, p, lambda c: c.get("label") != "not_medical"))
+
+
 def warm_cache():
     """Load every selection's data in a background thread, so the first visitor doesn't wait for it."""
     def run():
         for sel in [DEFAULT_SELECTION] + [s for s in SELECTIONS if s != DEFAULT_SELECTION]:
             try:
                 load(sel)
+                if sel == "all":  # the analytics pages' tables, for each period
+                    for p in PERIOD_LABELS:
+                        warm_tables(p)
             except Exception as e:  # a request will hit and report the same problem
                 print(f"case tracker: warming {sel} failed: {e!r}")
     threading.Thread(target=run, daemon=True, name="case-tracker-warm").start()
@@ -684,11 +719,11 @@ def home():
     if outcome not in {k for k, _ in OUTCOMES}:
         outcome = None
     p = period()  # the panel has its own years filter and always covers both courts
-    if q or p != "all":  # a search or a period changes the cases, so it is worked out live
-        everything = [c for c in load("all")["ordered"] if visible(c) and (not q or matches(c, q))]
+    if q:  # a search changes the cases, so it is worked out live
+        everything = [c for c in load("all")["ordered"] if visible(c) and matches(c, q)]
         stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
     else:
-        stats = panel_stats("all", 0, show_non_medical())
+        stats = panel_stats("all", PERIOD_CODES[p], show_non_medical())
     if outcome:
         cases = [c for c in cases if c["outcome"] == outcome]
     judgement = request.args.get("judgement")
@@ -703,7 +738,7 @@ def home():
         reason = None
     judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
     reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
-    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=dict(PERIODS)[p] if p != "all" else None, q=q, links=court_links(), stats=stats,
+    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=PERIOD_LABELS[p] if p != "all" else None, q=q, links=court_links(), stats=stats,
                            judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
 
 
@@ -935,7 +970,7 @@ def hospitals():
     q = request.args.get("q", "").strip().lower()
     sort = request.args.get("sort")
     sort = sort if sort in HOSPITAL_RANKS else "cases"
-    rows = hospital_table([c for c in load()["ordered"] if visible(c) and in_period(c, period())])
+    rows = memoised("hospitals", period(), lambda data: hospital_table([c for c in data["ordered"] if visible(c) and in_period(c, period())]))
     found = [r for r in rows if not q or q in r["name"].lower()]
     boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
     ranked, below = rank_hospitals(found, sort)
@@ -1024,12 +1059,13 @@ def advocate_metrics(cases, sides):
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
-def visible_advocates(data, p="all"):
+def visible_advocates(data, p="all", keep=None):
     """The advocates with their visible cases only (an advocate left with none is dropped), and the count of
     those cases for the complainant side and for the respondent side."""
+    keep = keep or visible
     out = []
     for a in data["advocates"].values():
-        cases = [c for c in a["cases"] if visible(c) and in_period(c, p)]
+        cases = [c for c in a["cases"] if keep(c) and in_period(c, p)]
         if cases:
             sides = [a["sides"][c["case_key"]] for c in cases]
             out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
@@ -1141,7 +1177,7 @@ def advocates():
     sort = sort if sort in dict(ADVOCATE_SORTS) else "cases"
     min_cases = request.args.get("min", type=int)
     min_cases = min_cases if min_cases in ADVOCATE_MIN_CASES else DEFAULT_MIN_CASES
-    found = [a for a in visible_advocates(load(), period()) if not q or q in a["name"].lower()]
+    found = [a for a in memoised("advocates", period(), lambda data: visible_advocates(data, period())) if not q or q in a["name"].lower()]
     boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
     return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,

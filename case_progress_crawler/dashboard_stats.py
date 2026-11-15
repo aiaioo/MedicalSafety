@@ -4,7 +4,7 @@ every case to draw them.
 
 `python dashboard_stats.py` (the daily crawl runs it last, after judgements.py, because the panel includes the
 judgement classes) works out viewer.analytics() for everything a visitor can ask for -- each court selection, with
-and without the not_medical cases, for all years and for each year -- and replaces the dashboard_stats table with
+and without the not_medical cases, for all years, for each year and (for the both-courts panel) for each fixed period of years -- and replaces the dashboard_stats table with
 them in one transaction. The pages read the stored row (viewer.panel_stats); a search, which changes the cases
 counted, is still worked out live, as is any selection with no row.
 """
@@ -21,7 +21,7 @@ def rebuild():
     for sel in viewer.SELECTIONS:
         years = viewer.load(sel)["years"]
         for non_medical in (False, True):
-            for year in [0] + years:
+            for year in [0] + years + (list(viewer.PERIOD_CODES.values())[1:] if sel == "all" else []):  # the periods only for the both-courts panel
                 rows.append((sel, non_medical, year, viewer.compute_stats(sel, year, non_medical)))
     storage.replace_dashboard_stats(rows)
     return len(rows)
