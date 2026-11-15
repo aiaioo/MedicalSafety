@@ -18,9 +18,26 @@
   </div>
   {% endif %}
 {% endmacro %}
+{% macro cases_list() %}
+  {% if stats.top_hospitals %}
+  <div class="judgements">
+    <h3>Hospitals by number of cases <span class="muted">(top 10{{ '; ' ~ plabel if plabel }})</span></h3>
+    {% set most = stats.top_hospitals[0][0] %}
+    {% for n, name, slug in stats.top_hospitals %}
+    <div class="jrow">
+      {% if may_list %}<a href="{{ url_for('case_tracker.hospital', slug=slug) }}">{% endif %}
+      <span class="jlabel">{{ name }}</span>
+      <span class="jtrack"><span class="jfill seg part" style="width:{{ (100 * n / most)|round|int }}%"></span></span>
+      <span class="jn">{{ n }}</span>
+      {% if may_list %}</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
 {% if stats.total %}
 <section class="panel">
-  <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' filed ' ~ plabel|lower if plabel }})</span></h2>
+  <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' filed ' ~ plabel|lower if plabel }})</span>{% if may_list %} <a class="muted" style="font-size:.7em;font-weight:normal" href="{{ url_for('case_tracker.home', court='all') }}#cases">All cases &rarr;</a>{% endif %}</h2>
   <div class="panel-grid">
   {% for c in stats.courts %}
     <div>
@@ -29,9 +46,9 @@
         {% for k, label, n, pct in c.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
       </div>
       <ul class="legend">
-        {% for k, label, n, pct in c.bars %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases">{% endif %}<i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%){% if may_list %}</a>{% endif %}</li>{% endfor %}
+        {% for k, label, n, pct in c.bars %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases">{% endif %}<i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%){% if may_list %}</a>{% endif %}</li>{% endfor %}
       </ul>
-      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
       {% if c.patient_win_pct is not none %}<p class="muted">Of {{ c.decided }} decided cases (the court allowed or dismissed the complaint): <strong>patients won {{ c.patient_win_pct }}%</strong> ({{ c.won_patient }}), <strong>hospitals won {{ c.hospital_win_pct }}%</strong> ({{ c.won_hospital }}).
         <details class="info"><summary title="How is a win decided?">ⓘ</summary><span class="infobox">Patients win when the complaint is allowed (in full or in part); hospitals win when it is dismissed, including for non-prosecution. Settled, withdrawn, returned and open cases are not decided, and nor are cases where the hospital's side is unclear.{% if c.court == 'kmc' %} The KMC's record rarely says a complaint was upheld (its outcomes are mostly dismissals), so this understates patients' wins there.{% endif %}</span></details></p>{% endif %}
       <details class="court-more muted"><summary>More about {{ c.label }}</summary>
@@ -58,14 +75,14 @@
     <h3>Judgements <span class="muted">({{ stats.judgements.total }}{{ ' filed ' ~ plabel|lower if plabel }}{% if stats.judgements.read is defined %}; {{ stats.judgements.read }} could be read, and the percentages are of those{% endif %}{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.judgements.bars %}
     <div class="jrow{{ ' on' if linked and judgement == k }}">
-      {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement=k) }}#cases">{% endif %}
+      {% if linked %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, judgement=k) }}#cases">{% endif %}
       <span class="jlabel">{{ label }}</span>
       <span class="jtrack"><span class="jfill seg {{ k }}" style="width:{{ (100 * n / stats.judgements.max)|round|int }}%"></span></span>
       <span class="jn">{{ n }}{% if pct is not none and stats.judgements.read is defined %} <span class="muted">({{ pct }}%)</span>{% endif %}</span>
       {% if linked %}</a>{% endif %}
     </div>
     {% endfor %}
-    {% if linked %}<p class="muted"><a href="{{ url_for('case_tracker.home', year=year, q=q or None, judgement='all') }}#cases">All judgements &rarr;</a></p>{% endif %}
+    {% if linked %}<p class="muted"><a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, judgement='all') }}#cases">All judgements &rarr;</a></p>{% endif %}
     <p class="muted" style="font-size:.85em">Classified automatically from the wording at the end of each judgement; "scanned" judgements have no readable text.</p>
   </div>
   {% endif %}
@@ -75,7 +92,7 @@
     <h3>Why cases were dismissed <span class="muted">({{ stats.dismissals.total }} dismissed judgements read{{ ' filed ' ~ plabel|lower if plabel }}; percentages are of those{% if linked %}; click a bar to list its cases{% endif %})</span></h3>
     {% for k, label, n, pct in stats.dismissals.bars %}
     <div class="jrow{{ ' on' if linked and reason == k }}">
-      {% if linked %}<a href="{{ url_for('case_tracker.home', year=year, q=q or None, reason=k) }}#cases">{% endif %}
+      {% if linked %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, reason=k) }}#cases">{% endif %}
       <span class="jlabel">{{ label }}</span>
       <span class="jtrack"><span class="jfill seg dismissed" style="width:{{ (100 * n / stats.dismissals.max)|round|int }}%"></span></span>
       <span class="jn">{{ n }} <span class="muted">({{ pct }}%)</span></span>
@@ -136,12 +153,13 @@
   </div>
   {% endif %}
   {% if stats.years|length > 1 %}
-  <details class="by-year"><summary><h3>By year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected{% if may_list %}; click a year to filter{% endif %})</span></h3></summary>
+  <details class="by-year"><summary><h3>By number of cases, by year{% if stats.against %} and hospital ranking{% endif %} <span class="muted">(all courts selected{% if may_list %}; click a year to filter{% endif %})</span></h3></summary>
+  {{ cases_list() }}
   {{ against_list() }}
   <table class="years">
     {% for y in stats.years %}
     <tr{{ ' class=on' if y.year == year }}>
-      <td>{% if may_list %}<a href="{{ url_for('case_tracker.home', year=y.year, q=q or None) }}">{{ y.year }}</a>{% else %}{{ y.year }}{% endif %}</td>
+      <td>{% if may_list %}<a href="{{ url_for('case_tracker.home', court='all', year=y.year, q=q or None) }}">{{ y.year }}</a>{% else %}{{ y.year }}{% endif %}</td>
       <td class="muted">{{ y.total }}</td>
       <td style="width:60%"><div class="bar">{% for k, label, n, pct in y.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}</div></td>
       <td class="muted">{{ y.open }} open · {{ y.total - y.open }} closed{% if y.median_gap is not none %} · {{ y.median_gap }}d gaps{% endif %}</td>
@@ -151,7 +169,7 @@
   <div class="notes muted"><h4>About these figures</h4><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></div>
   </details>
   {% else %}
-  {% if stats.against %}<details class="by-year"><summary><h3>Hospital ranking</h3></summary>{{ against_list() }}</details>{% endif %}
+  {% if stats.against %}<details class="by-year"><summary><h3>Hospital ranking</h3></summary>{{ cases_list() }}{{ against_list() }}</details>{% endif %}
   <details class="notes muted"><summary>About these figures</summary><p>"Disposed" means the court's record does not say how the case ended (consumer cases are sorted into allowed, dismissed, withdrawn, settled or returned from the disposing hearing's text where it says); "dismissed" includes non-prosecution. Percentages are of closed cases.</p></details>
   {% endif %}
 </section>

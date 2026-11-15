@@ -2,7 +2,7 @@
 {% block title %}Advocates{% endblock %}
 {% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
 {% block body %}
-{% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
+{% if not public %}<p><a href="{{ url_for('case_tracker.home', court='all') }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
 {% include "case_tracker/_period_nav.html" %}
 <p><a href="{{ url_for('case_tracker.hospitals') }}">Hospitals &rarr;</a></p>

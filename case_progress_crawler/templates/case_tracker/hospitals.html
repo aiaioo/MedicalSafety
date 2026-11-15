@@ -10,7 +10,7 @@
     <td>{% for a, n, k in r.lawyers %}{{ ct_link('advocate', a, n) }} <span class="muted">{{ k }}</span>{{ '; ' if not loop.last }}{% else %}<span class="muted">&ndash;</span>{% endfor %}</td></tr>
 {% endmacro %}
 {% block body %}
-{% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
+{% if not public %}<p><a href="{{ url_for('case_tracker.home', court='all') }}">&larr; All cases</a></p>{% endif %}
 <h1>Hospitals</h1>
 {% include "case_tracker/_period_nav.html" %}
 <p><a href="{{ url_for('case_tracker.advocates') }}">Advocates and law firms &rarr;</a></p>

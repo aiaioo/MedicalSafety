@@ -66,7 +66,7 @@ COURT_DESCRIPTIONS = {  # court id -> what the court is, shown under its figures
     "consumer": "CPA: medical negligence cases before the consumer courts of Karnataka (Consumer Protection Act).",
 }
 STATES = ["Karnataka"]  # the states the crawl covers; the first is selected (the page's State dropdown is not yet a filter)
-SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "Both"}  # what the selector offers
+SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
 PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
@@ -175,6 +175,9 @@ def selection():
     """The courts the visitor chose with the selector; the analytics pages ignore it and cover both."""
     if all_courts_page():
         return "all"
+    sel = request.args.get("court") if request.endpoint == "case_tracker.home" else None  # a link from the analytics: the case list under that choice
+    if sel in SELECTIONS:
+        return sel
     sel = request.cookies.get("court")
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
@@ -679,6 +682,15 @@ def non_medical(choice):
     back = _back_to(("/", "/hearings/", "/hospitals/", "/advocates/"), ("/day/", "/hospital/", "/advocate/"))
     resp = redirect(back)
     resp.set_cookie("non_medical", choice, max_age=365 * 86400, samesite="Lax", path=_cookie_path())
+    return resp
+
+
+@bp.after_request
+def remember_linked_court(resp):
+    """A case list opened by a link carrying ?court= keeps that choice for the visitor, as a click on a pill would."""
+    sel = request.args.get("court")
+    if request.endpoint == "case_tracker.home" and sel in SELECTIONS and request.cookies.get("court") != sel:
+        resp.set_cookie("court", sel, max_age=365 * 86400, samesite="Lax", path=_cookie_path())
     return resp
 
 
