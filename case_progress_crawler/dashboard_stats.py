@@ -21,7 +21,7 @@ def rebuild():
     for sel in viewer.SELECTIONS:
         years = viewer.load(sel)["years"]
         for non_medical in (False, True):
-            for year in [0] + years + (list(viewer.PERIOD_CODES.values())[1:] if sel == "all" else []):  # the periods only for the both-courts panel
+            for year in [0] + years + ([viewer.period_code(spec) for spec in viewer.period_specs()[1:]] if sel == "all" else []):  # the periods only for the both-courts panel
                 rows.append((sel, non_medical, year, viewer.compute_stats(sel, year, non_medical)))
     storage.replace_dashboard_stats(rows)
     return len(rows)

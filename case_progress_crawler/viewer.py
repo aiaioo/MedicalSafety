@@ -179,23 +179,34 @@ def selection():
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
 
-# The analytics' own years filter, by the year a case was filed: (key, label, first year, last year). The panel's stored rows
-# (dashboard_stats) keep a period under year code -first year, or -1 for "before"; 0 is all years.
-PERIOD_SPECS = (("all", "All years", None, None), ("2025", "2025 onwards", 2025, None), ("2020", "2020\u20132024", 2020, 2024),
-                ("2015", "2015\u20132019", 2015, 2019), ("old", "Before 2015", None, 2014))
-PERIODS = tuple((k, label) for k, label, _, _ in PERIOD_SPECS)
-PERIOD_LABELS = dict(PERIODS)
-PERIOD_CODES = {"all": 0, "2025": -2025, "2020": -2020, "2015": -2015, "old": -1}
+# The analytics' own years filter, by the year a case was filed: the current block of five years (the years from a multiple of
+# five) and onwards, then each earlier block back to FIRST_PERIOD, then everything before that. (key, label, first year, last year);
+# a new block appears by itself as the years pass. The panel's stored rows (dashboard_stats) keep a period under the year code
+# -(first year * 10000 + last year), with 0 for no first year and 9999 for no last year; 0 is all years.
+FIRST_PERIOD = 2015
+
+
+def period_specs(this_year=None):
+    this_year = this_year or datetime.date.today().year
+    start = this_year // 5 * 5
+    specs = [("all", "All years", None, None), (str(start), f"{start} onwards", start, None)]
+    specs += [(str(y), f"{y}\u2013{y + 4}", y, y + 4) for y in range(start - 5, FIRST_PERIOD - 1, -5)]
+    return specs + [("old", f"Before {FIRST_PERIOD}", None, FIRST_PERIOD - 1)]
+
+
+def period_code(spec):
+    _, _, lo, hi = spec
+    return 0 if lo is None and hi is None else -((lo or 0) * 10000 + (hi or 9999))
 
 
 def period():
     p = request.args.get("period")
-    return p if p in PERIOD_LABELS else "all"
+    return p if p in {k for k, *_ in period_specs()} else "all"
 
 
 def in_period(c, p):
-    """Was the case filed in the period (see PERIOD_SPECS)?"""
-    for key, _, lo, hi in PERIOD_SPECS:
+    """Was the case filed in the period (see period_specs)?"""
+    for key, _, lo, hi in period_specs():
         if key == p:
             return (lo is None or c["year"] >= lo) and (hi is None or c["year"] <= hi)
     return True
@@ -207,7 +218,7 @@ _memo = {}  # (what, period, non_medical) -> (the data it was worked out from, r
 def memoised(what, p, compute):
     """compute(data) for the both-courts data, kept until the data is reloaded (so a page is not worked out again for each visitor)."""
     data = load("all")
-    key = (what, p, show_non_medical())
+    key = (what, p, show_non_medical(), datetime.date.today().year)  # a period such as "2025" changes meaning when the year turns
     hit = _memo.get(key)
     if hit is None or hit[0] is not data:
         hit = _memo[key] = (data, compute(data))
@@ -463,8 +474,8 @@ def compute_stats(sel, year, non_medical):
     """The panel's numbers for a court selection, a year (0 = all years) and whether not_medical cases are shown,
     worked out from every case (dashboard_stats.py stores these; the page falls back to this when nothing is stored)."""
     in_scope = [c for c in load(sel)["ordered"] if non_medical or c.get("label") != "not_medical"]
-    if year < 0:  # a period (PERIOD_CODES)
-        key = next(k for k, code in PERIOD_CODES.items() if code == year)
+    if year < 0:  # a period (period_code)
+        key = next(spec[0] for spec in period_specs() if period_code(spec) == year)
         cases = [c for c in in_scope if in_period(c, key)]
     else:
         cases = [c for c in in_scope if not year or c["year"] == year]
@@ -580,8 +591,8 @@ def warm_tables(p):
     """Work out the hospitals and advocates tables of a period (without a request: not_medical cases hidden, the default)."""
     data = load("all")
     visible_cases = [c for c in data["ordered"] if c.get("label") != "not_medical" and in_period(c, p)]
-    _memo[("hospitals", p, False)] = (data, hospital_table(visible_cases))
-    _memo[("advocates", p, False)] = (data, visible_advocates(data, p, lambda c: c.get("label") != "not_medical"))
+    _memo[("hospitals", p, False, datetime.date.today().year)] = (data, hospital_table(visible_cases))
+    _memo[("advocates", p, False, datetime.date.today().year)] = (data, visible_advocates(data, p, lambda c: c.get("label") != "not_medical"))
 
 
 def warm_cache():
@@ -591,7 +602,7 @@ def warm_cache():
             try:
                 load(sel)
                 if sel == "all":  # the analytics pages' tables, for each period
-                    for p in PERIOD_LABELS:
+                    for p, *_ in period_specs():
                         warm_tables(p)
             except Exception as e:  # a request will hit and report the same problem
                 print(f"case tracker: warming {sel} failed: {e!r}")
@@ -656,7 +667,7 @@ def signed_in_accounts_only():
 def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
-    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "periods": PERIODS, "period": period(), "period_url": lambda k: url_for(request.endpoint, **{**request.view_args, **request.args.to_dict(), "period": None if k == "all" else k}),
+    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "periods": [(k, label) for k, label, *_ in period_specs()], "period": period(), "period_url": lambda k: url_for(request.endpoint, **{**request.view_args, **request.args.to_dict(), "period": None if k == "all" else k}),
             "court_choice": not all_courts_page() and not is_public_visitor(), "non_medical_count": hidden,
             "show_non_medical": show_non_medical(), "can_edit_links": can_manage_links()}
 
@@ -723,7 +734,7 @@ def home():
         everything = [c for c in load("all")["ordered"] if visible(c) and matches(c, q)]
         stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
     else:
-        stats = panel_stats("all", PERIOD_CODES[p], show_non_medical())
+        stats = panel_stats("all", period_code(next(x for x in period_specs() if x[0] == p)), show_non_medical())
     if outcome:
         cases = [c for c in cases if c["outcome"] == outcome]
     judgement = request.args.get("judgement")
@@ -738,7 +749,7 @@ def home():
         reason = None
     judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
     reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
-    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=PERIOD_LABELS[p] if p != "all" else None, q=q, links=court_links(), stats=stats,
+    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=next(x[1] for x in period_specs() if x[0] == p) if p != "all" else None, q=q, links=court_links(), stats=stats,
                            judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
 
 
