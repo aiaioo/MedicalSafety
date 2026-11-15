@@ -5792,6 +5792,8 @@ def _case_tracker_panel(site) -> dict | None:
         chosen = chosen if chosen in {k for k, *_ in specs} else "all"
         states = case_tracker_viewer.states()
         state = request.args.get("state")
+        if state not in states:
+            state = request.cookies.get("state")  # the visitor's last choice, as the tracker's own pages use it
         state = state if state in states else case_tracker_viewer.default_state()
         stats = case_tracker_viewer.front_page_stats(chosen, state)
     except Exception:
@@ -5804,6 +5806,17 @@ def _case_tracker_panel(site) -> dict | None:
             "periods": [(k, label) for k, label, *_ in specs], "period": chosen,
             "plabel": next(label for k, label, *_ in specs if k == chosen) if chosen != "all" else None,
             "period_url": lambda k: url_for("public_view", **{**request.args.to_dict(), "period": None if k == "all" else k})}
+
+
+@app.after_request
+def remember_public_state(resp):
+    """A state chosen on the public page is remembered (the tracker's cookie), so the lists its panel links to show that state."""
+    chosen = request.args.get("state")
+    if (request.endpoint == "public_view" and case_tracker_viewer is not None and chosen in case_tracker_viewer.states()
+            and request.cookies.get("state") != chosen):
+        resp.set_cookie("state", chosen, max_age=365 * 86400, samesite="Lax", path=url_for("case_tracker.home"))
+        resp.delete_cookie("court", path=url_for("case_tracker.home"))
+    return resp
 
 
 @app.route("/public")
