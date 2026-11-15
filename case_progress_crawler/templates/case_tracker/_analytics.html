@@ -37,7 +37,8 @@
 {% endmacro %}
 {% if stats.total %}
 <section class="panel">
-  <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' filed ' ~ plabel|lower if plabel }})</span>{% if may_list %} <a class="muted" style="font-size:.7em;font-weight:normal" href="{{ url_for('case_tracker.home', court='all') }}#cases">All cases &rarr;</a>{% endif %}</h2>
+  <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' filed ' ~ plabel|lower if plabel }})</span></h2>
+  {% if may_list %}<p style="margin:.2rem 0 .6rem"><a href="{{ url_for('case_tracker.home', court='all') }}#cases">All cases &rarr;</a></p>{% endif %}
   <div class="panel-grid">
   {% for c in stats.courts %}
     <div>

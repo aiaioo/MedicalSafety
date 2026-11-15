@@ -765,11 +765,11 @@ def home():
                            judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
 
 
-def front_page_stats():
+def front_page_stats(period_key="all"):
     """The front page's "At a glance" numbers over every court, for a page outside the tracker (the case manager's
     public page): the visitor's court and non-medical cookies don't apply there, so cases labelled not_medical are
     left out."""
-    return panel_stats("all", 0, False)
+    return panel_stats("all", period_code(next((x for x in period_specs() if x[0] == period_key), period_specs()[0])), False)
 
 
 def _number_key(s):
