@@ -101,6 +101,12 @@ def _result(row):
     return {"name": row["file"], "class": row["class"], "label": dict(JUDGEMENT_CLASSES)[row["class"]], "reason": row["reason"] or None}
 
 
+def is_council_row(row):
+    """Is this stored row of a medical council's final order (analysis_dmc.py writes those; their file is not named like a consumer
+    court's order)? Such a case has no folder of order files here, so its row is the whole record."""
+    return bool(row) and not ORDER_RE.fullmatch(row["file"])
+
+
 def _current(row, path):
     return bool(row) and row["file"] == path.name and row["size"] == path.stat().st_size and row["version"] == CLASSIFIER_VERSION
 
@@ -122,7 +128,8 @@ def judgement_of(case_key):
     classification; classifies and stores it when there is none (or it is out of date)."""
     path = judgement_file(case_key)
     if path is None:
-        return None
+        row = _stored().get(case_key)
+        return _result(row) if is_council_row(row) else None
     row = _stored().get(case_key)
     if not _current(row, path):
         try:
@@ -159,6 +166,7 @@ def main():
             continue
         storage.save_judgement(case_key, file=path.name, size=path.stat().st_size, **{"class": cls}, reason=reason, version=CLASSIFIER_VERSION)
         done += 1
+    seen |= {k for k, row in stored.items() if is_council_row(row)}  # a council's rows are kept up to date by its own analysis
     gone = storage.delete_judgements_except(seen) if seen else 0
     print(f"judgements: {done} classified, {skipped} already up to date, {failed} unreadable, {gone} removed")
 

@@ -6,7 +6,7 @@ The case manager's `deploy/deploy.sh` copies this folder to
 what the case manager's `deploy/README.md` ("Case tracker") already asks for.
 
 - **What runs:** `run-crawl.sh` -- `downloader.py` (KMC hearing PDFs, consumer cause lists and case
-  details), then `analysis.py` (needs poppler's `pdftotext`, which the deploy installs), then
+  details), then `analysis.py` (needs poppler's `pdftotext`, which the deploy installs), then `analysis_dmc.py` (the Delhi Medical Council's complaint registers, recovered from the Wayback Machine by `downloader.py --court dmc`), then
   `analysis_consumer.py`, then `metrics.py` (fills `case_metrics` and `hearing_metrics`), then `judgements.py` (classifies new judgement PDFs into `case_judgements`), then `dashboard_stats.py` (stores the front-page panel numbers in `dashboard_stats`) -- as the `case-manager` user, using the web app's venv.
 - **When:** every day at 10 pm India time (`case-progress-crawl.timer`; a run missed while the droplet was off is made
   up when it next boots).

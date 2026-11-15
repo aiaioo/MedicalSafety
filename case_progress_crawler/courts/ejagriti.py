@@ -1,4 +1,4 @@
-"""Consumer commissions (state and district) listed on the e-Jagriti portal.
+"""Consumer commissions (national, state and district) listed on the e-Jagriti portal.
 
 The cause-list page https://e-jagriti.gov.in/cause-list fills its "Commission" and
 "CauseList For" drop-downs from a JSON API. Choosing a state there calls
@@ -16,10 +16,14 @@ API_URL = "https://e-jagriti.gov.in/services/master/master/v2/getCommissionDetai
 USER_AGENT = "Mozilla/5.0 (compatible; case-progress-crawler)"
 TIMEOUT = 60
 
-STATE_COMMISSION = 2  # commissionTypeId
+NATIONAL_COMMISSION = 1  # commissionTypeId
+STATE_COMMISSION = 2
 DISTRICT_COMMISSION = 3
 
 KARNATAKA = {"state": "Karnataka", "state_id": 29}
+DELHI = {"state": "Delhi", "state_id": 7}
+NATIONAL = {"state_id": 0}  # the portal lists the National Commission (NCDRC) under state id 0
+NATIONAL_SEAT = DELHI  # where the National Commission sits: its courts are listed with that state's
 BANGALORE_RE = re.compile(r"\b(?:bangalore|bengaluru)\b", re.IGNORECASE)  # two spellings of the same name
 
 
@@ -34,29 +38,65 @@ def fetch_commissions(state_id):
         session.close()
 
 
-def karnataka_courts():
-    """Consumer courts of Karnataka: the State Commission and every district commission (the circuit benches
-    of the State Commission are left out). The city of the Bangalore ones (Bangalore Urban, Bengaluru Rural,
-    Bengaluru South and the additional benches) is "Bangalore"; any other is named after its district."""
+def state_courts(state, state_id, state_city=None):
+    """Consumer courts of a state: the State Commission and every district commission (the circuit benches
+    of the State Commission are left out). `state_city` is the city of the State Commission and of any district
+    commission whose name matches BANGALORE_RE for Karnataka ("Bangalore": Bangalore Urban, Bengaluru Rural,
+    Bengaluru South and the additional benches); any other district commission is in the city named after its district."""
     courts = []
-    for c in fetch_commissions(KARNATAKA["state_id"]):
+    for c in fetch_commissions(state_id):
         is_state = c["commissionTypeId"] == STATE_COMMISSION and not c["circuitAdditionBenchStatus"]
         if not is_state and c["commissionTypeId"] != DISTRICT_COMMISSION:
             continue
         name = c["commissionNameEn"]
+        in_state_city = is_state or (state == KARNATAKA["state"] and BANGALORE_RE.search(name))
         courts.append({
             "id": f"ejagriti-{c['commissionId']}",
-            "name": "Karnataka State Commission" if is_state else name,
+            "name": f"{state} State Commission" if is_state else " ".join(name.split()),
             "kind": "consumer state commission" if is_state else "consumer district commission",
-            "city": "Bangalore" if is_state or BANGALORE_RE.search(name) else name.strip().title(),
-            "state": KARNATAKA["state"],
-            "source": API_URL + f"?stateId={KARNATAKA['state_id']}",
+            "city": state_city if in_state_city else re.sub(r"\b(Ii|Iii|Iv)\b", lambda m: m[0].upper(), " ".join(name.split()).title()),  # "South II", not "South Ii"
+            "state": state,
+            "source": API_URL + f"?stateId={state_id}",
             "ejagriti_commission_id": c["commissionId"],
             "ejagriti_case_prefix": c["casePrefixText"],
         })
     if not courts:
-        log("ERROR: no Karnataka consumer courts found; has the API changed?")
+        log(f"ERROR: no {state} consumer courts found; has the API changed?")
     return courts
+
+
+def national_courts():
+    """The National Consumer Disputes Redressal Commission (NCDRC), listed with the state it sits in (Delhi)."""
+    courts = []
+    for c in fetch_commissions(NATIONAL["state_id"]):
+        if c["commissionTypeId"] != NATIONAL_COMMISSION:
+            continue
+        courts.append({
+            "id": f"ejagriti-{c['commissionId']}",
+            "name": "National Consumer Disputes Redressal Commission (NCDRC)",
+            "kind": "consumer national commission",
+            "city": "New Delhi",
+            "state": NATIONAL_SEAT["state"],
+            "source": API_URL + f"?stateId={NATIONAL['state_id']}",
+            "ejagriti_commission_id": c["commissionId"],
+            "ejagriti_case_prefix": c["casePrefixText"],
+        })
+    if not courts:
+        log("ERROR: no National Commission found; has the API changed?")
+    return courts
+
+
+def karnataka_courts():
+    return state_courts(KARNATAKA["state"], KARNATAKA["state_id"], "Bangalore")
+
+
+def delhi_courts():
+    return state_courts(DELHI["state"], DELHI["state_id"], "New Delhi") + national_courts()
+
+
+def consumer_courts():
+    """Every consumer court the crawler follows: those of Karnataka, and those of Delhi with the National Commission."""
+    return karnataka_courts() + delhi_courts()
 
 
 API_BASE = "https://e-jagriti.gov.in/services"

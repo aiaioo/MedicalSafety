@@ -54,8 +54,9 @@ class Court(ABC):
 
 def all_courts():
     from .consumer import EJagritiConsumer
+    from .dmc import DMC
     from .kmc import KMC
-    return {c.id: c for c in (KMC(), EJagritiConsumer())}  # register new courts here
+    return {c.id: c for c in (KMC(), DMC(), EJagritiConsumer())}  # register new courts here
 
 
 def get_court(court_id):

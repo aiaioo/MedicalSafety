@@ -82,10 +82,11 @@ else
 fi
 
 # The daily crawl of the case tracker's data (see case_progress_crawler/deploy/README.md):
-# analysis.py needs poppler's pdftotext; the units run it from a systemd timer.
+# analysis.py needs poppler's pdftotext, analysis_dmc.py antiword (the DMC's .doc orders); the units run it from a systemd timer.
 echo "--- Case tracker crawl (systemd timer)"
 if [ -d "$CRAWLER_DIR/deploy" ]; then
   command -v pdftotext >/dev/null || apt-get install -y -q poppler-utils
+  command -v antiword >/dev/null || apt-get install -y -q antiword   # analysis_dmc.py reads the DMC's .doc orders with it
   for u in case-progress-crawl.service case-progress-crawl.timer; do
     cmp -s "$CRAWLER_DIR/deploy/$u" /etc/systemd/system/$u || { cp "$CRAWLER_DIR/deploy/$u" /etc/systemd/system/$u; echo "updated $u"; }
   done

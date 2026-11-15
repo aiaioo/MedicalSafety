@@ -26,6 +26,10 @@ OUTCOMES = [("open", "Still open"), ("disposed", "Disposed"), ("allowed", "Allow
 CONSUMER_OUTCOMES = {"DISPOSED OFF": "disposed", "ALLOWED": "allowed", "DISMISSED": "dismissed",
                      "DISMISSED IN NON-PROSECUTION": "dismissed"}
 
+MEDICAL_COUNCILS = ("kmc", "dmc")  # analysed courts whose status is the council's own (open / disposed / dismissed / withdrawn)
+ORDER_OUTCOMES = {"dismissed": "dismissed", "part": "allowed", "full": "allowed"}  # a final order's judgement class -> the outcome it counts as
+REGISTER_COURTS = ("dmc",)  # courts known only from a register of complaints: its timeline rows (received, appeal decided) are not hearings, so no gaps or adjournments
+
 PATIENT_WORDS = re.compile(r"complainant|petitioner|appellant|\bLC\b|\bCC\b", re.I)
 HOSPITAL_WORDS = re.compile(r"\bO\.?\s?Ps?\b|opposite part|respondent|defendant|\bRes\b|\bR\d\b", re.I)
 TIME_ASKED = re.compile(r"(pray|seek|sought|request|ask)\w*\s+(for\s+)?(some\s+|further\s+|last\s+|more\s+)?(time|adjournment)|\bprays?\s+time", re.I)
@@ -53,9 +57,15 @@ def disposal_outcome(text):
 
 
 def outcome_of(row, status_doc):
-    """open / disposed / allowed / dismissed / withdrawn / settled / returned: the KMC's own status, or for a
-    consumer case the portal's case stage; a bare "DISPOSED OFF" is refined from the disposing hearing's text."""
-    if row["court"] == "kmc":
+    """open / disposed / allowed / dismissed / withdrawn / settled / returned: the medical council's own status (the
+    KMC's or the DMC's), or for a consumer case the portal's case stage; a bare "DISPOSED OFF" is refined from the
+    disposing hearing's text."""
+    if row["court"] in MEDICAL_COUNCILS:
+        if row["court"] in REGISTER_COURTS:  # the DMC's register says only "disposed": its final order, read, says which way it went
+            from judgements import judgement_of  # here, not at the top: judgements.py is loaded by the viewer, which imports this module
+            j = judgement_of(row["case_key"])
+            if j and j["class"] in ORDER_OUTCOMES:
+                return ORDER_OUTCOMES[j["class"]]
         return row["status"] if row["status"] in ("disposed", "dismissed", "withdrawn") else "open"
     stage = ((status_doc or {}).get("caseStage") or "").strip().upper()
     outcome = CONSUMER_OUTCOMES.get(stage, "open")
@@ -163,7 +173,7 @@ def rebuild():
         with viewer.in_state(state):
             ordered = viewer.load("all", state)["ordered"]
             for c in ordered:
-                _add_rows(c, today, case_rows, hearing_rows)
+                _add_rows({**c, "hearings": []} if c["court"] in REGISTER_COURTS else c, today, case_rows, hearing_rows)
         viewer._cache.clear()
     storage.replace_metrics(case_rows, hearing_rows)
     return len(case_rows), len(hearing_rows)

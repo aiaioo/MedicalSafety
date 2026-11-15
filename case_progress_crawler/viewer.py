@@ -29,7 +29,7 @@ in the analysis status) are hidden from the lists, hospital counts and search, a
 "show non-medical" link at the top is on (a cookie). A case page opened directly always shows. Cases labelled
 "unclear" are shown, with a badge.
 
-Usage:  python viewer.py [--court kmc|consumer|all] [--host H] [--port P]
+Usage:  python viewer.py [--court kmc|dmc|consumer|all] [--host H] [--port P]
 On its own the pages are at / (as listed above). The case manager (../case_manager/app.py) mounts the same pages
 under /case_tracker/ in its own process, behind its sign-in, by registering this module's `bp` Blueprint.
 """
@@ -53,7 +53,7 @@ from markupsafe import Markup, escape
 import progress_storage as storage
 from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, judgement_of
 from courts.providers import MATCHER
-from metrics import OUTCOMES, case_pace, days_to_close, outcome_of
+from metrics import OUTCOMES, REGISTER_COURTS, case_pace, days_to_close, outcome_of
 from advocates import advocate_display, advocate_key, advocate_names
 from analysis_consumer import ist_date
 from courts.ejagriti_case import history_hearing_dates
@@ -61,14 +61,20 @@ from courts.ejagriti_case import history_hearing_dates
 # The viewer is a Blueprint so the case manager can mount it (app.py registers it at /case_tracker); run on its
 # own (`python viewer.py`), it is mounted at "/" in a small Flask app of its own -- see create_app().
 bp = Blueprint("case_tracker", __name__, template_folder="templates", static_folder="static")
-COURT_LABELS = {"kmc": "KMC", "consumer": "CPA"}  # kind of court -> short label; an analysed court "consumer-<state>" is of kind "consumer"
+COURT_LABELS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA"}  # kind of court -> short label; an analysed court "consumer-<state>" is of kind "consumer"
+CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case (filedInComissionName) -> its full name, for the ones that are not district commissions
+    "": "Karnataka State Consumer Disputes Redressal Commission", "KARNATAKA": "Karnataka State Consumer Disputes Redressal Commission",
+    "DELHI": "Delhi State Consumer Disputes Redressal Commission", "NCDRC": "National Consumer Disputes Redressal Commission"}
+COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
 MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year
 COURT_DESCRIPTIONS = {  # kind of court -> what the court is, shown under its figures in the "At a glance" panel
     "kmc": "KMC: cases before the Karnataka Medical Council.",
-    "consumer": "CPA: medical negligence cases before the consumer courts of {state} (Consumer Protection Act).",
+    "dmc": "DMC: complaints before the Delhi Medical Council, 2000 to 2022 (the register it published until its site was rebuilt).",
+    "consumer": "CPA: medical negligence cases before the consumer courts of {state}{extra} (Consumer Protection Act).",
 }
+CONSUMER_EXTRAS = {"Delhi": " and the National Commission (NCDRC), whose cases come from all over India"}  # what a state's consumer figures include besides its own courts
 DEFAULT_STATE = "Karnataka"  # the state shown to a visitor with no choice yet (the first state with analysed courts if there is none of this name)
-SELECTIONS = {"kmc": "KMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
+SELECTIONS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
 PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
@@ -368,7 +374,7 @@ def analytics(cases, all_years=None):
     ten hospitals named in most cases."""
     per_court = {}
     for c in cases:
-        row = per_court.setdefault(c["court"], {"court": c["court"], "label": c["court_label"], "description": COURT_DESCRIPTIONS.get(kind_of(c["court"]), "").format(state=c.get("state", "")), "total": 0,
+        row = per_court.setdefault(c["court"], {"court": c["court"], "label": c["court_label"], "description": COURT_DESCRIPTIONS.get(kind_of(c["court"]), "").format(state=c.get("state", ""), extra=CONSUMER_EXTRAS.get(c.get("state"), "")), "total": 0,
                                                 "decided": 0, "won_patient": 0, "won_hospital": 0, **{k: 0 for k, _ in OUTCOMES}})
         row["total"] += 1
         row[c["outcome"]] += 1
@@ -625,7 +631,7 @@ def load(sel=None, st=None, refresh=False):
                 for n in MATCHER.hospital_names(pr["party"]):
                     provider_hospitals.setdefault(hospital_key(n), n)
         today = datetime.date.today().isoformat()
-        gaps, adjourned = case_pace(hs, provider, today)
+        gaps, adjourned = case_pace([] if r["court"] in REGISTER_COURTS else hs, provider, today)
         held_dates = [h["hearing_date"] for h in hs if h["hearing_date"] and h["hearing_date"] <= today]
         outcome = outcome_of(r, statuses.get(key))
         filing_date = ist_date((statuses.get(key) or {}).get("caseFilingDate") or "")[:10]
@@ -938,12 +944,12 @@ def case_prefill(number, with_court=True):
         return None
     court = ""
     if with_court:
-        if c["court"] == "kmc":
-            court = "Karnataka Medical Council"
+        if c["court"] in COUNCIL_NAMES:
+            court = COUNCIL_NAMES[c["court"]]
         else:
             commission = ((storage.load_case_document(c["case_key"], "status.json") or {}).get("filedInComissionName") or "").strip()
-            court = ("Karnataka State Consumer Disputes Redressal Commission" if commission.upper() in ("", "KARNATAKA")
-                     else f"{commission} District Consumer Disputes Redressal Commission")
+            court = (CONSUMER_COMMISSION_NAMES.get(commission.upper())
+                     or f"{commission} District Consumer Disputes Redressal Commission")
     days = {}  # a day can have more than one list entry: they become one hearing
     for h in sorted(c["hearings"], key=lambda h: (h["hearing_date"], h["hearing_time"])):
         if not h["hearing_date"]:
@@ -1465,6 +1471,27 @@ def judgement_line(c):
         for_hospital = (j["class"] == "dismissed") == (side == "respondent")  # dismissal favours the respondent
         text += ", " + ("partly " if j["class"] == "part" else "") + ("for hospital" if for_hospital else "against hospital")
     return j["name"], text
+
+
+COUNCIL_ORDER_DIRS = {"dmc": PDF_DIR / "dmc" / "orders"}  # where a medical council's order files are (the original downloads, Word or PDF)
+COUNCIL_ORDER_RE = re.compile(r"[\w.-]+\.(?:docx?|pdf|rtf)", re.IGNORECASE)
+
+
+@bp.route("/council-order/<court>/<name>")
+def council_order(court, name):
+    """A final order of a medical council (the DMC's), as the Council published it: Word documents download, PDFs open."""
+    if court not in COUNCIL_ORDER_DIRS or not COUNCIL_ORDER_RE.fullmatch(name):
+        abort(404)
+    return send_from_directory(COUNCIL_ORDER_DIRS[court], name, as_attachment=not name.lower().endswith(".pdf"))
+
+
+@bp.app_template_global()
+def judgement_href(c, name):
+    """(link, kind shown on it) of a case's judgement file: the consumer courts' PDFs are served from the case's folder, a medical
+    council's order from its own."""
+    if c["court"] in COUNCIL_ORDER_DIRS:
+        return url_for("case_tracker.council_order", court=c["court"], name=name), name.rsplit(".", 1)[-1].upper()
+    return url_for("case_tracker.order_file", case_key=c["case_key"], name=name), "PDF"
 
 
 @bp.route("/order/<case_key>/<name>")
