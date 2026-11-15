@@ -164,7 +164,17 @@ def _split_key(key):
     return kind, (int(num), suffix), int(year)
 
 
+ALL_COURTS_PAGES = {"hospitals", "hospital", "advocates", "advocate", "case"}  # analytics pages (and the case pages they link to) always cover both courts
+
+
+def all_courts_page():
+    return (request.endpoint or "").rpartition(".")[2] in ALL_COURTS_PAGES
+
+
 def selection():
+    """The courts the visitor chose with the selector; the analytics pages ignore it and cover both."""
+    if all_courts_page():
+        return "all"
     sel = request.cookies.get("court")
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
@@ -596,7 +606,7 @@ def signed_in_accounts_only():
 def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
-    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "non_medical_count": hidden,
+    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "court_choice": not all_courts_page() and not is_public_visitor(), "non_medical_count": hidden,
             "show_non_medical": show_non_medical(), "can_edit_links": can_manage_links()}
 
 
@@ -779,7 +789,7 @@ def suggest():
     q = request.args.get("q", "").strip().lower()
     if len(q) < 2 or (is_public_visitor() and request.args.get("kind") not in ("advocate", "hospital")):  # party names and case numbers are for signed-in users
         return jsonify([])
-    data = load()
+    data = load("all" if request.args.get("kind") in ("advocate", "hospital") else None)
     if request.args.get("kind") in ("advocate", "hospital"):  # a list page's filter box: that list's names only
         pool = {x["name"] for x in (visible_advocates(data) if request.args["kind"] == "advocate" else visible_hospitals(data))}
         hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))

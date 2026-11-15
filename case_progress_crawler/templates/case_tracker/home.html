@@ -3,6 +3,9 @@
 {% include "case_tracker/_search.html" %}
 {% endblock %}
 {% block body %}
+{% include "case_tracker/_analytics.html" %}
+<div id="cases"></div>
+{% if not public %}
 <form method="get" style="margin:1rem 0">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
   {% if outcome %}<input type="hidden" name="outcome" value="{{ outcome }}">{% endif %}
@@ -24,8 +27,7 @@
   · <a href="{{ url_for('case_tracker.hospitals') }}">Hospitals</a>
   · <a href="{{ url_for('case_tracker.advocates') }}">Advocates</a>
 </form>
-{% include "case_tracker/_analytics.html" %}
-<div id="cases"></div>
+{% endif %}
 {% include "case_tracker/_cases_table.html" %}
 
 {% endblock %}
