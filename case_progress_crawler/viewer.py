@@ -39,6 +39,7 @@ import datetime
 import re
 import statistics
 import threading
+import time
 from html import unescape
 from pathlib import Path
 from collections import defaultdict
@@ -215,6 +216,7 @@ def in_period(c, p):
     return True
 
 
+_refresher_running = False
 _memo = {}  # (what, period, non_medical) -> (the data it was worked out from, result): the analytics pages' tables, ready to show
 
 
@@ -223,7 +225,7 @@ def memoised(what, p, compute):
     data = load("all")
     key = (what, p, show_non_medical(), datetime.date.today().year)  # a period such as "2025" changes meaning when the year turns
     hit = _memo.get(key)
-    if hit is None or hit[0] is not data:
+    if hit is None or (hit[0] is not data and not _refresher_running):  # with the refresher running, a visitor gets the last tables until it has the new ones
         hit = _memo[key] = (data, compute(data))
     return hit[1]
 
@@ -494,11 +496,13 @@ def panel_stats(sel, year, non_medical):
     return {**compute_stats(sel, year or 0, non_medical), "as_of": datetime.date.today().isoformat()}
 
 
-def load(sel=None):
+def load(sel=None, refresh=False):
+    """The analysed data of a court selection. It is kept until the analysis changes; once the background refresher
+    is running (warm_cache) only it reloads, and a visitor is given the data already loaded (refresh=True is the refresher)."""
     sel = sel or selection()
     ids = court_ids(sel)
     mtimes = tuple(storage.analysis_version(c) for c in ids) + (storage.case_documents_version(),)
-    if sel in _cache and _cache[sel]["mtimes"] == mtimes:
+    if sel in _cache and (_cache[sel]["mtimes"] == mtimes or (_refresher_running and not refresh)):
         return _cache[sel]["data"]
 
     parties = defaultdict(list)
@@ -590,26 +594,44 @@ def load(sel=None):
     return data
 
 
-def warm_tables(p):
-    """Work out the hospitals and advocates tables of a period (without a request: not_medical cases hidden, the default)."""
-    data = load("all")
-    visible_cases = [c for c in data["ordered"] if c.get("label") != "not_medical" and in_period(c, p)]
-    _memo[("hospitals", p, False, datetime.date.today().year)] = (data, hospital_table(visible_cases))
-    _memo[("advocates", p, False, datetime.date.today().year)] = (data, visible_advocates(data, p, lambda c: c.get("label") != "not_medical"))
+def warm_tables(p, non_medical=False):
+    """Work out the hospitals and advocates tables of a period, for visitors who hide the not_medical cases or show them
+    (without a request)."""
+    data = load("all", refresh=True)
+    keep = (lambda c: True) if non_medical else (lambda c: c.get("label") != "not_medical")
+    year = datetime.date.today().year
+    _memo[("hospitals", p, non_medical, year)] = (data, hospital_table([c for c in data["ordered"] if keep(c) and in_period(c, p)]))
+    _memo[("advocates", p, non_medical, year)] = (data, visible_advocates(data, p, keep))
+
+
+REFRESH_EVERY = 60  # seconds between looks for newly analysed data
 
 
 def warm_cache():
-    """Load every selection's data in a background thread, so the first visitor doesn't wait for it."""
+    """Start the background refresher: it loads every selection's data and the analytics pages' tables, then looks every
+    minute for newly analysed data (the daily crawl, or an analysis run by hand) and loads that too, so no visitor
+    waits for it. Until the first load finishes a request loads what it needs itself."""
+    def versions():
+        return tuple(storage.analysis_version(c) for c in COURTS) + (storage.case_documents_version(),)
+
     def run():
-        for sel in [DEFAULT_SELECTION] + [s for s in SELECTIONS if s != DEFAULT_SELECTION]:
+        global _refresher_running
+        last = None
+        while True:
             try:
-                load(sel)
-                if sel == "all":  # the analytics pages' tables, for each period
+                now = versions()
+                if now != last:
+                    for sel in [DEFAULT_SELECTION] + [s for s in SELECTIONS if s != DEFAULT_SELECTION]:
+                        load(sel, refresh=True)
                     for p, *_ in period_specs():
-                        warm_tables(p)
+                        for non_medical in (False, True):
+                            warm_tables(p, non_medical)
+                    last = now
+                    _refresher_running = True
             except Exception as e:  # a request will hit and report the same problem
-                print(f"case tracker: warming {sel} failed: {e!r}")
-    threading.Thread(target=run, daemon=True, name="case-tracker-warm").start()
+                print(f"case tracker: refreshing failed: {e!r}")
+            time.sleep(REFRESH_EVERY)
+    threading.Thread(target=run, daemon=True, name="case-tracker-refresh").start()
 
 
 bp.record_once(lambda state: warm_cache())  # when the blueprint is registered, here or in the case manager
