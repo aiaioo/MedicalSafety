@@ -51,7 +51,7 @@ from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, rende
 from markupsafe import Markup, escape
 
 import progress_storage as storage
-from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, judgement_of
+from judgements import DISMISSAL_REASONS, JUDGEMENT_CLASSES, ORDER_RE, _iso_date, dismissal_reason, judgement_of
 from courts.providers import MATCHER
 from metrics import OUTCOMES, REGISTER_COURTS, case_pace, days_to_close, outcome_of
 from advocates import advocate_display, advocate_key, advocate_names
@@ -1154,11 +1154,41 @@ def helpers():
     return {"represents": represents, "ct_link": ct_link, "public": is_public_visitor()}
 
 
+EARLY_DISMISSALS = {"nonpros", "admission"}  # reasons a dismissal says little about how the lawyer fared: nobody appeared, or the complaint was turned away at admission
+
+
+def is_complaint(c):
+    """Is the case a complaint (or an enquiry into one) -- not an appeal, review, revision, transfer or execution application? Of the
+    consumer courts' case types only "CC" is; every case of a medical council is."""
+    return kind_of(c["court"]) != "consumer" or c["kind"].split("-")[-1].upper() == "CC"
+
+
+def dismissal_reason_of(c):
+    """Why a dismissed case ended, as a key of DISMISSAL_REASONS: the judgement's reason, else what the court's record of the last
+    hearing says; None if the case was not dismissed."""
+    if c["outcome"] != "dismissed":
+        return None
+    j = judgement_of(c["case_key"])
+    if j and j["reason"] and j["reason"] != "other":
+        return j["reason"]
+    last = c["hearings"][0] if c["hearings"] else {}
+    text = f"{last.get('record') or ''} {last.get('outcome_text') or ''}"
+    return dismissal_reason(text) if text.strip() else "other"
+
+
+def early_dismissal(c):
+    """A dismissal that says little about how the lawyer fared: nobody appeared, the complaint was turned away at admission, or the
+    case ended at its first hearing."""
+    return c["outcome"] == "dismissed" and (dismissal_reason_of(c) in EARLY_DISMISSALS or c["n_held"] <= 1)
+
+
 def advocate_metrics(cases, sides):
     """How an advocate's cases went, from their `cases` and `sides` ({case_key: roles they appeared in}):
     closed / closed_pct (closed cases of all their cases); win_done_pct (the cases won, on whichever side, of their
     completed cases); won_hearings (the median hearings held in the cases they won, n_won_held of them) and won_years (the median years
-    from filing to the last hearing in those, n_won_time of them: consumer cases only, which have a filing date); won_patient / won_hospital (the cases they won for a
+    from filing to the last hearing in those, n_won_time of them: consumer cases only, which have a filing date) -- of complaints only
+    (not appeals or other applications) and not counting dismissals for non-appearance or at admission, or at the first hearing, which
+    say little about the lawyer's work; won_patient / won_hospital (the cases they won for a
     patient, or for a hospital: complaint allowed, or dismissed) with their shares of ALL their cases; won / decided / won_pct (of the cases the court allowed or
     dismissed, how many the advocate's client won: a patient's lawyer wins when the complaint is allowed, a hospital's
     when it is dismissed; settled, withdrawn, returned and open cases are not decisions); time_n / time_of /
@@ -1178,10 +1208,11 @@ def advocate_metrics(cases, sides):
             m["decided"] += 1
             won = any((side == "hospital") == (verdict == "for") for side in mine)
             m["won"] += won
-            if won and c["n_held"]:
-                won_held.append(c["n_held"])
-            if won and c["days_to_close"] is not None:
-                won_days.append(c["days_to_close"])
+            if won and is_complaint(c) and not early_dismissal(c):
+                if c["n_held"]:
+                    won_held.append(c["n_held"])
+                if c["days_to_close"] is not None:
+                    won_days.append(c["days_to_close"])
             m["won_patient"] += "patient" in mine and verdict == "against"  # the complaint was allowed against the hospital
             m["won_hospital"] += "hospital" in mine and verdict == "for"
         if c["provider_side"]:
@@ -1228,13 +1259,13 @@ def visible_advocates(data, p="all", keep=None):
 # completed cases), where `won` is the cases won for patients (the complaint allowed) or for hospitals (dismissed).
 RANKINGS = {
     "cases": {"title": "Most cases", "sub": "cases in the tracker", "group": "volume", "kind": "count"},
-    "patient_cases": {"title": "Most patient cases", "sub": "cases acting for the patient", "group": "volume", "kind": "count"},
-    "hospital_cases": {"title": "Most hospital cases", "sub": "cases acting for the hospital or doctor", "group": "volume", "kind": "count"},
-    "patient": {"title": "Best for patients", "sub": "won for patients ÷ all cases", "group": "share", "kind": "share", "won": "won_patient", "of": "cases"},
-    "hospital": {"title": "Best for hospitals", "sub": "won for hospitals ÷ all cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "cases"},
-    "patient_done": {"title": "Best for patients", "sub": "won for patients ÷ completed cases", "group": "share", "kind": "share", "won": "won_patient", "of": "closed"},
-    "hospital_done": {"title": "Best for hospitals", "sub": "won for hospitals ÷ completed cases", "group": "share", "kind": "share", "won": "won_hospital", "of": "closed"},
-    "win_done": {"title": "Win rate", "sub": "cases won for either side ÷ completed cases", "group": "share", "kind": "share", "won": "won", "of": "closed"},
+    "patient_cases": {"title": "Most patient cases", "sub": "cases acting for the patient", "group": "patients", "kind": "count"},
+    "hospital_cases": {"title": "Most hospital cases", "sub": "cases acting for the hospital or doctor", "group": "hospitals", "kind": "count"},
+    "patient": {"title": "Best for patients", "sub": "won for patients ÷ all cases", "group": "patients", "kind": "share", "won": "won_patient", "of": "cases"},
+    "hospital": {"title": "Best for hospitals", "sub": "won for hospitals ÷ all cases", "group": "hospitals", "kind": "share", "won": "won_hospital", "of": "cases"},
+    "patient_done": {"title": "Best for patients", "sub": "won for patients ÷ completed cases", "group": "patients", "kind": "share", "won": "won_patient", "of": "closed"},
+    "hospital_done": {"title": "Best for hospitals", "sub": "won for hospitals ÷ completed cases", "group": "hospitals", "kind": "share", "won": "won_hospital", "of": "closed"},
+    "win_done": {"title": "Win rate", "sub": "cases won for either side ÷ completed cases", "group": "wins", "kind": "share", "won": "won", "of": "closed"},
     "won_years": {"title": "Won fastest", "sub": "shortest time to win, median years per case won", "group": "speed", "kind": "speed",
                   "value": "won_years", "n": "n_won_time"},
     "won_hearings": {"title": "Won in fewest hearings", "sub": "median hearings per case won", "group": "speed", "kind": "speed",
@@ -1454,6 +1485,17 @@ def orders_of(case_key):
     for lst in found.values():
         lst.sort(key=lambda o: (o["label"].split()[0], int(re.search(r"\d+", o["label"]).group()) if "version" in o["label"] else 1))
     return found
+
+
+@bp.app_template_global()
+def dismissal_line(c):
+    """Why a dismissed case ended, for the case list, where no judgement says so (judgement_line gives the reason when there is one):
+    the reason read from the court's record of the last hearing ("Dismissed at admission", "Non-prosecution ..."), or None."""
+    j = judgement_of(c["case_key"])
+    if j and j["reason"]:
+        return None
+    reason = dismissal_reason_of(c)
+    return dict((k, label) for k, label, _ in DISMISSAL_REASONS).get(reason) if reason and reason != "other" else None
 
 
 @bp.app_template_global()

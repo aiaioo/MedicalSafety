@@ -19,7 +19,7 @@ import fitz  # PyMuPDF
 
 import progress_storage as storage
 
-CLASSIFIER_VERSION = 1
+CLASSIFIER_VERSION = 2
 TAIL_CHARS = 3500  # the operative end of a judgement is all the rules look at
 
 ORDER_RE = re.compile(r"(?P<date>[0-9-]+)_(?P<kind>daily_order|judgement)(?:_v(?P<v>\d+))?\.(?P<ext>pdf|html)")
@@ -29,6 +29,7 @@ JUDGEMENT_CLASSES = [("dismissed", "Dismissed"), ("part", "Allowed in part"), ("
 # why a dismissed case was dismissed, first match wins (a keyword pass over the end of the judgement)
 DISMISSAL_REASONS = [
     ("nonpros", "Non-prosecution (no one appeared)", r"non[- ]?prosecution|no representation|not interested in|failed to appear|remained absent|\bnemo\b|not turn(?:ed)? up"),
+    ("admission", "Dismissed at admission", r"on admission|at (?:the )?(?:stage of )?admission|admission stage|not admitted|admission hearing|rejected at (?:the )?admission"),
     ("limitation", "Time-barred or no jurisdiction", r"time[- ]barred|barred by (?:limitation|time)|beyond (?:the )?(?:period of )?limitation|delay (?:is )?not condon|jurisdiction|not a consumer|free of charge"),
     ("withdrawn", "Withdrawn or settled", r"withdr[ae]w|settle|compromise"),
     ("appeal", "Appeal: lower commission's order upheld", r"no interference|(?:is|are) (?:hereby )?confirmed|devoid of merit|does not call for interference|no (?:valid )?grounds"),

@@ -13,6 +13,7 @@
     <td><a href="{{ url_for('case_tracker.case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %} {{ label_badge(c) }}</td>
     <td class="muted">{{ c.complainants|join('; ') }}{% if c.respondents %} <b>v.</b> {{ c.respondents|join('; ') }}{% endif %}
       {% set jl = judgement_line(c) %}{% if jl %}{% set jh = judgement_href(c, jl[0]) %}<div>Judgement: <a href="{{ jh[0] }}" target="_blank" rel="noopener">{{ jh[1] }}</a> <span class="muted">({{ jl[1] }})</span></div>{% endif %}
+      {% set dl = dismissal_line(c) %}{% if dl %}<div>Dismissed: <span class="muted">{{ dl|lower }}</span></div>{% endif %}
       {% if cl %}<details><summary class="muted" style="cursor:pointer">{{ cl|length }} link{{ 's' if cl|length != 1 }}</summary>
     <ul class="links">
       {% for l in cl %}

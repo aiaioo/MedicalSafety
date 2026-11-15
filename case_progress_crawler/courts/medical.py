@@ -18,7 +18,7 @@ import re
 
 from .providers import MATCHER
 
-FILTER_VERSION = 2  # bump when the rules change; courts/consumer.py then filters saved lists again
+FILTER_VERSION = 3  # bump when the rules change; courts/consumer.py then filters saved lists again
 APPEAL_RE = re.compile(r"appeal|revision", re.IGNORECASE)  # case types where the appellant is listed as complainant
 
 M = MATCHER
@@ -56,7 +56,7 @@ def keep_medical(rows):
 # deliberately generous; classify() uses the cleaner party names and the text of the court's orders to
 # label each kept case. Nothing is dropped on the strength of a label -- it is stored beside the case.
 
-CLASSIFIER_VERSION = 1  # bump when the rules below change; cases are then labelled again
+CLASSIFIER_VERSION = 2  # bump when the rules below change; cases are then labelled again
 
 NEGLIGENCE_RE = re.compile(
     r"negligen|\btreatment|\bsurger(?:y|ies)|\boperat(?:ed|ion)\b|\bpatients?\b|\bdelivery\b|\bdeceased\b|"

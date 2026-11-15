@@ -46,13 +46,17 @@ class ProviderMatcher:
         r"director|chief|chairman|ceo|manager)|(?:the\s+)?(?:managing\s+director|authori[sz]ed\s+(?:signatory|officer)))\b.*$",
         re.IGNORECASE)
     institution_re = re.compile(r"\b(?:" + "|".join(INSTITUTION_PATTERNS) + r")\b", re.IGNORECASE)
+    # "lab" alone is a weak sign of a provider: with one of these words the name is a computer lab, a photo lab ... not a diagnostic lab
+    weak_institution_re = re.compile(r"labs?|laborator(?:y|ies)", re.IGNORECASE)
+    non_medical_lab_re = re.compile(r"\b(?:computers?|software|infotech|information\s+technolog\w*|cyber|photo\w*|printing|printers?|electronics?|"
+                                    r"mobiles?|robotics|language|engineering|soil|textiles?|cement|steel|metals?)\b", re.IGNORECASE)
     doctor_re = re.compile(r"\b(?:" + "|".join(DOCTOR_PATTERNS) + r")\b", re.IGNORECASE)
     veterinary_re = re.compile(r"\bveterinar\w*|\bvets?\b|\banimals?\b|\bpets?\b|\bcattle\b|\bkennel", re.IGNORECASE)
     # businesses that are not medical providers; a "Dr" or "hospital" beside them is incidental
     commercial_re = re.compile(
         r"\b(?:developers?|builders?|properties|property|realty|realtors?|constructions?|infra\w*|housing|apartments?|"
         r"engineering|lifts?|elevators?|motors?|automobiles?|bank|finance|financial|insurance|assurance|"
-        r"co-?operative|society|telecom|airlines?|electronics|jewell?ers?|jewellery)\b", re.IGNORECASE)
+        r"co-?operative|society|telecom|airlines?|electronics|jewell?ers?|jewellery|computers?|software|infotech|holidays?|resorts?|travels?)\b", re.IGNORECASE)
     company_re = re.compile(r"\b(?:ltd|limited|pvt|private|company|co|corporation|corp|industries|enterprises|associates|bank|"
                             r"engineering|finance)\b", re.IGNORECASE)
     insurer_re = re.compile(r"\b(?:insurance|insurer|assurance|tpa|medi\s*assist|third\s+party\s+administrator)\b", re.IGNORECASE)
@@ -71,10 +75,19 @@ class ProviderMatcher:
         """The party's own name, without the person representing it."""
         return self.representative_re.sub("", name or "").strip(" ,.;")
 
+    def has_institution(self, n):
+        """Does the (cleaned) name have a word of an institution -- but not only "lab" in a name that is plainly not medical?"""
+        words = [m.group() for m in self.institution_re.finditer(n or "")]
+        if not words:
+            return False
+        if all(self.weak_institution_re.fullmatch(w) for w in words) and self.non_medical_lab_re.search(n):
+            return False
+        return True
+
     def is_provider(self, name, clean=True):
         """Does the name match a provider (institution or doctor)?"""
         n = self.clean(name) if clean else name or ""
-        return bool(self.institution_re.search(n) or self.doctor_re.search(n))
+        return bool(self.has_institution(n) or self.doctor_re.search(n))
 
     def is_commercial(self, name):
         return bool(self.commercial_re.search(name or ""))
@@ -85,7 +98,7 @@ class ProviderMatcher:
     def kind(self, name):
         """'institution', 'doctor', 'insurer', 'organisation' or 'other' (see the module docstring)."""
         n = self.clean(name)
-        if self.institution_re.search(n):
+        if self.has_institution(n):
             return "institution"
         if self.insurer_re.search(n):
             return "insurer"
@@ -93,7 +106,7 @@ class ProviderMatcher:
             return "doctor"
         if self.commercial_re.search(n) or self.company_re.search(n) or self.official_re.search(n):
             # "Customer Relations Officer Through its St Johns Hospital" is the hospital's officer
-            return "institution" if self.institution_re.search(name or "") and self.official_re.search(n) else "organisation"
+            return "institution" if self.has_institution(name or "") and self.official_re.search(n) else "organisation"
         return "other"
 
     def hospital_names(self, party):

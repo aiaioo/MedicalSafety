@@ -38,7 +38,8 @@
 {% if stats.total %}
 <section class="panel">
   <h2>At a glance <span class="muted">({{ stats.total }} cases{{ ' filed ' ~ plabel|lower if plabel }})</span></h2>
-  {% if may_list %}<p style="margin:.2rem 0 .6rem"><a href="{{ url_for('case_tracker.home', court='all') }}#cases">All cases &rarr;</a></p>{% endif %}
+  {% if may_list %}<p style="margin:.2rem 0 .6rem"><a href="{{ url_for('case_tracker.home', court='all') }}#cases">All cases &rarr;</a></p>
+  {% else %}<p style="margin:.2rem 0 .6rem"><a href="{{ url_for('auth.signin', next=request.full_path.rstrip('?')) }}">Login to view cases</a></p>{% endif %}
   <div class="panel-grid">
   {% for c in stats.courts %}
     <div>
@@ -83,7 +84,8 @@
       {% if linked %}</a>{% endif %}
     </div>
     {% endfor %}
-    {% if linked %}<p class="muted"><a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, judgement='all') }}#cases">All judgements &rarr;</a></p>{% endif %}
+    {% if linked %}<p class="muted"><a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, judgement='all') }}#cases">All judgements &rarr;</a></p>
+    {% else %}<p class="muted"><a href="{{ url_for('auth.signin', next=request.full_path.rstrip('?')) }}">Login to view judgements</a></p>{% endif %}
     <p class="muted" style="font-size:.85em">Classified automatically from the wording at the end of each judgement; "scanned" judgements have no readable text.</p>
   </div>
   {% endif %}
