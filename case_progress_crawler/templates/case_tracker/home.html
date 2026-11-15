@@ -3,6 +3,7 @@
 {% include "case_tracker/_search.html" %}
 {% endblock %}
 {% block body %}
+{% include "case_tracker/_period_nav.html" %}
 {% include "case_tracker/_analytics.html" %}
 <div id="cases"></div>
 {% if not public %}

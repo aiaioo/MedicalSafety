@@ -179,6 +179,21 @@ def selection():
     return sel if sel in SELECTIONS else DEFAULT_SELECTION
 
 
+PERIODS = (("all", "All years"), ("recent", "Last 5 years"), ("mid", "5\u201310 years ago"), ("old", "Before 10 years"))  # the analytics' own years filter, by the year a case was filed
+
+
+def period():
+    p = request.args.get("period")
+    return p if p in dict(PERIODS) else "all"
+
+
+def in_period(c, p):
+    """Was the case filed in the period: the last 5 years (this year and the four before), the 5 years before those, or earlier."""
+    this_year = datetime.date.today().year
+    return (p == "all" or (p == "recent" and c["year"] > this_year - 5) or (p == "mid" and this_year - 10 < c["year"] <= this_year - 5)
+            or (p == "old" and c["year"] <= this_year - 10))
+
+
 def show_non_medical():
     return request.cookies.get("non_medical") == "show"
 
@@ -606,7 +621,8 @@ def signed_in_accounts_only():
 def selector():
     data = load()
     hidden = sum(1 for c in data["ordered"] if c.get("label") == "not_medical")
-    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "court_choice": not all_courts_page() and not is_public_visitor(), "non_medical_count": hidden,
+    return {"selections": SELECTIONS, "selected": selection(), "states": STATES, "periods": PERIODS, "period": period(), "period_url": lambda k: url_for(request.endpoint, **{**request.view_args, **request.args.to_dict(), "period": None if k == "all" else k}),
+            "court_choice": not all_courts_page() and not is_public_visitor(), "non_medical_count": hidden,
             "show_non_medical": show_non_medical(), "can_edit_links": can_manage_links()}
 
 
@@ -667,7 +683,12 @@ def home():
     outcome = request.args.get("outcome")
     if outcome not in {k for k, _ in OUTCOMES}:
         outcome = None
-    stats = panel_stats(selection(), year, show_non_medical()) if not q else analytics(cases, in_scope)  # a search changes the cases, so it is worked out live
+    p = period()  # the panel has its own years filter and always covers both courts
+    if q or p != "all":  # a search or a period changes the cases, so it is worked out live
+        everything = [c for c in load("all")["ordered"] if visible(c) and (not q or matches(c, q))]
+        stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
+    else:
+        stats = panel_stats("all", 0, show_non_medical())
     if outcome:
         cases = [c for c in cases if c["outcome"] == outcome]
     judgement = request.args.get("judgement")
@@ -682,7 +703,7 @@ def home():
         reason = None
     judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
     reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
-    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, q=q, links=court_links(), stats=stats,
+    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=dict(PERIODS)[p] if p != "all" else None, q=q, links=court_links(), stats=stats,
                            judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
 
 
@@ -914,7 +935,7 @@ def hospitals():
     q = request.args.get("q", "").strip().lower()
     sort = request.args.get("sort")
     sort = sort if sort in HOSPITAL_RANKS else "cases"
-    rows = hospital_table([c for c in load()["ordered"] if visible(c)])
+    rows = hospital_table([c for c in load()["ordered"] if visible(c) and in_period(c, period())])
     found = [r for r in rows if not q or q in r["name"].lower()]
     boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
     ranked, below = rank_hospitals(found, sort)
@@ -1003,12 +1024,12 @@ def advocate_metrics(cases, sides):
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
-def visible_advocates(data):
+def visible_advocates(data, p="all"):
     """The advocates with their visible cases only (an advocate left with none is dropped), and the count of
     those cases for the complainant side and for the respondent side."""
     out = []
     for a in data["advocates"].values():
-        cases = [c for c in a["cases"] if visible(c)]
+        cases = [c for c in a["cases"] if visible(c) and in_period(c, p)]
         if cases:
             sides = [a["sides"][c["case_key"]] for c in cases]
             out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
@@ -1120,7 +1141,7 @@ def advocates():
     sort = sort if sort in dict(ADVOCATE_SORTS) else "cases"
     min_cases = request.args.get("min", type=int)
     min_cases = min_cases if min_cases in ADVOCATE_MIN_CASES else DEFAULT_MIN_CASES
-    found = [a for a in visible_advocates(load()) if not q or q in a["name"].lower()]
+    found = [a for a in visible_advocates(load(), period()) if not q or q in a["name"].lower()]
     boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
     return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,

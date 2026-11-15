@@ -4,10 +4,12 @@
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home') }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
+{% include "case_tracker/_period_nav.html" %}
 <p><a href="{{ url_for('case_tracker.hospitals') }}">Hospitals &rarr;</a></p>
 <p class="muted">{{ advocates|length }} advocates and law firms named in the consumer cases, on the cause lists and in the case details.
   The hospital/doctor side of each case is worked out from the party names (hospital, clinic, Dr. ...); where neither side looks medical the respondent is assumed, and where both do it is left unclear. Names are as the court prints them, so one advocate may still appear under a spelling that was not merged.</p>
 <form class="search" method="get" action="{{ url_for('case_tracker.advocates') }}">
+  {% if period != 'all' %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
   <input type="search" name="q" value="{{ q }}" placeholder="Filter advocates" aria-label="Filter advocates" list="suggestions" autocomplete="off">
   <datalist id="suggestions"></datalist>
   <button type="submit">Filter</button>
@@ -35,6 +37,7 @@
   tr.divider td { background: #e7eefa; border-top: 2px solid #0b5cad; border-bottom: 1px solid #0b5cad; font-weight: 600; font-size: .9em; padding: .35rem .6rem; }
 </style>
 <form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 .4rem">
+  {% if period != 'all' %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
   <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="sort" value="{{ sort }}">
   <label>The win lists include lawyers with at least <select name="min" onchange="this.form.submit()">{% for n in min_options %}<option value="{{ n }}"{{ ' selected' if n == min_cases }}>{{ n }}</option>{% endfor %}</select> case{{ 's' if min_cases != 1 }} (completed cases, for the lists divided by completed cases; won cases, for "Won fastest") and at least one win</label>
   <noscript><button type="submit">Apply</button></noscript>
@@ -54,6 +57,7 @@
 {% endfor %}
 <div id="ranking">
 <form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 1rem">
+  {% if period != 'all' %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
   <input type="hidden" name="q" value="{{ q }}">
   <label>Full table ranked by <select name="sort" data-ajax>{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
   <input type="hidden" name="min" value="{{ min_cases }}">{% if sort_kind == 'share' %} <span class="muted">(lawyers with at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }})</span>{% endif %}

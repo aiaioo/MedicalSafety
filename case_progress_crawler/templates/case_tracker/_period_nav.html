@@ -1,0 +1,1 @@
+<p class="muted periods">Cases filed: {% for k, label in periods %}{% if k == period %}<strong>{{ label }}</strong>{% else %}<a href="{{ period_url(k) }}">{{ label }}</a>{% endif %}{{ ' &middot; '|safe if not loop.last }}{% endfor %}</p>
