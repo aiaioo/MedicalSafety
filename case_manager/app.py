@@ -591,14 +591,21 @@ def _get_pdf_bytes(doc_id, raw_type, min_role="viewer"):
         raise DocumentError(str(exc), 500) from exc
 
 
-def _open_pdf(doc_id, raw_type, min_role="viewer"):
-    """Like _get_pdf_bytes, but returns (file, norm_type) with `file` a seekable binary file that
-    decrypts on demand instead of the whole PDF in memory. The caller closes it."""
+def _check_pdf_access(doc_id, raw_type, min_role="viewer"):
+    """The validation and access checks of _open_pdf, without touching the file. Returns the
+    normalised type."""
     check_doc_id(doc_id)
     norm_type = normalize_type(raw_type)
     require_role("source", doc_id, min_role)
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
+    return norm_type
+
+
+def _open_pdf(doc_id, raw_type, min_role="viewer"):
+    """Like _get_pdf_bytes, but returns (file, norm_type) with `file` a seekable binary file that
+    decrypts on demand instead of the whole PDF in memory. The caller closes it."""
+    norm_type = _check_pdf_access(doc_id, raw_type, min_role)
     try:
         return storage.open_document_pdf(doc_id), norm_type
     except storage.StorageError as exc:
@@ -3497,22 +3504,25 @@ def api_render(doc_id, page):
     dpi = max(50, min(dpi, 600))
     mode = guest_annotation_mode({"1": "all"}.get(request.args.get("annotations"), request.args.get("annotations")))
 
-    f, _ = _open_pdf(doc_id, raw_type)  # also the access check; the render itself uses the open-document cache
+    # The browser may keep this image on its own (the user's) disk, but only revalidates it: access
+    # to the document is checked here on every request, and the ETag covers everything that
+    # changes the picture (uploaded PDFs never change, and annotations drawn are part of the key),
+    # so an unchanged page costs a 304 instead of a render and a download. The PDF is not opened
+    # until after the 304 check, so a 304 never pays for opening (and decrypting) the file.
+    _check_pdf_access(doc_id, raw_type)
+    annotations = []
+    if mode in ("blackouts", "all"):
+        annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
+    cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str))
+    etag = hashlib.sha1(repr(cache_key).encode()).hexdigest()
+    if etag in request.if_none_match:
+        resp = Response(status=304)
+        resp.set_etag(etag)
+        resp.headers["Cache-Control"] = _RENDER_CACHE_CONTROL
+        return resp
+
+    f, _ = _open_pdf(doc_id, raw_type)  # the render itself uses the open-document cache
     try:
-        annotations = []
-        if mode in ("blackouts", "all"):
-            annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
-        cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str))
-        # The browser may keep this image on its own (the user's) disk, but only revalidates it: access
-        # to the document was checked above on every request, and the ETag covers everything that
-        # changes the picture (uploaded PDFs never change, and annotations drawn are part of the key),
-        # so an unchanged page costs a 304 instead of a render and a download.
-        etag = hashlib.sha1(repr(cache_key).encode()).hexdigest()
-        if etag in request.if_none_match:
-            resp = Response(status=304)
-            resp.set_etag(etag)
-            resp.headers["Cache-Control"] = _RENDER_CACHE_CONTROL
-            return resp
         png_bytes = _page_png_cache_get(cache_key)
         if png_bytes is None:
             png_bytes = _render_region_png(f, page, dpi / 72, annotations,
