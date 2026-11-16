@@ -173,6 +173,15 @@ def _split_key(key):
     return kind, (int(num), suffix), int(year)
 
 
+def commission_label(commission):
+    """The short name of a consumer commission as the portal gives it (filedInComissionName): the state or national
+    commission by its full name, a district commission as "<District> District"."""
+    name = CONSUMER_COMMISSION_NAMES.get(commission.upper())
+    if name:
+        return name.replace(" Consumer Disputes Redressal Commission", "")
+    return re.sub(r"(\d)(St|Nd|Rd|Th)\b", lambda m: m.group(1) + m.group(2).lower(), commission.title()) + " District"
+
+
 def kind_of(court):
     """The kind of an analysed court: "kmc", or "consumer" for "consumer" and "consumer-<state>"."""
     return court.split("-")[0]
@@ -398,6 +407,19 @@ def analytics(cases, all_years=None):
         row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
         row["dismissed_pct"] = round(100 * row["dismissed"] / closed) if closed else None
         row["decided_pct"] = round(100 * (row["disposed"] + row["allowed"]) / closed) if closed else None
+    by_commission = {}  # per consumer court: each commission's own outcome counts, for the panel's drop-down
+    for c in cases:
+        if c.get("commission"):
+            row = by_commission.setdefault(c["court"], {}).setdefault(c["commission"], {"name": c["commission"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+            row["total"] += 1
+            row[c["outcome"]] += 1
+    for court, rows in by_commission.items():
+        out = []
+        for row in sorted(rows.values(), key=lambda r: (-r["total"], r["name"])):
+            row["closed"] = row["total"] - row["open"]
+            row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
+            out.append(row)
+        per_court[court]["commissions"] = out if len(out) > 1 else []  # nothing to choose between when there is one
     hospitals = defaultdict(lambda: [0, ""])
     best_names = load("all")["hospitals"]  # each hospital's best spelling, as the hospitals list shows it
     for c in cases:
@@ -635,7 +657,8 @@ def load(sel=None, st=None, refresh=False):
         held_dates = [h["hearing_date"] for h in hs if h["hearing_date"] and h["hearing_date"] <= today]
         outcome = outcome_of(r, statuses.get(key))
         filing_date = ist_date((statuses.get(key) or {}).get("caseFilingDate") or "")[:10]
-        cases[key] = {**r, "outcome": outcome, "filing_date": filing_date, "n_held": len(held_dates),
+        commission = ((statuses.get(key) or {}).get("filedInComissionName") or "").strip() if kind_of(r["court"]) == "consumer" else ""
+        cases[key] = {**r, "outcome": outcome, "commission": commission_label(commission) if kind_of(r["court"]) == "consumer" else "", "filing_date": filing_date, "n_held": len(held_dates),
                       "days_to_close": days_to_close(filing_date, max(held_dates, default=""), outcome), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),

@@ -44,6 +44,24 @@
   {% for c in stats.courts %}
     <div>
       <h3>{{ c.label }} <span class="muted">{{ c.total }} cases · {{ c.closed }} closed</span></h3>
+      {% if c.commissions %}
+      <select class="commission-pick" aria-label="Choose a {{ c.label }} commission" onchange="var d=this.closest('div'),i=this.value;d.querySelectorAll('.commission-view').forEach(function(v){v.hidden=v.dataset.i!==i;});d.querySelector('.commission-all').hidden=i!=='all';">
+        <option value="all">All commissions ({{ c.total }} cases)</option>
+        {% for m in c.commissions %}<option value="{{ loop.index0 }}">{{ m.name }} ({{ m.total }})</option>{% endfor %}
+      </select>
+      {% for m in c.commissions %}
+      <div class="commission-view" data-i="{{ loop.index0 }}" hidden>
+        <p class="muted"><strong>{{ m.name }}</strong>: {{ m.total }} cases · {{ m.closed }} closed</p>
+        <div class="bar" role="img" aria-label="{{ m.name }} case outcomes">
+          {% for k, label, n, pct in m.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
+        </div>
+        <ul class="legend">
+          {% for k, label, n, pct in m.bars %}<li><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</li>{% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+      {% endif %}
+      <div class="commission-all">
       <div class="bar" role="img" aria-label="{{ c.label }} case outcomes">
         {% for k, label, n, pct in c.bars %}<span class="seg {{ k }}" style="width:{{ pct }}%" title="{{ label }}: {{ n }} ({{ pct }}%)"></span>{% endfor %}
       </div>
@@ -51,6 +69,8 @@
         {% for k, label, n, pct in c.bars %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases">{% endif %}<i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%){% if may_list %}</a>{% endif %}</li>{% endfor %}
       </ul>
       {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', court='all', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      
+      </div>
       {% if c.patient_win_pct is not none %}<p class="muted">Of {{ c.decided }} decided cases (the court allowed or dismissed the complaint): <strong>patients won {{ c.patient_win_pct }}%</strong> ({{ c.won_patient }}), <strong>hospitals won {{ c.hospital_win_pct }}%</strong> ({{ c.won_hospital }}).
         <details class="info"><summary title="How is a win decided?">ⓘ</summary><span class="infobox">Patients win when the complaint is allowed (in full or in part); hospitals win when it is dismissed, including for non-prosecution. Settled, withdrawn, returned and open cases are not decided, and nor are cases where the hospital's side is unclear.{% if c.court == 'kmc' %} The KMC's record rarely says a complaint was upheld (its outcomes are mostly dismissals), so this understates patients' wins there.{% endif %}</span></details></p>{% endif %}
       <details class="court-more muted"><summary>More about {{ c.label }}</summary>
