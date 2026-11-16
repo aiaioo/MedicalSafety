@@ -47,10 +47,10 @@
     <div>
       <h3>{{ c.label }} <span class="muted">{{ c.total }} cases · {{ c.closed }} closed</span></h3>
       {% if c.commissions %}
-      <select class="commission-pick" aria-label="Choose a {{ c.label }} commission" onchange="var d=this.closest('div'),i=this.value;d.querySelectorAll('.commission-view').forEach(function(v){v.hidden=v.dataset.i!==i;});d.querySelector('.commission-all').hidden=i!=='all';">
+      <label class="commission">Commission <select class="commission-pick" aria-label="Choose a {{ c.label }} commission" onchange="var d=this.closest('div'),i=this.value;d.querySelectorAll('.commission-view').forEach(function(v){v.hidden=v.dataset.i!==i;});d.querySelector('.commission-all').hidden=i!=='all';">
         <option value="all">All commissions ({{ c.total }} cases)</option>
         {% for m in c.commissions %}<option value="{{ loop.index0 }}">{{ m.name }} ({{ m.total }})</option>{% endfor %}
-      </select>
+      </select></label>
       {% for m in c.commissions %}
       <div class="commission-view" data-i="{{ loop.index0 }}" hidden>
         <p class="muted"><strong>{{ m.name }}</strong>: {{ m.total }} cases · {{ m.closed }} closed</p>
