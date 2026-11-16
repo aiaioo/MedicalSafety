@@ -410,13 +410,20 @@ def analytics(cases, all_years=None):
     by_commission = {}  # per consumer court: each commission's own outcome counts, for the panel's drop-down
     for c in cases:
         if c.get("commission"):
-            row = by_commission.setdefault(c["court"], {}).setdefault(c["commission"], {"name": c["commission"], "total": 0, **{k: 0 for k, _ in OUTCOMES}})
+            row = by_commission.setdefault(c["court"], {}).setdefault(c["commission"], {"name": c["commission"], "total": 0, "decided": 0, "won_patient": 0, "won_hospital": 0, **{k: 0 for k, _ in OUTCOMES}})
             row["total"] += 1
             row[c["outcome"]] += 1
+            verdict = case_verdict(c)
+            if verdict:
+                row["decided"] += 1
+                row["won_patient" if verdict == "against" else "won_hospital"] += 1
     for court, rows in by_commission.items():
         out = []
         for row in sorted(rows.values(), key=lambda r: (-r["total"], r["name"])):
             row["closed"] = row["total"] - row["open"]
+            enough = row["decided"] >= MIN_TIMING_CASES  # as for the court: percentages only from enough decided cases
+            row["patient_win_pct"] = round(100 * row["won_patient"] / row["decided"]) if enough else None
+            row["hospital_win_pct"] = round(100 * row["won_hospital"] / row["decided"]) if enough else None
             row["bars"] = [(k, label, row[k], round(100 * row[k] / row["total"])) for k, label in OUTCOMES if row[k]]
             out.append(row)
         per_court[court]["commissions"] = out if len(out) > 1 else []  # nothing to choose between when there is one

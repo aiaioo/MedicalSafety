@@ -60,6 +60,7 @@
         <ul class="legend">
           {% for k, label, n, pct in m.bars %}<li><i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%)</li>{% endfor %}
         </ul>
+        {% if m.decided %}<p class="muted">Of {{ m.decided }} decided cases (the court allowed or dismissed the complaint): {% if m.patient_win_pct is not none %}<strong>patients won {{ m.patient_win_pct }}%</strong> ({{ m.won_patient }}), <strong>hospitals won {{ m.hospital_win_pct }}%</strong> ({{ m.won_hospital }}).{% else %}patients won {{ m.won_patient }}, hospitals won {{ m.won_hospital }} (too few for percentages).{% endif %}</p>{% endif %}
       </div>
       {% endfor %}
       {% endif %}
@@ -72,9 +73,9 @@
       </ul>
       {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', state=link_state, court='all', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
       
-      </div>
       {% if c.patient_win_pct is not none %}<p class="muted">Of {{ c.decided }} decided cases (the court allowed or dismissed the complaint): <strong>patients won {{ c.patient_win_pct }}%</strong> ({{ c.won_patient }}), <strong>hospitals won {{ c.hospital_win_pct }}%</strong> ({{ c.won_hospital }}).
         <details class="info"><summary title="How is a win decided?">ⓘ</summary><span class="infobox">Patients win when the complaint is allowed (in full or in part); hospitals win when it is dismissed, including for non-prosecution. Settled, withdrawn, returned and open cases are not decided, and nor are cases where the hospital's side is unclear.{% if c.court == 'kmc' %} The KMC's record rarely says a complaint was upheld (its outcomes are mostly dismissals), so this understates patients' wins there.{% endif %}</span></details></p>{% endif %}
+      </div>
       <details class="court-more muted"><summary>More about {{ c.label }}</summary>
       {% if c.median_gap is not none %}<p class="muted">Median {{ c.median_gap }} day gaps between hearings; {{ c.long_gap_pct }}% of gaps over 60 days (from {{ c.n_gaps }} gaps).
         <details class="info"><summary title="What is a gap?">ⓘ</summary><span class="infobox">A gap is the number of days between one hearing day and the next in the same case.</span></details></p>{% endif %}
