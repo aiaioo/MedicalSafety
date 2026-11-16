@@ -18,12 +18,14 @@ TimeoutStartSec=20h
 
 # The droplet is small and runs the web app too: run at low priority, and throttle
 # (not kill) the crawl if it grows past MemoryHigh, and kill it at MemoryMax so a runaway
-# crawl can't take the web app down with it (peak seen in normal runs: ~300M).
+# crawl can't take the web app down with it. Peak with Delhi's cases in: ~610M (metrics.py, dashboard_stats.py), so
+# some swap is allowed: with none, the throttle at MemoryHigh could free nothing, the step crawled for
+# 54 minutes and was then killed at MemoryMax.
 Nice=10
 IOSchedulingClass=idle
 MemoryHigh=450M
 MemoryMax=600M
-MemorySwapMax=0
+MemorySwapMax=1G
 
 # It writes only under its own directory (pdfs/, case_details/) and talks to Postgres and the courts.
 NoNewPrivileges=true
