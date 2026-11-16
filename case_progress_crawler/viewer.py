@@ -1230,10 +1230,13 @@ def advocate_metrics(cases, sides):
     between consecutive hearing days across all their cases (n_gaps of them). Each pct is None where there is nothing to divide by.
     Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not."""
     m = {"cases": len(cases), "closed": sum(c["outcome"] != "open" for c in cases), "won": 0, "decided": 0,
-         "won_patient": 0, "won_hospital": 0, "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
+         "won_patient": 0, "won_hospital": 0, "patient_cases": 0, "hospital_cases": 0, "closed_patient": 0, "closed_hospital": 0, "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
     won_held, won_days = [], []  # hearings held in, and days from filing to the end of, each case they won, on whichever side
     for c in cases:
         mine = {represents(c, r) for r in sides[c["case_key"]]} & {"patient", "hospital"}
+        for side in mine:  # the cases they act in for each side, and how many of those have ended
+            m[f"{side}_cases"] += 1
+            m[f"closed_{side}"] += c["outcome"] != "open"
         verdict = case_verdict(c)
         if verdict and mine:
             m["decided"] += 1
@@ -1261,6 +1264,7 @@ def advocate_metrics(cases, sides):
     m.update(hearings_closed=median(held(True)), n_hearings_closed=len(held(True)),
              hearings_open=median(held(False)), n_hearings_open=len(held(False)), gap_days=median(gaps), n_gaps=len(gaps))
     return {**m, "closed_pct": pct(m["closed"], m["cases"]), "won_pct": pct(m["won"], m["decided"]),
+            "closed_patient_pct": pct(m["closed_patient"], m["patient_cases"]), "closed_hospital_pct": pct(m["closed_hospital"], m["hospital_cases"]),
             "won_patient_pct": pct(m["won_patient"], m["cases"]), "won_hospital_pct": pct(m["won_hospital"], m["cases"]),
             "win_done_pct": pct(m["won"], m["closed"]), "won_patient_done_pct": pct(m["won_patient"], m["closed"]), "won_hospital_done_pct": pct(m["won_hospital"], m["closed"]),
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
@@ -1296,6 +1300,8 @@ RANKINGS = {
     "hospital": {"title": "Best for hospitals", "sub": "won for hospitals ÷ all cases", "group": "hospitals", "kind": "share", "won": "won_hospital", "of": "cases"},
     "patient_done": {"title": "Best for patients", "sub": "won for patients ÷ completed cases", "group": "patients", "kind": "share", "won": "won_patient", "of": "closed"},
     "hospital_done": {"title": "Best for hospitals", "sub": "won for hospitals ÷ completed cases", "group": "hospitals", "kind": "share", "won": "won_hospital", "of": "closed"},
+    "patient_close": {"title": "Close rate for patients", "sub": "closed ÷ patient cases", "group": "patients", "kind": "share", "won": "closed_patient", "of": "patient_cases", "closing": True},
+    "hospital_close": {"title": "Close rate for hospitals", "sub": "closed ÷ hospital cases", "group": "hospitals", "kind": "share", "won": "closed_hospital", "of": "hospital_cases", "closing": True},
     "win_done": {"title": "Win rate", "sub": "cases won for either side ÷ completed cases", "group": "wins", "kind": "share", "won": "won", "of": "closed"},
     "won_years": {"title": "Won fastest", "sub": "shortest time to win, median years per case won", "group": "speed", "kind": "speed",
                   "value": "won_years", "n": "n_won_time"},
@@ -1315,7 +1321,8 @@ def _count(a, key):
 
 def _share_parts(a, spec):
     """(won, of) for a "share" ranking: cases won for the side, and all their cases or all their completed cases."""
-    return a["metrics"][spec["won"]], (a["n"] if spec["of"] == "cases" else a["metrics"]["closed"])
+    of = spec["of"]
+    return a["metrics"].get(spec["won"], 0), (a["n"] if of == "cases" else a["metrics"]["closed"] if of == "closed" else a["metrics"].get(of, 0))  # .get: rows stored before a measure was added lack it until the nightly rebuild
 
 
 def _speed_key(a, spec):
@@ -1375,7 +1382,7 @@ def advocate_boards(advs, min_cases):
                 text = f"{round(100 * won / of)}% ({won}/{of})"
             rows.append({"name": a["name"], "slug": a["slug"], "text": text})
         boards.append({"key": key, "title": spec["title"], "sub": spec["sub"], "group": spec["group"], "kind": spec["kind"],
-                       "completed": spec.get("of") == "closed", "wins": spec["kind"] == "speed", "rows": rows})
+                       "completed": spec.get("of") == "closed", "wins": spec["kind"] == "speed", "closing": bool(spec.get("closing")), "rows": rows})
     return boards
 
 
