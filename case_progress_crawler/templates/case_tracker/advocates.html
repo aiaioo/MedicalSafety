@@ -1,6 +1,7 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}Advocates{% endblock %}
 {% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
+{% from "case_tracker/_pager.html" import pager as page_nav %}
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home', court='all') }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
@@ -28,11 +29,6 @@
   })();
 </script>
 <style>
-  .pager { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: .6rem 0; font-size: .9em; }
-  .pager a, .pager .cur, .pager .off { padding: .15rem .6rem; border: 1px solid #0b5cad; border-radius: .4rem; text-decoration: none; }
-  .pager .cur { background: #0b5cad; color: #fff; }
-  .pager .off { border-color: #ccc; color: #999; }
-  .pager .gap { color: #666; }
   .boards { columns: 3 260px; column-gap: 1.5rem; margin: 1rem 0; }
   .boards .board { break-inside: avoid; margin: 0 0 1rem; }
   .board-help { font-size: .85em; margin: .8rem 0 0; }
@@ -81,15 +77,7 @@
   {% if sort in ('patient', 'patient_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for patients: the share of a lawyer's {{ 'completed' if sort == 'patient_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'patient_done' }} that they won for a patient (the court allowed the complaint against the hospital). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'patient_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
   {% if sort in ('hospital', 'hospital_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for hospitals: the share of a lawyer's {{ 'completed' if sort == 'hospital_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'hospital_done' }} that they won for a hospital or doctor (the court dismissed the complaint, including for non-prosecution). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'hospital_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
 </form>
-{% macro pager() %}{% if pages > 1 %}
-<nav class="pager" aria-label="Pages of lawyers">
-  {% set u = {'q': q or None, 'sort': sort, 'min': min_cases, 'period': None if period == 'all' else period, 'state': state} %}
-  {% if page > 1 %}<a href="{{ url_for('case_tracker.advocates', page=page - 1, **u) }}" rel="prev">&larr; Previous</a>{% else %}<span class="off">&larr; Previous</span>{% endif %}
-  {% set ns = namespace(prev=0) %}{% for n in range(1, pages + 1) if n == 1 or n == pages or (n - page)|abs <= 2 %}{% if n - ns.prev > 1 %}<span class="gap">&hellip;</span>{% endif %}{% if n == page %}<span class="cur" aria-current="page">{{ n }}</span>{% else %}<a href="{{ url_for('case_tracker.advocates', page=n, **u) }}">{{ n }}</a>{% endif %}{% set ns.prev = n %}{% endfor %}
-  {% if page < pages %}<a href="{{ url_for('case_tracker.advocates', page=page + 1, **u) }}" rel="next">Next &rarr;</a>{% else %}<span class="off">Next &rarr;</span>{% endif %}
-  <span class="muted">lawyers {{ first_rank }}&ndash;{{ first_rank + advocates|length + below|length - 1 }} of {{ total }}</span>
-</nav>
-{% endif %}{% endmacro %}
+{% macro pager() %}{{ page_nav('case_tracker.advocates', page, pages, first_rank, first_rank + advocates|length + below|length - 1, total, 'lawyers', {'q': q or None, 'sort': sort, 'min': min_cases, 'period': None if period == 'all' else period, 'state': state}) }}{% endmacro %}
 {% macro adv_row(a, rank) %}
   <tr><td class="muted">{{ rank }}</td><td>{{ ct_link('advocate', a.slug, a.name) }}</td><td>{{ a.n }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
     {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.closed_patient_pct|default(none), m.closed_patient|default(0), m.patient_cases|default(0)) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.closed_hospital_pct|default(none), m.closed_hospital|default(0), m.hospital_cases|default(0)) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
