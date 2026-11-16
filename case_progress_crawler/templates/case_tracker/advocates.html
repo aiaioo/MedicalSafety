@@ -92,18 +92,18 @@
 {% endif %}{% endmacro %}
 {% macro adv_row(a, rank) %}
   <tr><td class="muted">{{ rank }}</td><td>{{ ct_link('advocate', a.slug, a.name) }}</td><td>{{ a.n }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
-    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.closed_patient_pct|default(none), m.closed_patient|default(0), m.patient_cases|default(0)) }}</td><td>{{ pct_cell(m.closed_hospital_pct|default(none), m.closed_hospital|default(0), m.hospital_cases|default(0)) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
+    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.closed_patient_pct|default(none), m.closed_patient|default(0), m.patient_cases|default(0)) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.closed_hospital_pct|default(none), m.closed_hospital|default(0), m.hospital_cases|default(0)) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
     <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
 {% endmacro %}
 {{ pager() }}
 <table>
-  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For patient</th><th>For hospital</th><th>For insurer/ organisation</th>
+  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For patient</th><th>For hospital</th><th>For other</th>
     <th title="Share of their cases that are closed">% closed</th>
-    <th title="Closed cases as a share of all the cases they act for patients in"{{ ' class=on' if sort == 'patient_close' }}>Close rate: patients</th>
-    <th title="Closed cases as a share of all the cases they act for hospitals in"{{ ' class=on' if sort == 'hospital_close' }}>Close rate: hospitals</th>
     <th title="Of the cases the court decided (allowed or dismissed), the share their client won: a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed">% won</th>
+    <th title="Closed cases as a share of all the cases they act for patients in"{{ ' class=on' if sort == 'patient_close' }}>Close rate: patients</th>
     <th title="Cases won for patients (complaint allowed against the hospital), as a share of all their cases"{{ ' class=on' if sort == 'patient' }}>Won for patients ÷ all cases</th>
     <th title="Cases won for patients, as a share of their completed cases"{{ ' class=on' if sort == 'patient_done' }}>Won for patients ÷ completed</th>
+    <th title="Closed cases as a share of all the cases they act for hospitals in"{{ ' class=on' if sort == 'hospital_close' }}>Close rate: hospitals</th>
     <th title="Cases won for hospitals (complaint dismissed), as a share of all their cases"{{ ' class=on' if sort == 'hospital' }}>Won for hospitals ÷ all cases</th>
     <th title="Cases won for hospitals, as a share of their completed cases"{{ ' class=on' if sort == 'hospital_done' }}>Won for hospitals ÷ completed</th>
     <th title="Cases won for either side, as a share of their completed cases"{{ ' class=on' if sort == 'win_done' }}>Win rate ÷ completed</th>

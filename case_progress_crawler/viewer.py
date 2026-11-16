@@ -1308,7 +1308,8 @@ RANKINGS = {
     "won_hearings": {"title": "Won in fewest hearings", "sub": "median hearings per case won", "group": "speed", "kind": "speed",
                      "value": "won_hearings", "n": "n_won_held"},
 }
-ADVOCATE_SORTS = [(k, f"{r['title']} ({r['sub']})") for k, r in RANKINGS.items()]
+GROUP_ORDER = ["patients", "hospitals", "volume", "wins", "speed"]  # the patients' lists together, the hospitals' right after, then the rest
+ADVOCATE_SORTS = [(k, f"{r['title']} ({r['sub']})") for k, r in sorted(RANKINGS.items(), key=lambda kv: GROUP_ORDER.index(kv[1]["group"]))]
 ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases (completed cases, for the completed-case rankings) to be ranked by a win share
 DEFAULT_MIN_CASES = 2
 ADVOCATE_PAGE_SIZE = 100  # rows of the full table to a page
@@ -1383,7 +1384,7 @@ def advocate_boards(advs, min_cases):
             rows.append({"name": a["name"], "slug": a["slug"], "text": text})
         boards.append({"key": key, "title": spec["title"], "sub": spec["sub"], "group": spec["group"], "kind": spec["kind"],
                        "completed": spec.get("of") == "closed", "wins": spec["kind"] == "speed", "closing": bool(spec.get("closing")), "rows": rows})
-    return boards
+    return sorted(boards, key=lambda b: GROUP_ORDER.index(b["group"]))
 
 
 @bp.route("/advocates/")
