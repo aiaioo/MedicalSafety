@@ -1305,6 +1305,7 @@ RANKINGS = {
 ADVOCATE_SORTS = [(k, f"{r['title']} ({r['sub']})") for k, r in RANKINGS.items()]
 ADVOCATE_MIN_CASES = [1, 2, 3, 5, 10]  # the minimum number of cases (completed cases, for the completed-case rankings) to be ranked by a win share
 DEFAULT_MIN_CASES = 2
+ADVOCATE_ROW_LIMIT = 300  # rows of the full table shown before "show all"
 
 
 def _count(a, key):
@@ -1388,7 +1389,12 @@ def advocates():
     found = [a for a in analytics_page("advocates", period()) if not q or q in a["name"].lower()]
     boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
-    return render_template("case_tracker/advocates.html", advocates=advs, below=below, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
+    total, below_total = len(advs) + len(below), len(below)
+    show_all = bool(request.args.get("all"))
+    if not show_all and total > ADVOCATE_ROW_LIMIT:  # a table of thousands of rows is most of the page's time and size: show the top, the rest on request
+        advs = advs[:ADVOCATE_ROW_LIMIT]
+        below = below[:ADVOCATE_ROW_LIMIT - len(advs)]
+    return render_template("case_tracker/advocates.html", advocates=advs, below=below, total=total, below_total=below_total, shown=len(advs) + len(below), show_all=show_all, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
                            sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "won cases" if RANKINGS[sort]["kind"] == "speed" else "cases",
                            min_cases=min_cases, min_options=ADVOCATE_MIN_CASES)
 

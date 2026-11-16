@@ -41,10 +41,30 @@
   nav.courts a.on { background: #0b5cad; color: #fff; }
   nav.courts label.state { margin-right: .6rem; font-size: .9em; }
   nav.courts label.state select { font-size: 1em; padding: .2rem .4rem; border: 1px solid #0b5cad; border-radius: .4rem; background: #fff; }
+  #loadbar { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: #0b5cad; z-index: 9999; opacity: 0; pointer-events: none; }
+  #loadbar.on { opacity: 1; width: 85%; transition: width 12s cubic-bezier(.1,.6,.2,1); }
 </style>
 {% include "case_tracker/_panel_styles.html" %}
 </head>
 <body class="ct">
+<div id="loadbar" role="progressbar" aria-label="Loading"></div>
+<script>
+  // A thin bar at the top while the next page loads: it starts on a click on a link, a form submit or a drop-down that navigates, and is cleared when the page is shown (also when it comes back from the back/forward cache).
+  (() => {
+    const bar = document.getElementById('loadbar');
+    const start = () => { bar.classList.remove('on'); void bar.offsetWidth; bar.classList.add('on'); };
+    const stop = () => { bar.classList.remove('on'); };
+    document.addEventListener('click', e => {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === '_blank' || a.hasAttribute('download')) return;
+      const u = new URL(a.href, location.href);
+      if (u.origin === location.origin && !(u.pathname === location.pathname && u.search === location.search && u.hash)) start();
+    });
+    document.addEventListener('submit', e => { if (!e.defaultPrevented) start(); });
+    window.addEventListener('beforeunload', start);
+    window.addEventListener('pageshow', stop);
+  })();
+</script>
 {% block top %}{% endblock %}
 {% set tracker_home = url_for('case_tracker.home') %}
 <header><a href="{{ '/' if tracker_home != '/' else tracker_home }}" title="Home" aria-label="Home"><svg class="home" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg> Case progress</a></header>
