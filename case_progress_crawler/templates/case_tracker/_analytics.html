@@ -71,6 +71,7 @@
       <ul class="legend">
         {% for k, label, n, pct in c.bars %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.home', state=link_state, court='all', year=year, q=q or None, outcome=k) }}" class="{{ 'on' if k == outcome }}" title="Show only {{ label|lower }} cases">{% endif %}<i class="seg {{ k }}"></i>{{ label }} {{ n }} ({{ pct }}%){% if may_list %}</a>{% endif %}</li>{% endfor %}
       </ul>
+      {% if c.avg_years is not none %}<p class="muted"><strong>Average {{ c.avg_years }} years</strong> from filing to close (from {{ c.n_years }} closed cases).</p>{% endif %}
       {% if c.closed %}<p class="muted">Of {{ c.closed }} closed: {% for k, label in [('allowed','allowed'),('dismissed','dismissed'),('withdrawn','withdrawn'),('settled','settled'),('returned','returned or transferred'),('disposed','otherwise disposed')] if c[k] %}{% if may_list %}<a href="{{ url_for('case_tracker.home', state=link_state, court='all', year=year, q=q or None, outcome=k) }}">{% endif %}{{ (100 * c[k] / c.closed)|round|int }}% {{ label }}{% if may_list %}</a>{% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
       
       {% if c.patient_win_pct is not none %}<p class="muted">Of {{ c.decided }} decided cases (the court allowed or dismissed the complaint): <strong>patients won {{ c.patient_win_pct }}%</strong> ({{ c.won_patient }}), <strong>hospitals won {{ c.hospital_win_pct }}%</strong> ({{ c.won_hospital }}).

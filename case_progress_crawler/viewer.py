@@ -393,9 +393,15 @@ def analytics(cases, all_years=None):
             row["decided"] += 1
             row["won_patient" if verdict == "against" else "won_hospital"] += 1
         row.setdefault("gaps", []).extend(c["gaps"])
+        row.setdefault("days_closed", [])
+        if c["days_to_close"] is not None:
+            row["days_closed"].append(c["days_to_close"])
         row.setdefault("with_hearings", 0)
         row["with_hearings"] += bool(c["gaps"])
     for row in per_court.values():
+        years = [d / 365.25 for d in row.pop("days_closed")]
+        row["avg_years"] = round(statistics.mean(years), 1) if len(years) >= MIN_TIMING_CASES else None  # average filing-to-close time, from enough closed cases with dates
+        row["n_years"] = len(years)
         row["median_gap"] = int(statistics.median(row["gaps"])) if row["gaps"] else None
         row["long_gap_pct"] = round(100 * sum(g > 60 for g in row["gaps"]) / len(row["gaps"])) if row["gaps"] else None
         row["n_gaps"] = len(row["gaps"])
@@ -672,9 +678,14 @@ def load(sel=None, st=None, refresh=False):
         held_dates = [h["hearing_date"] for h in hs if h["hearing_date"] and h["hearing_date"] <= today]
         outcome = fast["outcome"] if fast else outcome_of(r, statuses.get(key))
         filing_date = ist_date((statuses.get(key) or {}).get("caseFilingDate") or "")[:10]
+        end_date = max(held_dates, default="")
+        if r["court"] in REGISTER_COURTS and not filing_date:  # a register gives the date a complaint was received (its first timeline row) and, once disposed, the order's date
+            dates = sorted(h["hearing_date"] for h in hs if h["hearing_date"])
+            filing_date = dates[0] if dates else ""
+            end_date = r.get("status_since") or (dates[-1] if len(dates) > 1 else "")
         commission = ((statuses.get(key) or {}).get("filedInComissionName") or "").strip() if kind_of(r["court"]) == "consumer" else ""
-        cases[key] = {**r, "outcome": outcome, "commission": commission_label(commission) if kind_of(r["court"]) == "consumer" else "", "filing_date": filing_date, "n_held": len(held_dates),
-                      "days_to_close": days_to_close(filing_date, max(held_dates, default=""), outcome), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
+        cases[key] = {**r, "outcome": outcome, "commission": commission_label(commission) if kind_of(r["court"]) == "consumer" else "", "filing_date": filing_date, "n_held": 0 if r["court"] in REGISTER_COURTS else len(held_dates),
+                      "days_to_close": days_to_close(filing_date, end_date, outcome), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
                       "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
