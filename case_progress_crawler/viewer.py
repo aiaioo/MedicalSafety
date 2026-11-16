@@ -44,7 +44,7 @@ import time
 from html import unescape
 from pathlib import Path
 from collections import defaultdict
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import fitz  # PyMuPDF
 from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
@@ -838,8 +838,9 @@ def remember_linked_court(resp):
 def select_state(st):
     if st not in states():
         abort(404)
-    back = _back_to(("/", "/hearings/", "/hospitals/", "/advocates/"))
-    resp = redirect(back)
+    back = urlparse(_back_to(("/", "/hearings/", "/hospitals/", "/advocates/")))
+    query = urlencode([(k, v) for k, v in parse_qsl(back.query) if k not in ("state", "court")])  # a ?state= in the page's own address would override the choice just made
+    resp = redirect(back.path + ("?" + query if query else ""))
     resp.set_cookie("state", st, max_age=365 * 86400, samesite="Lax", path=_cookie_path())
     resp.delete_cookie("court", path=_cookie_path())  # the courts offered differ by state
     return resp
