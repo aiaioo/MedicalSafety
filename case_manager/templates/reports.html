@@ -61,6 +61,10 @@
       <div class="menu-dropdown" id="fileMenuDropdown">
         <button type="button" id="newDocBtn">New report&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
+        <div class="menu-submenu" id="recentMenu">
+          <button type="button" id="recentMenuBtn" class="menu-submenu-trigger">Open Recent</button>
+          <div class="menu-dropdown menu-submenu-list" id="recentMenuList"></div>
+        </div>
         <button type="button" id="copyDocBtn" {{ 'disabled' if not report_id or not can_create }}>Make a copy</button>
         <hr>
         <button type="button" id="uploadSourceMenuBtn">Upload document&hellip;</button>

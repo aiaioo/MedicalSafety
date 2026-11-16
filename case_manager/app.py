@@ -3988,6 +3988,10 @@ def api_report_copy(report_id):
     links = [("cause", c) for c in (original or {}).get("cause_ids", [])]
     links += [("case", c) for c in (original or {}).get("case_ids", [])]
     storage.save_report(new_id, data, owner_id=g.user.id, link=links[0] if links else default_cause_link())
+    # The copy gets its own images (they belong to a report row, which now exists).
+    localized = localize_report_images(data["doc"], new_id)
+    if localized != data["doc"]:
+        storage.save_report(new_id, {**data, "doc": localized})
     for target_kind, target_id in links[1:]:
         storage.link_to("report", new_id, target_kind, target_id)
     annexure = storage.get_annexure(report_id)
@@ -5700,6 +5704,61 @@ def api_report_image_upload(report_id):
     image_id = uuid.uuid4().hex[:24]
     storage.create_report_image(report_id, image_id, "image/jpeg", data)
     return jsonify({"id": image_id, "url": url_for("api_report_image", report_id=report_id, image_id=image_id)})
+
+
+REPORT_IMAGE_URL_RE = re.compile(r"^/media/report-images/([^/]+)/([^/]+)$")
+
+
+def copy_report_image(src_url, dest_report_id):
+    """Copies the report image at `src_url` (a /media/report-images/ URL the
+    user can view) into `dest_report_id`; returns the new URL, or None if
+    `src_url` isn't such an image or isn't viewable."""
+    m = REPORT_IMAGE_URL_RE.match(urlsplit(src_url or "").path)
+    if not m or not DOC_ID_RE.match(m.group(1)) or not DOC_ID_RE.match(m.group(2)):
+        return None
+    src_report, image_id = m.groups()
+    if not has_role("report", src_report, "viewer"):
+        return None
+    image = storage.get_report_image(image_id)
+    if image is None or image["report_id"] != src_report:
+        return None
+    new_id = uuid.uuid4().hex[:24]
+    storage.create_report_image(dest_report_id, new_id, image["content_type"], image["data"])
+    return url_for("api_report_image", report_id=dest_report_id, image_id=new_id)
+
+
+def localize_report_images(node, dest_report_id, cache=None):
+    """Returns `node` with every image that lives in another report copied
+    into `dest_report_id` and re-pointed at the copy."""
+    cache = {} if cache is None else cache
+    if not isinstance(node, dict):
+        return node
+    if node.get("type") == "image":
+        src = (node.get("attrs") or {}).get("src", "")
+        m = REPORT_IMAGE_URL_RE.match(urlsplit(src).path)
+        if m and m.group(1) != dest_report_id:
+            if src not in cache:
+                cache[src] = copy_report_image(src, dest_report_id)
+            if cache[src]:
+                return {**node, "attrs": {**node["attrs"], "src": cache[src]}}
+        return node
+    if "content" in node:
+        return {**node, "content": [localize_report_images(c, dest_report_id, cache) for c in node["content"]]}
+    return node
+
+
+@app.route("/api/report/<report_id>/image/copy", methods=["POST"])
+def api_report_image_copy(report_id):
+    """Pasting into a report an image that belongs to another report: the
+    editor asks for its own copy, so it survives the source being deleted."""
+    check_report_id(report_id)
+    require_role("report", report_id, "editor")
+    if not storage.report_exists(report_id):
+        raise DocumentError(f"No report with id {report_id!r}", 404)
+    url = copy_report_image((request.get_json(silent=True) or {}).get("url"), report_id)
+    if url is None:
+        raise DocumentError("That image can't be copied", 404)
+    return jsonify({"url": url})
 
 
 @app.route("/media/report-images/<report_id>/<image_id>")

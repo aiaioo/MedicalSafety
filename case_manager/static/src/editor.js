@@ -168,6 +168,44 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   });
   document.addEventListener("click", () => fileMenuDropdown.classList.remove("open"));
 
+  // File > Open Recent: the most recently updated reports, to switch between
+  // them without going through the Open dialog. Saves this report first.
+  const recentMenuBtn = document.getElementById("recentMenuBtn");
+  const recentMenuList = document.getElementById("recentMenuList");
+  const RECENT_REPORTS = 10;
+  async function loadRecentReports() {
+    recentMenuList.innerHTML = '<div class="menu-empty">Loading&hellip;</div>';
+    try {
+      const list = (await fetchReports()).filter((r) => r.id !== reportId).slice(0, RECENT_REPORTS);
+      recentMenuList.innerHTML = "";
+      if (!list.length) {
+        recentMenuList.innerHTML = '<div class="menu-empty">No other reports</div>';
+        return;
+      }
+      for (const r of list) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = r.name || r.id;
+        b.title = r.name || r.id;
+        b.addEventListener("click", async () => {
+          try {
+            if (reportId && dirty) await saveReport();
+          } catch (e) {
+            setStatus("Save failed: " + e.message, true);
+            return;
+          }
+          window.location.href = `/reports?report=${encodeURIComponent(r.id)}`;
+        });
+        recentMenuList.appendChild(b);
+      }
+    } catch (e) {
+      recentMenuList.innerHTML = '<div class="menu-empty">Failed to load reports</div>';
+    }
+  }
+  fileMenuBtn.addEventListener("click", () => {
+    if (fileMenuDropdown.classList.contains("open")) loadRecentReports();
+  });
+
   function openModal(el) {
     el.classList.add("open");
   }
@@ -788,6 +826,36 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   // Tiptap editor
   // ---------------------------------------------------------------------
   let editorReady = false;
+  // An image pasted (or dropped) from another report still points at that
+  // report's copy; ask the server for our own so it outlives the original.
+  const foreignImageRe = /^\/media\/report-images\/([^/]+)\/[^/?]+/;
+  const localizing = new Set();
+  function localizeForeignImages() {
+    if (!reportId) return;
+    editor.state.doc.descendants((node) => {
+      const src = node.type.name === "image" ? node.attrs.src || "" : "";
+      const m = foreignImageRe.exec(src);
+      if (!m || m[1] === reportId || localizing.has(src)) return;
+      localizing.add(src);
+      fetch(`/api/report/${encodeURIComponent(reportId)}/image/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: src }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((d) => {
+          if (!d) return;
+          const { tr } = editor.state;
+          editor.state.doc.descendants((n, pos) => {
+            if (n.type.name === "image" && n.attrs.src === src) tr.setNodeMarkup(pos, undefined, { ...n.attrs, src: d.url });
+          });
+          if (tr.docChanged) editor.view.dispatch(tr);
+        })
+        .catch(() => {})
+        .finally(() => localizing.delete(src));
+    });
+  }
+
   const editor = new Editor({
     element: editorEl,
     extensions: [
@@ -812,7 +880,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     editorProps: {
       attributes: { class: "tiptap-content" },
     },
-    onUpdate: () => markDirty(),
+    onUpdate: () => { markDirty(); try { localizeForeignImages(); } catch (e) { /* editor not ready yet */ } },
     onCreate: () => {
       applyMarginsToCss();
     },
@@ -829,7 +897,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     });
     // Grey out everything in the File menu except the downloads.
     fileMenuDropdown.querySelectorAll("button").forEach((b) => {
-      b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn;
+      b.disabled = b !== downloadPdfBtn && b !== downloadDocxBtn && b !== recentMenuBtn;
     });
   }
 
