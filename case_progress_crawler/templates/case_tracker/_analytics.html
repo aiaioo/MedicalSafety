@@ -23,7 +23,7 @@
 {% macro cases_list() %}
   {% if stats.top_hospitals %}
   <div class="judgements">
-    <h3>Hospitals by number of cases <span class="muted">(top 10{{ '; ' ~ plabel if plabel }})</span></h3>
+    <h3>Top 15 hospitals by allegations of malpractice or failures <span class="muted">{{ '(' ~ plabel ~ ')' if plabel }}</span></h3>
     {% set most = stats.top_hospitals[0][0] %}
     {% for n, name, slug in stats.top_hospitals %}
     <div class="jrow">
@@ -86,7 +86,7 @@
   {% endfor %}
   {% if stats.top_hospitals %}
     <div>
-      <h3>Top 10 hospitals <span class="muted">by cases</span></h3>
+      <h3>Top 15 hospitals <span class="muted">by allegations of malpractice or failures</span></h3>
       <ol class="tophosp">
         {% for n, name, slug in stats.top_hospitals %}<li>{% if may_list %}<a href="{{ url_for('case_tracker.hospital', state=link_state, slug=slug) }}">{{ name }}</a>{% else %}{{ name }}{% endif %} <span class="muted">{{ n }}</span></li>{% endfor %}
       </ol>

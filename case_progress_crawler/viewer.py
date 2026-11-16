@@ -381,7 +381,7 @@ def case_advocates(rows):
 
 def analytics(cases, all_years=None):
     """Numbers for the front page's panel, from the cases shown: per court the count of each outcome, and the
-    ten hospitals named in most cases."""
+    TOP_HOSPITALS hospitals named in most cases."""
     per_court = {}
     for c in cases:
         row = per_court.setdefault(c["court"], {"court": c["court"], "label": c["court_label"], "description": COURT_DESCRIPTIONS.get(kind_of(c["court"]), "").format(state=c.get("state", ""), extra=CONSUMER_EXTRAS.get(c.get("state"), "")), "total": 0,
@@ -441,7 +441,7 @@ def analytics(cases, all_years=None):
             if slug:
                 hospitals[slug][0] += 1
                 hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug, {}).get("name") or hospitals[slug][1] or n
-    top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:10]
+    top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:TOP_HOSPITALS]
     timing = case_timing(cases)
     sides = side_comparison(cases)
     against = hospital_ranking(cases)
@@ -483,6 +483,7 @@ def analytics(cases, all_years=None):
     return {"courts": list(per_court.values()), "total": len(cases), "top_hospitals": top, "years": years, "judgements": judgements, "dismissals": dismissals, "against": against, "timing": timing, "sides": sides}
 
 
+TOP_HOSPITALS = 15  # hospitals listed on the panel, by allegations of malpractice or failures (cases)
 MIN_TIMING_CASES = 20  # a typical time or count is not shown from fewer closed cases than this
 TIMING_GROUPS = [("allowed", "Allowed", ("allowed",)), ("dismissed", "Dismissed", ("dismissed",)),
                  ("settled", "Settled or withdrawn", ("settled", "withdrawn"))]
