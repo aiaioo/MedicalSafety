@@ -161,6 +161,14 @@ CREATE TABLE IF NOT EXISTS case_metrics (
 -- for a database made before these columns existed
 ALTER TABLE case_metrics ADD COLUMN IF NOT EXISTS filing_date date;
 ALTER TABLE case_metrics ADD COLUMN IF NOT EXISTS days_to_close integer;
+ALTER TABLE case_metrics ADD COLUMN IF NOT EXISTS gaps integer[];   -- the days between consecutive hearing days, so the viewer need not recompute them
+
+-- The day each court's metrics rows were computed, so the viewer can use them while they are recent (see
+-- progress_storage.MAX_METRICS_AGE_DAYS) and work the figures out itself when they are not.
+CREATE TABLE IF NOT EXISTS metrics_meta (
+    court        text PRIMARY KEY,
+    computed_on  date NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS hearing_metrics (
     id              bigserial PRIMARY KEY,

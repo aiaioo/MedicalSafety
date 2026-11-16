@@ -157,7 +157,7 @@ def _add_rows(c, today, case_rows, hearing_rows):
         min((l["date"] for l in held), default=None), max((l["date"] for l in held), default=None),
         len(gaps), int(statistics.median(gaps)) if gaps else None, max(gaps, default=None),
         counts[("patient", "time")], counts[("hospital", "time")], counts[("patient", "absent")], counts[("hospital", "absent")],
-        c["filing_date"] or None, c["days_to_close"]])
+        c["filing_date"] or None, c["days_to_close"], gaps])
     for h, l in zip(c["hearings"], labels):
         hearing_rows.append([c["court"], c["case_key"], l["date"] or None, l["held"], l["gap_days"],
                              l["time_asked_by"], l["absent_side"], c["provider_side"], bool(h.get("from_history"))])
@@ -165,17 +165,23 @@ def _add_rows(c, today, case_rows, hearing_rows):
 
 def rebuild():
     """Recompute both tables for every analysed court, from the viewer's merged view of each case (cause lists plus
-    the portal's history), so the numbers stored are the numbers the viewer shows."""
+    the portal's history), so the numbers stored are the numbers the viewer shows. The viewer uses these rows (outcome,
+    gaps, adjournments) to load faster, up to a few days old, so this runs after each crawl's analyses."""
     import viewer  # imported here: the viewer imports this module for the classifiers
     today = datetime.date.today().isoformat()
-    case_rows, hearing_rows = [], []
-    for state in storage.analysis_states():  # one state's cases in memory at a time
-        with viewer.in_state(state):
-            ordered = viewer.load("all", state)["ordered"]
-            for c in ordered:
-                _add_rows({**c, "hearings": []} if c["court"] in REGISTER_COURTS else c, today, case_rows, hearing_rows)
-        viewer._cache.clear()
-    storage.replace_metrics(case_rows, hearing_rows)
+    case_rows, hearing_rows, courts = [], [], []
+    viewer.USE_STORED_METRICS = False  # work every figure out afresh, never from the rows being replaced
+    try:
+        for state in storage.analysis_states():  # one state's cases in memory at a time
+            with viewer.in_state(state):
+                courts += viewer.courts_of(state)
+                ordered = viewer.load("all", state, refresh=True)["ordered"]
+                for c in ordered:
+                    _add_rows({**c, "hearings": []} if c["court"] in REGISTER_COURTS else c, today, case_rows, hearing_rows)
+            viewer._cache.clear()
+    finally:
+        viewer.USE_STORED_METRICS = True
+    storage.replace_metrics(case_rows, hearing_rows, courts)
     return len(case_rows), len(hearing_rows)
 
 

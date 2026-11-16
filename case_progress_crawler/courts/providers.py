@@ -17,6 +17,7 @@ The words are looked for in the party's own name, without the person it acts "th
 Through its Medical Superintendent Dr. X" is the hospital, whose representative does not make it a doctor).
 """
 
+import functools
 import re
 
 INSTITUTION_PATTERNS = [
@@ -75,6 +76,7 @@ class ProviderMatcher:
         """The party's own name, without the person representing it."""
         return self.representative_re.sub("", name or "").strip(" ,.;")
 
+    @functools.lru_cache(maxsize=200000)  # the same party names recur across thousands of cases; the patterns never change
     def has_institution(self, n):
         """Does the (cleaned) name have a word of an institution -- but not only "lab" in a name that is plainly not medical?"""
         words = [m.group() for m in self.institution_re.finditer(n or "")]
@@ -95,6 +97,7 @@ class ProviderMatcher:
     def is_veterinary(self, name):
         return bool(self.veterinary_re.search(name or ""))
 
+    @functools.lru_cache(maxsize=200000)
     def kind(self, name):
         """'institution', 'doctor', 'insurer', 'organisation' or 'other' (see the module docstring)."""
         n = self.clean(name)
@@ -112,6 +115,10 @@ class ProviderMatcher:
     def hospital_names(self, party):
         """Hospital/clinic/nursing-home names mentioned in a party string, e.g.
         'Dr.Tarun Patil, C/o Manipal Hospitals, Bangalore.' -> ['Manipal Hospitals']"""
+        return list(self._hospital_names(party))
+
+    @functools.lru_cache(maxsize=200000)
+    def _hospital_names(self, party):
         names = []
         for seg in self.hospital_split_re.split(party):
             # "Karnataka Health Ltd through its St Johns Hospital": what comes before "through its" is not the hospital's name
@@ -124,7 +131,7 @@ class ProviderMatcher:
             name = self.hospital_title_re.sub("", seg[:m.end()]).strip(" .-")
             if len(name.split()) > 1:  # a bare "Hospital" names nothing
                 names.append(re.sub(r"\s+", " ", name).strip())
-        return names
+        return tuple(names)
 
     def party_of(self, complainants, respondents, role):
         """Whom an advocate on `role`'s side acts for, judged from that side's own parties and the case's provider side:

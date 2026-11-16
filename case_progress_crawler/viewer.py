@@ -43,7 +43,7 @@ import threading
 import time
 from html import unescape
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import fitz  # PyMuPDF
@@ -82,6 +82,7 @@ PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF
 PAGE_IMAGE_DPI = 150
 _cache = OrderedDict()  # (state, selection) -> {"mtimes", "data"}: the most recently used few; a state not asked for is not held
 MAX_CACHED = 6
+USE_STORED_METRICS = True  # load() takes each consumer case's outcome, gaps and adjournments from the stored metrics (metrics.py) when they are recent; metrics.py itself turns this off
 # Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name. Keys are
 # slugs as hospital_tokens() leaves them (apostrophes dropped, "Medical College" before "Hospital" dropped).
 HOSPITAL_ALIASES = {
@@ -628,6 +629,7 @@ def load(sel=None, st=None, refresh=False):
     hearings = defaultdict(list)
     status_rows = []  # case keys are distinct across courts
     histories, statuses = storage.load_case_documents("history.json", ids), storage.load_case_documents("status.json", ids)
+    stored = {c: storage.stored_case_metrics(c) for c in ids if kind_of(c) == "consumer"} if USE_STORED_METRICS else {}  # the medical councils are small, and their outcome rests on later steps
     for c in ids:
         analysis = storage.load_analysis(c)
         for r in analysis["parties"]:
@@ -660,9 +662,15 @@ def load(sel=None, st=None, refresh=False):
                 for n in MATCHER.hospital_names(pr["party"]):
                     provider_hospitals.setdefault(hospital_key(n), n)
         today = datetime.date.today().isoformat()
-        gaps, adjourned = case_pace([] if r["court"] in REGISTER_COURTS else hs, provider, today)
+        fast = (stored.get(r["court"]) or {}).get(key)  # the stored figures for this case, if there are any
+        if fast:
+            gaps = list(fast["gaps"])
+            adjourned = Counter({(who, kind): fast[f"{col}_{who}"] for who, kind, col in
+                                 (("patient", "time", "time_asked"), ("hospital", "time", "time_asked"), ("patient", "absent", "absent"), ("hospital", "absent", "absent")) if fast[f"{col}_{who}"]})
+        else:
+            gaps, adjourned = case_pace([] if r["court"] in REGISTER_COURTS else hs, provider, today)
         held_dates = [h["hearing_date"] for h in hs if h["hearing_date"] and h["hearing_date"] <= today]
-        outcome = outcome_of(r, statuses.get(key))
+        outcome = fast["outcome"] if fast else outcome_of(r, statuses.get(key))
         filing_date = ist_date((statuses.get(key) or {}).get("caseFilingDate") or "")[:10]
         commission = ((statuses.get(key) or {}).get("filedInComissionName") or "").strip() if kind_of(r["court"]) == "consumer" else ""
         cases[key] = {**r, "outcome": outcome, "commission": commission_label(commission) if kind_of(r["court"]) == "consumer" else "", "filing_date": filing_date, "n_held": len(held_dates),
@@ -732,6 +740,9 @@ def warm_cache():
                 if not started:
                     for sel in [DEFAULT_SELECTION] + [x for x in SELECTIONS if x != DEFAULT_SELECTION]:
                         load(sel, default_state(), refresh=True)
+                    for st in states():  # the other states' full lists too, so a visitor choosing one does not wait for it
+                        if st != default_state():
+                            load(DEFAULT_SELECTION, st, refresh=True)
                     started = _refresher_running = True
                 for st, sel in list(_cache):
                     entry = _cache.get((st, sel))

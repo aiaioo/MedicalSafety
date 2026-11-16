@@ -2,7 +2,7 @@
 {% block title %}Hearings{% endblock %}
 {% block top %}{% include "case_tracker/_search.html" %}{% endblock %}
 {% block body %}
-<p><a href="{{ url_for('case_tracker.home') }}">&larr; Cases</a></p>
+<p><a href="{{ url_for('case_tracker.home', state=state) }}">&larr; Cases</a></p>
 <h1>Hearings by date</h1>
 <form method="get" style="margin:1rem 0">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}

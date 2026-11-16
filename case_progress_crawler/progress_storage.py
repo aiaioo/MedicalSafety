@@ -294,20 +294,42 @@ def replace_analysis(court, enquiries, state="Karnataka", **rows):
 
 CASE_METRIC_COLUMNS = ["court", "case_key", "enquiry_id", "year", "kind", "outcome", "provider_side", "label", "hospitals", "n_hearings",
                        "n_held", "first_hearing", "last_hearing", "n_gaps", "median_gap_days", "max_gap_days",
-                       "time_asked_patient", "time_asked_hospital", "absent_patient", "absent_hospital", "filing_date", "days_to_close"]
+                       "time_asked_patient", "time_asked_hospital", "absent_patient", "absent_hospital", "filing_date", "days_to_close", "gaps"]
 HEARING_METRIC_COLUMNS = ["court", "case_key", "hearing_date", "held", "gap_days", "time_asked_by", "absent_side",
                           "provider_side", "from_history"]
 
 
-def replace_metrics(case_rows, hearing_rows):
-    """Replace case_metrics and hearing_metrics (metrics.py) with these rows, in the column orders above."""
+def replace_metrics(case_rows, hearing_rows, courts=()):
+    """Replace case_metrics and hearing_metrics (metrics.py) with these rows, in the column orders above, and record
+    today as the day these courts' rows were computed (metrics_meta)."""
     with _db() as cur:
         cur.execute("DELETE FROM case_metrics")
         cur.execute("DELETE FROM hearing_metrics")
+        cur.execute("DELETE FROM metrics_meta")
         for table, columns, rows in (("case_metrics", CASE_METRIC_COLUMNS, case_rows),
                                      ("hearing_metrics", HEARING_METRIC_COLUMNS, hearing_rows)):
             if rows:
                 psycopg2.extras.execute_values(cur, f"INSERT INTO {table} ({', '.join(columns)}) VALUES %s", rows, page_size=2000)
+        if courts:
+            psycopg2.extras.execute_values(cur, "INSERT INTO metrics_meta (court, computed_on) VALUES %s", [(c,) for c in courts], template="(%s, CURRENT_DATE)")
+
+
+MAX_METRICS_AGE_DAYS = 3  # stored metrics older than this are not used (a crawl has failed for days); up to then they are at most as stale as the last crawl
+
+
+def stored_case_metrics(court):
+    """{case_key: row} of what metrics.py stored for this court (outcome, the gaps between hearings, the counts of hearings
+    where a side asked for time or was absent), if it was computed within MAX_METRICS_AGE_DAYS; else None, and the viewer
+    works the figures out itself (slower, the same answer). A case changed since is up to a crawl out of date; a case the
+    rows lack is simply worked out."""
+    with _db() as cur:
+        cur.execute("SELECT (CURRENT_DATE - computed_on) AS age FROM metrics_meta WHERE court = %s", (court,))
+        meta = cur.fetchone()
+        if not meta or meta["age"] > MAX_METRICS_AGE_DAYS:
+            return None
+        cur.execute("SELECT case_key, outcome, gaps, time_asked_patient, time_asked_hospital, absent_patient, absent_hospital "
+                    "FROM case_metrics WHERE court = %s AND gaps IS NOT NULL", (court,))
+        return {r["case_key"]: r for r in cur.fetchall()}
 
 
 def replace_dashboard_stats(state, rows):
