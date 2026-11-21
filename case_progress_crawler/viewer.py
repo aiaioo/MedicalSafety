@@ -1026,16 +1026,17 @@ def case_prefill(number, with_court=True):
     # The next hearing: the date the latest hearing says the case is posted to (from the court's record, else the portal history).
     held = [h for h in c["hearings"] if h["hearing_date"]]
     latest = max(held, key=lambda h: (h["hearing_date"], h["hearing_time"]), default=None)
-    next_hearing, next_stage = "", ""
+    next_hearing, next_stage, next_from = "", "", ""
     if latest:
         next_hearing = latest.get("next_date") or (latest.get("history") or {}).get("next") or ""
         if next_hearing <= latest["hearing_date"]:
             next_hearing = ""
         else:
             next_stage = stage_label(latest.get("next_stage_tags"))
+            next_from = latest["hearing_date"]  # the hearing whose record (and PDF) names the next date
     return {"case_key": c["case_key"], "court_id": c["court"], "case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
             "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings,
-            "next_hearing": next_hearing, "next_stage": next_stage}
+            "next_hearing": next_hearing, "next_stage": next_stage, "next_from": next_from}
 
 
 def hearing_files(case_key, court_id, date):

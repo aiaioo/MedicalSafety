@@ -1651,6 +1651,19 @@ def mark_hearing_alerted(case_id: str, date: str) -> None:
                     "ON CONFLICT (case_id, hearing_date) DO UPDATE SET emailed = true", (case_id, date))
 
 
+def reminder_sent(case_id: str, date: str, days_before: int) -> bool:
+    with _cursor() as cur:
+        cur.execute("SELECT 1 FROM hearing_reminders WHERE case_id = %s AND hearing_date = %s AND days_before = %s",
+                    (case_id, date, days_before))
+        return cur.fetchone() is not None
+
+
+def mark_reminder_sent(case_id: str, date: str, days_before: int) -> None:
+    with _cursor() as cur:
+        cur.execute("INSERT INTO hearing_reminders (case_id, hearing_date, days_before) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (case_id, date, days_before))
+
+
 def alert_recipients(case_id: str) -> list[str]:
     """The (decrypted) addresses of the signed-up, verified users with access to the case who want hearing alerts."""
     with _cursor() as cur:

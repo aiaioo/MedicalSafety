@@ -2617,7 +2617,7 @@ def api_set_show_advanced():
 
 @app.route("/api/settings/hearing-alerts", methods=["PUT"])
 def api_set_hearing_alerts():
-    """Saves whether this user is emailed when the court's record of a hearing of one of their cases first appears."""
+    """Saves whether this user is emailed about the hearings of their cases (reminders, and the court's record when it appears)."""
     on = (request.get_json(silent=True) or {}).get("on")
     if not isinstance(on, bool):
         return jsonify({"error": "on must be true or false"}), 400
