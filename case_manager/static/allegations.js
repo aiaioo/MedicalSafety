@@ -11,6 +11,8 @@
   const documentsPageUrl = appEl.dataset.documentsPageUrl;
   const filterCaseId = appEl.dataset.filterCase || "";
   const focusAllegationId = appEl.dataset.focusAllegation || "";
+  const meId = appEl.dataset.meId; // empty for a guest, who has no collaborators
+  const collab = CollabSections.create(document.getElementById("sharedAllegations"), { meId, collaboratorsUrl: appEl.dataset.collaboratorsUrl });
 
   function reportUrl(reportId) {
     return `${documentsPageUrl}?report=${encodeURIComponent(reportId)}`;
@@ -144,13 +146,25 @@
   // ---------------------------------------------------------------------
   let allegations = [];
   let cases = []; // [{id, name, ...}] for the link picker + filter label
+  let allCases = []; // every case the user can reach, including those collaborators have shared
   let reports = []; // [{id, name, ...}] reports (from reports.html), for evidence-item linking
   let selectedId = null;
   let filterActive = !!filterCaseId;
   const saveTimers = {};
 
+  // Whether an allegation sits under one of the user's own causes (else it is in a collaborator's section).
+  function isOwnAllegation(a) {
+    return !a.cause_owner_id || String(a.cause_owner_id) === String(meId);
+  }
+
+  // The cases an allegation may be linked to: those under the cause picked in the title bar, or, for an allegation in
+  // a collaborator's cause, the cases under that cause.
+  function linkableCases(allegation) {
+    return isOwnAllegation(allegation) ? cases : allCases.filter((c) => c.cause_id === allegation.cause_id);
+  }
+
   function caseName(id) {
-    const c = cases.find((x) => x.id === id);
+    const c = cases.find((x) => x.id === id) || allCases.find((x) => x.id === id);
     return c ? c.name || id : id;
   }
 
@@ -293,7 +307,7 @@
 
   function updateAllegationCardMeta(id) {
     const allegation = allegations.find((a) => a.id === id);
-    const card = allegationListEl.querySelector(`.allegation-card[data-id="${id}"]`);
+    const card = document.querySelector(`.allegation-card[data-id="${id}"]`);
     if (allegation && card) {
       card.querySelector(".allegation-card-meta").textContent = evidenceCountLabel(allegation);
       const summaryEl = card.querySelector(".case-links-summary");
@@ -304,7 +318,7 @@
   function buildAllegationCard(allegation) {
     const card = document.createElement("div");
     card.className = "allegation-card" + (allegation.id === selectedId ? " selected" : "");
-    card.draggable = true;
+    card.draggable = isOwnAllegation(allegation); // only your own list is reordered
     card.dataset.id = allegation.id;
     card.innerHTML = `
       <div class="allegation-card-head">
@@ -364,11 +378,52 @@
   function renderAllegationList() {
     closeOpenCaseLinksPopover();
     const visible = visibleAllegations();
+    const own = visible.filter(isOwnAllegation);
     allegationListEl.innerHTML = "";
-    allegationListEmpty.style.display = visible.length ? "none" : "block";
-    for (const allegation of visible) {
+    allegationListEmpty.style.display = visible.length || editableSharedCases().length ? "none" : "block";
+    for (const allegation of own) {
       allegationListEl.appendChild(buildAllegationCard(allegation));
     }
+    // What collaborators have shared with you, a section each. Editing a collaborator's case includes adding allegations to it.
+    const editable = editableSharedCases();
+    collab.render(visible.filter((a) => !isOwnAllegation(a)), {
+      groupOf: (a) => a.cause_owner_id,
+      buildCard: buildAllegationCard,
+      extraOwners: editable.map((c) => c.cause_owner_id),
+      onAdd: editable.length ? buildAddForm : null,
+    });
+  }
+
+  function editableSharedCases() {
+    return allCases.filter((c) => !isOwnAllegation(c) && (c.role === "owner" || c.role === "editor"));
+  }
+
+  // The "+ Add" form of a collaborator's section: which of their cases the new allegation is for.
+  function buildAddForm(ownerId, formHost, close) {
+    const mine = editableSharedCases().filter((c) => String(c.cause_owner_id) === String(ownerId));
+    if (!mine.length) {
+      formHost.textContent = "You can add allegations to the cases you can edit; you can't edit any of theirs.";
+      return;
+    }
+    const label = document.createElement("label");
+    label.textContent = "Add an allegation to the case";
+    const select = document.createElement("select");
+    for (const c of mine) select.appendChild(new Option(c.name || c.id, c.id));
+    if (filterCaseId && mine.some((c) => c.id === filterCaseId)) select.value = filterCaseId;
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "btn";
+    create.textContent = "Add allegation";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "btn";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", close);
+    create.addEventListener("click", () => { create.disabled = true; addAllegation(select.value).finally(() => { create.disabled = false; }); });
+    const actions = document.createElement("div");
+    actions.className = "collab-section-form-actions";
+    actions.append(create, cancel);
+    formHost.append(label, select, actions);
   }
 
   function reorderAllegationsFromDom() {
@@ -404,7 +459,9 @@
     renderDetail();
   }
 
-  function addAllegation() {
+  // Creates an allegation: under the user's default cause, or, given `caseId` (a case of a collaborator's that the
+  // user can edit), for that case, in its cause.
+  function addAllegation(caseId) {
     const payload = {
       title: "",
       description: "",
@@ -413,10 +470,11 @@
       exculpatory: [],
       // Creating from a case-filtered view links the new allegation to that
       // case immediately, since that's almost always the intent.
-      case_ids: filterCaseId ? [filterCaseId] : [],
+      case_ids: caseId ? [caseId] : filterCaseId ? [filterCaseId] : [],
     };
+    if (caseId) payload.case_id = caseId;
     setStatus("Saving…");
-    fetch(allegationsUrl, {
+    return fetch(allegationsUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -428,15 +486,16 @@
       .then((data) => {
         allegations.push({ ...data, role: "owner", owner_name: "You" });
         selectedId = data.id;
+        if (!isOwnAllegation(data)) collab.expand(data.cause_owner_id);
         renderAllegationList();
         renderDetail();
         setStatus("Saved");
-        const card = allegationListEl.querySelector(`.allegation-card[data-id="${data.id}"]`);
+        const card = document.querySelector(`.allegation-card[data-id="${data.id}"]`);
         if (card) setTimeout(() => card.querySelector(".allegation-title-input").focus(), 0);
       })
       .catch((e) => setStatus("Could not create allegation: " + e.message, true));
   }
-  addAllegationBtn.addEventListener("click", addAllegation);
+  addAllegationBtn.addEventListener("click", () => addAllegation());
 
   function deleteAllegation(id) {
     fetch(allegationUrl(id), { method: "DELETE" })
@@ -722,12 +781,13 @@
     popover.draggable = false;
 
     function renderPopoverBody() {
-      if (!cases.length) {
+      const linkable = linkableCases(allegation);
+      if (!linkable.length) {
         popover.innerHTML = `<p class="empty">No cases yet. Create one in the <a href="${casesPageUrl}">Cases</a> workspace.</p>`;
         return;
       }
       const linked = new Set(allegation.case_ids || []);
-      popover.innerHTML = cases
+      popover.innerHTML = linkable
         .map(
           (c) => `
         <label class="case-link-row">
@@ -977,15 +1037,22 @@
   // ---------------------------------------------------------------------
   (async function init() {
     try {
-      const [allegationsRes, casesRes, reportsRes, causesRes] = await Promise.all([
+      const [allegationsRes, casesRes, reportsRes, causesRes, allAllegationsRes, allCasesRes] = await Promise.all([
         fetch(allegationsUrl + "?default_cause=1"),
         fetch(casesUrl + "?default_cause=1"),
         fetch(reportsUrl),
         fetch(causesUrl),
+        meId ? fetch(allegationsUrl) : null,
+        meId ? fetch(casesUrl) : null,
+        collab.load(),
       ]);
       if (!allegationsRes.ok) throw new Error(await allegationsRes.text());
-      allegations = await allegationsRes.json();
-      cases = casesRes.ok ? await casesRes.json() : [];
+      // Your own allegations are those under the cause picked in the title bar; those collaborators have shared with
+      // you (through their cause, a case or the allegation itself) are listed below, whichever cause they are under.
+      allegations = (await allegationsRes.json()).filter(isOwnAllegation);
+      if (allAllegationsRes && allAllegationsRes.ok) for (const a of await allAllegationsRes.json()) if (!isOwnAllegation(a)) allegations.push(a);
+      cases = casesRes.ok ? (await casesRes.json()).filter(isOwnAllegation) : [];
+      allCases = allCasesRes && allCasesRes.ok ? await allCasesRes.json() : cases;
       reports = reportsRes.ok ? await reportsRes.json() : [];
       causes = causesRes.ok ? await causesRes.json() : [];
       if (focusAllegationId) {
@@ -997,6 +1064,8 @@
         }
         selectedId = focusAllegationId;
         filterActive = false;
+        const focused = allegations.find((a) => a.id === focusAllegationId);
+        if (focused && !isOwnAllegation(focused)) collab.expand(focused.cause_owner_id);
       }
       renderFilterBar();
       renderAllegationList();

@@ -1287,3 +1287,21 @@ label.toggle-label #continuousToggle:focus-visible,
 .splitter-card { background: rgba(247, 248, 250, 0.85); }
 .splitter-add input, .splitter-card input { background: rgba(255, 255, 255, 0.9); }
 .splitter-confirm { background: rgba(253, 241, 239, 0.92); }
+
+/* ---- collaborators' sections in the cases and allegations left panels ---- */
+.collab-sections { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+.collab-section { border-top: 1px solid #e0e2e8; padding-top: 8px; }
+.collab-section > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; padding: 4px 2px;
+  font-size: 13px; font-weight: 600; color: #1c1c1c; user-select: none;
+}
+.collab-section > summary::-webkit-details-marker { display: none; }
+.collab-section > summary::before { content: "\25B8"; color: #8a92a5; font-size: 11px; width: 10px; }
+.collab-section[open] > summary::before { content: "\25BE"; }
+.collab-section-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-section-count { color: #8a92a5; font-weight: 400; font-size: 12px; }
+.collab-section-add { padding: 2px 8px; font-size: 12px; }
+.collab-section-form { margin: 8px 0; padding: 10px; background: #f7f8fa; border: 1px solid #e0e2e8; border-radius: 6px; font-size: 13px; }
+.collab-section-form select { width: 100%; margin: 6px 0 8px; box-sizing: border-box; }
+.collab-section-form .collab-section-form-actions { display: flex; gap: 8px; }
+.collab-section > .allegation-list { margin-top: 8px; }

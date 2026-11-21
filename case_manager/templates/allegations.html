@@ -10,6 +10,8 @@
 <body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 <div id="allegationsApp"
      data-can-create="{{ '1' if can_create else '' }}"
+     data-me-id="{{ me_id }}"
+     data-collaborators-url="{{ url_for('api_collaborators') }}"
      data-allegations-url="{{ url_for('api_allegations') }}"
      data-allegation-url-base="{{ url_for('api_allegation_item', allegation_id='__ID__') }}"
      data-allegations-order-url="{{ url_for('api_allegations_order') }}"
@@ -40,6 +42,7 @@
         <p class="allegations-filter-bar" id="filterBar" style="display:none"></p>
         <p class="empty" id="allegationListEmpty" style="display:none">No allegations yet. Add one to get started.</p>
         <div class="allegation-list" id="allegationList"></div>
+        <div class="collab-sections" id="sharedAllegations"></div>
       </aside>
       <section class="allegation-detail" id="allegationDetail">
         <p class="empty">Select or add an allegation on the left to see its evidence.</p>
@@ -50,6 +53,7 @@
 <script src="{{ url_for('static', filename='share-key.js') }}"></script>
 <script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='suppress-page-save.js') }}"></script>
+<script src="{{ url_for('static', filename='collab-sections.js') }}"></script>
 <script src="{{ url_for('static', filename='allegations.js') }}"></script>
 </body>
 </html>

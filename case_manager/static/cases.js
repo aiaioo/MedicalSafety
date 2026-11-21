@@ -8,6 +8,13 @@
   const causesUrl = appEl.dataset.causesUrl;
   const sourceDocumentsUrl = appEl.dataset.sourceDocumentsUrl;
   const annotationsPageUrl = appEl.dataset.annotationsPageUrl;
+  const meId = appEl.dataset.meId; // empty for a guest, who has no collaborators
+  const collab = CollabSections.create(document.getElementById("sharedCases"), { meId, collaboratorsUrl: appEl.dataset.collaboratorsUrl });
+
+  // Whether a case sits under one of the user's own causes (else it is in a collaborator's section).
+  function isOwnCase(c) {
+    return !c.cause_owner_id || String(c.cause_owner_id) === String(meId);
+  }
 
   function caseUrl(id) {
     return caseUrlBase.replace("__ID__", encodeURIComponent(id));
@@ -364,19 +371,29 @@
 
   function renderCaseList() {
     caseListEl.innerHTML = "";
-    caseListEmpty.style.display = cases.length ? "none" : "block";
-    for (const c of cases) caseListEl.appendChild(buildCaseCard(c));
+    const own = cases.filter(isOwnCase);
+    caseListEmpty.style.display = own.length || cases.length > own.length ? "none" : "block";
+    for (const c of own) caseListEl.appendChild(buildCaseCard(c));
+    collab.render(cases.filter((c) => !isOwnCase(c)), { groupOf: (c) => c.cause_owner_id, buildCard: buildCaseCard });
   }
 
   async function loadCases() {
     try {
-      const [casesRes] = await Promise.all([fetch(casesUrl + "?default_cause=1"), loadSourceDocs(), loadCauses()]);
-      cases = await casesRes.json();
+      const [casesRes, allRes] = await Promise.all([
+        fetch(casesUrl + "?default_cause=1"), meId ? fetch(casesUrl) : null,
+        loadSourceDocs(), loadCauses(), collab.load(),
+      ]);
+      // Your own cases are those under the cause picked in the title bar; what collaborators have shared with you
+      // is listed below, whichever cause it is under.
+      cases = (await casesRes.json()).filter(isOwnCase);
+      if (allRes && allRes.ok) for (const c of await allRes.json()) if (!isOwnCase(c)) cases.push(c);
       // A link may name a case under a different cause
       // than the default one; the unfiltered list only holds cases this user
       // can access.
       const wanted = new URLSearchParams(location.search).get("case");
-      if (wanted && !cases.some((c) => c.id === wanted)) {
+      const wantedCase = cases.find((c) => c.id === wanted);
+      if (wantedCase && !isOwnCase(wantedCase)) collab.expand(wantedCase.cause_owner_id);
+      if (wanted && !wantedCase) {
         const all = await (await fetch(casesUrl)).json();
         const extra = all.find((c) => c.id === wanted);
         if (extra) cases.unshift(extra);
@@ -507,7 +524,7 @@
       cases.unshift({
         id: data.id,
         name: data.name,
-        cause_id: data.cause_id,
+        cause_id: data.cause_id, cause_owner_id: data.cause_owner_id,
         court: data.court,
         case_number: data.case_number,
         summary: data.summary,
@@ -520,7 +537,7 @@
       closeNewCaseForm();
       renderCaseList();
       selectCase(data.id);
-      const card = caseListEl.querySelector(`.case-card[data-id="${data.id}"]`);
+      const card = document.querySelector(`.case-card[data-id="${data.id}"]`);
       if (card) setTimeout(() => card.querySelector(".allegation-title-input").focus(), 0);
     } catch (err) {
       setStatus("Could not create case: " + err.message, true);
@@ -868,7 +885,7 @@
     c.case_number = detailCase.case_number;
     c.hearing_count = detailCase.hearings.length;
     updateDeleteAllButton();
-    const card = caseListEl.querySelector(`.case-card[data-id="${c.id}"]`);
+    const card = document.querySelector(`.case-card[data-id="${c.id}"]`);
     if (!card) return;
     card.querySelector(".allegation-card-meta").textContent = caseMetaLabel(c);
     const head = card.querySelector(".allegation-card-head");

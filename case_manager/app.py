@@ -436,7 +436,7 @@ def allegation_roles(allegations):
 
 def with_allegation_roles(allegations):
     roles = allegation_roles(allegations)
-    items = attach_owners("allegation", [{**a, "role": roles[a["id"]]} for a in allegations])
+    items = attach_cause_owners(attach_owners("allegation", [{**a, "role": roles[a["id"]]} for a in allegations]))
     return attach_item_creators(items, ("inculpatory", "exculpatory", "to_prove"))
 
 
@@ -535,6 +535,19 @@ def attach_owners(kind, items):
         owner = owners.get(item["id"])
         if owner:
             item["owner_name"] = "You" if owner[0] == g.user.id else owner[1]
+    return items
+
+
+def attach_cause_owners(items):
+    """Sets item["cause_owner_id"] on each case / allegation dict: the user who owns the cause it sits under -- whose
+    collaboration section it belongs in on the cases and allegations pages. Left out for guests."""
+    if g.user.is_guest:
+        return items
+    owners = storage.owner_names("cause", sorted({i["cause_id"] for i in items if i.get("cause_id")}))
+    for item in items:
+        owner = owners.get(item.get("cause_id"))
+        if owner:
+            item["cause_owner_id"] = owner[0]
     return items
 
 
@@ -2929,7 +2942,7 @@ def allegations_view():
             # Governed by the better of the cause and allegation roles (see require_allegation_role).
             roles = {storage.get_role(g.user.id, "cause", allegation["cause_id"]), storage.get_role(g.user.id, "allegation", focus_id)}
             shared = "owner" not in roles and bool(roles - {None})
-    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_items())
+    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_items(), me_id="" if g.user.is_guest else g.user.id)
 
 
 ACTIVITY_KIND_LABELS = {"cause": "Cause", "case": "Case", "allegation": "Allegation", "report": "Report", "source": "Document"}
@@ -2959,7 +2972,7 @@ def activities_view():
 
 @app.route("/cases")
 def cases_view():
-    return render_template("cases.html", can_create=can_create_items())
+    return render_template("cases.html", can_create=can_create_items(), me_id="" if g.user.is_guest else g.user.id)
 
 
 @app.route("/case-details")
@@ -2993,6 +3006,16 @@ def own_collaboration(collaboration_id, *, confirmed=False):
 @app.route("/collaborations")
 def collaborations_view():
     return render_template("collaborations.html")
+
+
+@app.route("/api/collaborators")
+def api_collaborators():
+    """The confirmed collaborators, [{"id", "email"}], for labelling the sections of what they have shared with the user
+    on the cases and allegations pages."""
+    if g.user.is_guest:
+        return jsonify([])
+    cards = [c for c in storage.list_collaborations(g.user.id) if c["status"] == "confirmed"]
+    return jsonify(sorted(({"id": c["other_id"], "email": c["email"]} for c in cards), key=lambda c: c["email"].lower()))
 
 
 @app.route("/api/collaborations/captcha")
@@ -4970,7 +4993,7 @@ def api_allegation_cases():
                 "updated_at": case["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(attach_owners("case", items))
+        return jsonify(attach_cause_owners(attach_owners("case", items)))
 
     body = request.get_json(silent=True) or {}
     case_number = _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS)
@@ -5008,7 +5031,7 @@ def api_allegation_cases():
         "updated_at": now,
     }
     storage.save_case(case_id, data, owner_id=g.user.id, actor_id=acting_user_id())
-    return jsonify({"id": case_id, **data})
+    return jsonify({"id": case_id, **attach_cause_owners([data])[0]})
 
 
 @app.route("/api/allegation-case/<case_id>/tracker-hearings", methods=["POST"])
@@ -5260,10 +5283,21 @@ def api_allegations():
         return jsonify(with_allegation_roles(visible_allegations()))
 
     body = request.get_json(silent=True) or {}
-    # An allegation's cause is mandatory: an explicit cause_id wins (the user
-    # must be able to edit that cause), else their default cause.
+    # An allegation belongs to a cause, and is created either under a case the
+    # user can edit (it goes in that case's cause and is linked to the case --
+    # editing a case includes creating its allegations), or under an
+    # explicit cause_id (the user must be able to create in it), else their
+    # default cause.
     raw_cause_id = body.get("cause_id")
-    cause_id = require_creatable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
+    raw_case_id = body.get("case_id")
+    case_ids = body.get("case_ids")
+    if raw_case_id:
+        check_report_id(raw_case_id)
+        require_role("case", raw_case_id, "editor")
+        cause_id = storage.get_case(raw_case_id)["cause_id"]
+        case_ids = [raw_case_id] + [c for c in (case_ids if isinstance(case_ids, list) else []) if c != raw_case_id]
+    else:
+        cause_id = require_creatable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
     allegation_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
     allowed_report_ids = linkable_ids("report")
@@ -5277,13 +5311,13 @@ def api_allegations():
         "to_prove": sanitize_to_prove_list(body.get("to_prove"), valid_evidence_ids),
         "inculpatory": inculpatory,
         "exculpatory": exculpatory,
-        "case_ids": sanitize_case_ids(body.get("case_ids"), linkable_ids("case")),
+        "case_ids": sanitize_case_ids(case_ids, linkable_ids("case")),
         "created_at": now,
         "updated_at": now,
     }
     storage.save_allegation(allegation_id, data, actor_id=acting_user_id())
     storage.grant_owner("allegation", allegation_id, g.user.id)
-    return jsonify({"id": allegation_id, **data})
+    return jsonify({"id": allegation_id, **attach_cause_owners([data])[0]})
 
 
 @app.route("/api/allegation/<allegation_id>", methods=["GET", "POST", "DELETE"])
