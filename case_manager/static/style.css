@@ -1305,3 +1305,14 @@ label.toggle-label #continuousToggle:focus-visible,
 .collab-section-form select { width: 100%; margin: 6px 0 8px; box-sizing: border-box; }
 .collab-section-form .collab-section-form-actions { display: flex; gap: 8px; }
 .collab-section > .allegation-list { margin-top: 8px; }
+
+/* Show/hide button on password fields (static/password-toggle.js) */
+.pw-wrap { position: relative; display: block; }
+.pw-wrap > input { width: 100%; box-sizing: border-box; padding-right: 2.5rem; }
+.pw-toggle {
+  position: absolute; top: 50%; right: 0.4rem; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 1.9rem; height: 1.9rem; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: #666; cursor: pointer;
+}
+.pw-toggle:hover, .pw-toggle:focus-visible { color: #000; background: rgba(0,0,0,.06); }
