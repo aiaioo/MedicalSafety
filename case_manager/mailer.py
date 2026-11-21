@@ -15,6 +15,7 @@ holds up a web request; failures are logged, not raised.
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import logging
@@ -26,7 +27,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 POSTMARK_URL = "https://api.postmarkapp.com/email"
-POSTMARK_TIMEOUT_SECONDS = 15
+POSTMARK_TIMEOUT_SECONDS = 60  # attachments take longer to upload
 
 # domain -> (site name, From address)
 SITES = {
@@ -64,9 +65,12 @@ def base_url(host: str) -> str:
     return f"https://{DEFAULT_DOMAIN}"
 
 
-def send_email(host: str, to: str, subject: str, text: str, html_body: str | None = None) -> None:
-    """Sends an email from the noreply@ address of the site `host` belongs
-    to, without waiting for it to be delivered."""
+# Postmark refuses a message over 10 MB, base64 of the attachments included (which adds a third): keep their bytes under this.
+MAX_ATTACHMENT_BYTES = 7 * 1024 * 1024
+
+
+def _build(host: str, to: str, subject: str, text: str, html_body: str | None, attachments) -> dict:
+    """Postmark's payload. `attachments` is [(file name, bytes, content type)]."""
     _, name, sender = site_for_host(host)
     payload = {
         "From": f"{name} <{sender}>",
@@ -77,7 +81,16 @@ def send_email(host: str, to: str, subject: str, text: str, html_body: str | Non
     }
     if html_body:
         payload["HtmlBody"] = html_body
+    if attachments:
+        payload["Attachments"] = [{"Name": n, "Content": base64.b64encode(b).decode("ascii"), "ContentType": ct}
+                                  for n, b, ct in attachments]
+    return payload
 
+
+def send_email(host: str, to: str, subject: str, text: str, html_body: str | None = None, attachments=None) -> None:
+    """Sends an email from the noreply@ address of the site `host` belongs
+    to, without waiting for it to be delivered."""
+    payload = _build(host, to, subject, text, html_body, attachments)
     token = os.environ.get("POSTMARK_TOKEN", "")
     if not token:
         log.warning("POSTMARK_TOKEN is not set; not sending. From: %s To: %s Subject: %s\n%s",
@@ -86,7 +99,17 @@ def send_email(host: str, to: str, subject: str, text: str, html_body: str | Non
     threading.Thread(target=_deliver, args=(token, payload), daemon=True).start()
 
 
-def _deliver(token: str, payload: dict) -> None:
+def send_email_now(host: str, to: str, subject: str, text: str, html_body: str | None = None, attachments=None) -> bool:
+    """Sends an email and waits: True if Postmark accepted it. For a caller that is already on a background thread and must
+    know whether the message went (nothing is sent, and False returned, with no POSTMARK_TOKEN)."""
+    token = os.environ.get("POSTMARK_TOKEN", "")
+    if not token:
+        log.warning("POSTMARK_TOKEN is not set; not sending %r to %s", subject, to)
+        return False
+    return _deliver(token, _build(host, to, subject, text, html_body, attachments))
+
+
+def _deliver(token: str, payload: dict) -> bool:
     request = urllib.request.Request(
         POSTMARK_URL, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={
@@ -97,10 +120,12 @@ def _deliver(token: str, payload: dict) -> None:
     try:
         with urllib.request.urlopen(request, timeout=POSTMARK_TIMEOUT_SECONDS) as resp:
             resp.read()
+        return True
     except urllib.error.HTTPError as err:
         log.error("Postmark rejected email %r (HTTP %s): %s", payload["Subject"], err.code, err.read(500))
     except Exception:
         log.exception("Could not send email %r", payload["Subject"])
+    return False
 
 
 def send_action_email(host: str, to: str, subject: str, message: str, button_label: str, link: str, footer: str) -> None:

@@ -1033,9 +1033,26 @@ def case_prefill(number, with_court=True):
             next_hearing = ""
         else:
             next_stage = stage_label(latest.get("next_stage_tags"))
-    return {"case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
+    return {"case_key": c["case_key"], "court_id": c["court"], "case_number": c["enquiry_id"], "court_label": c["court_label"], "court": court,
             "complainants": list(c["complainants"]), "respondents": list(c["respondents"]), "hearings": hearings,
             "next_hearing": next_hearing, "next_stage": next_stage}
+
+
+def hearing_files(case_key, court_id, date):
+    """[(path, file name)] of the documents the court put out for a hearing day, to attach to an alert: for the KMC its post-hearing
+    PDF(s); for a consumer commission the day's daily order (PDF or HTML; a judgement too). The medical councils publish only a
+    final order, not one per hearing, so nothing."""
+    found = []
+    if court_id and kind_of(court_id) == "kmc":
+        for _, kind, names in pdfs_for_date(date):
+            if kind == "post_hearing":
+                found += [(PDF_DIR / PDF_COURT / kind / n, n) for n in names]
+    elif court_id and kind_of(court_id) == "consumer":
+        for p in storage.order_files(case_key):
+            m = ORDER_RE.fullmatch(p.name)
+            if m and _iso_date(m["date"]) == date:
+                found.append((p, p.name))
+    return found
 
 
 @bp.route("/suggest")

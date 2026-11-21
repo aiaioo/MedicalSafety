@@ -31,6 +31,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import auth
 import key_gate
 import key_manager
+import hearing_alerts
 import mailer
 import splitter
 import storage
@@ -267,6 +268,7 @@ def _mount_case_tracker() -> None:
 
 
 _mount_case_tracker()
+hearing_alerts.start(lambda: case_tracker_viewer)  # emails when a hearing's record first appears (a no-op without POSTMARK_TOKEN)
 
 UPLOAD_EXTENSIONS = {".pdf": "pdf"}
 
@@ -2611,6 +2613,16 @@ def api_set_show_advanced():
         return jsonify({"error": "show must be true or false"}), 400
     storage.set_show_advanced(g.user.id, show)
     return jsonify({"show": show})
+
+
+@app.route("/api/settings/hearing-alerts", methods=["PUT"])
+def api_set_hearing_alerts():
+    """Saves whether this user is emailed when the court's record of a hearing of one of their cases first appears."""
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"error": "on must be true or false"}), 400
+    storage.set_hearing_alerts(g.user.id, on)
+    return jsonify({"on": on})
 
 
 @app.route("/api/report-sections", methods=["GET", "PUT"])

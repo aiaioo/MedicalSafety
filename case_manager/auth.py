@@ -70,7 +70,7 @@ KEY_SESSION_LIFETIME = timedelta(days=7)
 GUEST_BLOCKED_ENDPOINTS = {
     "index", "collaborations_view", "api_collaborations", "api_collaborations_captcha",
     "api_collaborations_seen", "api_collaboration_item", "api_collaboration_accept",
-    "api_collaboration_access", "api_set_show_advanced", "api_default_cause", "api_report_sections", "api_document_sections",
+    "api_collaboration_access", "api_set_show_advanced", "api_set_hearing_alerts", "api_default_cause", "api_report_sections", "api_document_sections",
     "auth.resend_verification", "account_view", "account_photo", "api_account_details", "api_account_photo", "api_account_password", "api_object_keys", "api_object_key_item", "api_object_key_reports",
 }
 GUEST_BLOCKED_POSTS = {
@@ -132,6 +132,7 @@ class User:
     email: str
     password_hash: str
     show_advanced: bool = False
+    hearing_alerts: bool = True
     is_guest: bool = False  # a key session, not a registered user
     email_verified: bool = False
     is_admin: bool = False
@@ -141,7 +142,7 @@ class User:
     def from_row(cls, row: dict) -> User:
         return cls(
             id=row["id"], email=row["email"], password_hash=row["password_hash"],
-            show_advanced=row.get("show_advanced", False),
+            show_advanced=row.get("show_advanced", False), hearing_alerts=row.get("hearing_alerts", True),
             email_verified=row.get("email_verified_at") is not None,
             is_admin=row.get("is_admin", False), is_content_creator=row.get("is_content_creator", False),
         )

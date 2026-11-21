@@ -1611,6 +1611,57 @@ def set_show_advanced(user_id: int, show: bool) -> None:
         cur.execute("UPDATE users SET show_advanced = %s WHERE id = %s", (show, user_id))
 
 
+def set_hearing_alerts(user_id: int, on: bool) -> None:
+    with _cursor() as cur:
+        cur.execute("UPDATE users SET hearing_alerts = %s WHERE id = %s", (on, user_id))
+
+
+# Hearing alerts (db/migrations/052_hearing_alerts.sql; the logic is in hearing_alerts.py).
+
+def cases_with_numbers() -> list[dict]:
+    """[{"id", "name", "case_number"}] of every case that has a case number (decrypted)."""
+    with _cursor() as cur:
+        cur.execute("SELECT id, name, case_number FROM cases WHERE case_number <> ''")
+        rows = cur.fetchall()
+    return [{"id": r["id"], "name": _dec_text(r["name"]), "case_number": _dec_text(r["case_number"])} for r in rows]
+
+
+def alert_dates_seen(case_id: str) -> set[str] | None:
+    """The ISO hearing dates already dealt with for a case, or None if its baseline has not been taken."""
+    with _cursor() as cur:
+        cur.execute("SELECT 1 FROM hearing_alert_baselines WHERE case_id = %s", (case_id,))
+        if cur.fetchone() is None:
+            return None
+        cur.execute("SELECT hearing_date FROM hearing_alerts WHERE case_id = %s", (case_id,))
+        return {r["hearing_date"].isoformat() for r in cur.fetchall()}
+
+
+def take_alert_baseline(case_id: str, dates: list[str]) -> None:
+    """Records `dates` as already known (not emailed) and the case's baseline as taken."""
+    with _cursor() as cur:
+        cur.execute("INSERT INTO hearing_alert_baselines (case_id) VALUES (%s) ON CONFLICT DO NOTHING", (case_id,))
+        for d in dates:
+            cur.execute("INSERT INTO hearing_alerts (case_id, hearing_date, emailed) VALUES (%s, %s, false) ON CONFLICT DO NOTHING",
+                        (case_id, d))
+
+
+def mark_hearing_alerted(case_id: str, date: str) -> None:
+    with _cursor() as cur:
+        cur.execute("INSERT INTO hearing_alerts (case_id, hearing_date, emailed) VALUES (%s, %s, true) "
+                    "ON CONFLICT (case_id, hearing_date) DO UPDATE SET emailed = true", (case_id, date))
+
+
+def alert_recipients(case_id: str) -> list[str]:
+    """The (decrypted) addresses of the signed-up, verified users with access to the case who want hearing alerts."""
+    with _cursor() as cur:
+        cur.execute(
+            """SELECT u.email FROM eff_user_cases e JOIN users u ON u.id = e.user_id
+               WHERE e.case_id = %s AND e.user_id > 0 AND u.hearing_alerts AND u.email_verified_at IS NOT NULL""",
+            (case_id,),
+        )
+        return sorted({_dec_text(r["email"]) for r in cur.fetchall()})
+
+
 def get_report_sections(user_id: int) -> list:
     """The user's reports-page layout: [{"id", "name", "reports": [...]}]."""
     with _cursor() as cur:
@@ -1965,7 +2016,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_admin, u.is_content_creator, u.email_verified_at
+            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.hearing_alerts, u.is_admin, u.is_content_creator, u.email_verified_at
             FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,
