@@ -32,7 +32,7 @@ import storage
 log = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = int(os.environ.get("HEARING_ALERTS_INTERVAL_SECONDS", 30 * 60))
-SITE_HOST = os.environ.get("HEARING_ALERTS_SITE_HOST", mailer.DEFAULT_DOMAIN)  # the site the emails go out as
+SITE_HOST = os.environ.get("HEARING_ALERTS_SITE_HOST", "medicalsafety.in")  # the site the emails go out as
 IST = timezone(timedelta(hours=5, minutes=30))  # the courts' day
 
 
