@@ -20,9 +20,9 @@
   {% for c in picker_causes %}
   <option value="{{ c.id }}"{% if c.id == picker_current %} selected{% endif %}>{{ c.title }}</option>
   {% endfor %}
-  {% if cause_manage and not (g.user and g.user.is_guest) %}<option value="__new__">＋ New cause…</option>{% endif %}
+  {% if cause_manage and not owner_view and not (g.user and g.user.is_guest) %}<option value="__new__">＋ New cause…</option>{% endif %}
 </select>
-{% if cause_manage and not (g.user and g.user.is_guest) %}
+{% if cause_manage and not owner_view and not (g.user and g.user.is_guest) %}
 <button type="button" class="btn" id="renameCauseBtn" title="Rename this cause">Rename</button>
 <button type="button" class="btn" id="deleteCauseBtn" title="Delete this cause">Delete</button>
 <div class="cause-delete-confirm" id="causeDeleteConfirm" role="alert" hidden>

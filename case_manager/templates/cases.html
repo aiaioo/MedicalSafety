@@ -10,8 +10,6 @@
 <body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 <div id="casesApp"
      data-can-create="{{ '1' if can_create else '' }}"
-     data-me-id="{{ me_id }}"
-     data-collaborators-url="{{ url_for('api_collaborators') }}"
      data-cases-url="{{ url_for('api_allegation_cases') }}"
      data-suggest-url="{{ url_for('api_case_tracker_suggest') }}"
      data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
@@ -26,7 +24,8 @@
     <a class="btn docbar-lead" href="{{ url_for('collaborations_view') }}">Collaborations</a>
     <div class="docbar-center"><span class="doc-name doc-name-static">Cases</span>{% set cause_manage = true %}{% include "_cause_picker.html" %}</div>
     <span id="saveStatus" class="save-status"></span>
-    <a class="btn" style="margin-left: auto;" href="{{ url_for('allegations_view') }}">Allegations</a>
+    {% set owner_auto = true %}{% include "_owner_picker.html" %}
+    <a class="btn"{% if not owner_choices %} style="margin-left: auto;"{% endif %} href="{{ url_for('allegations_view') }}">Allegations</a>
   </header>
 
   <main class="allegations-layout">
@@ -34,7 +33,7 @@
       <aside class="allegations-column cases-column">
         <div class="allegations-column-head">
           <h2>Cases</h2>
-          <button type="button" class="btn" id="addCaseBtn" {{ 'disabled' if not can_create }}>+ New case</button>
+          <button type="button" class="btn" id="addCaseBtn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled' if not can_create }}>+ New case</button>
         </div>
         <form id="newCaseForm" class="new-case-form" autocomplete="off" hidden>
           <label class="modal-field">Case number (required)
@@ -50,7 +49,6 @@
         </form>
         <p class="empty" id="caseListEmpty" style="display:none">No cases yet. Add one to get started.</p>
         <div class="allegation-list" id="caseList"></div>
-        <div class="collab-sections" id="sharedCases"></div>
       </aside>
       <section class="allegation-detail" id="caseDetail">
         <p class="empty">Select or add a case on the left to see its hearings.</p>
@@ -61,7 +59,6 @@
 <script src="{{ url_for('static', filename='share-key.js') }}"></script>
 <script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='suppress-page-save.js') }}"></script>
-<script src="{{ url_for('static', filename='collab-sections.js') }}"></script>
 <script src="{{ url_for('static', filename='cases.js') }}"></script>
 </body>
 </html>

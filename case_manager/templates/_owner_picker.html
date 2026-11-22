@@ -1,0 +1,14 @@
+{#- Whose account the user is working in (app.py's inject_cause_picker): their own, or -- shown only when collaborators
+    have shared things with them -- a collaborator's, to see and create things in there. Set `owner_auto` where this
+    is to take the right-hand free space of the title bar (the page's rightmost button then gives its up). -#}
+{% if owner_choices %}
+<span class="owner-picker-wrap{% if owner_auto %} owner-auto{% endif %}">
+  <label class="cause-label" for="ownerPicker">Account:</label>
+  <select id="ownerPicker" class="cause-picker" title="Work in your own account, or in a collaborator's"
+          data-url="{{ url_for('api_view_owner') }}">
+    <option value=""{% if not owner_current %} selected{% endif %}>{{ me_label }}</option>
+    {% for a in owner_choices %}<option value="{{ a.id }}"{% if a.id == owner_current %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
+  </select>
+</span>
+<script src="{{ url_for('static', filename='owner-picker.js') }}"></script>
+{% endif %}

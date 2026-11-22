@@ -1577,18 +1577,20 @@ def create_general_cause(user_id: int) -> str:
     return cause_id
 
 
-def most_recently_updated_creatable_cause_id(user_id: int, exclude: str | None = None) -> str | None:
+def most_recently_updated_creatable_cause_id(user_id: int, exclude: str | None = None, owned_only: bool = True) -> str | None:
     """The most recently updated cause this user can create things in -- one
-    they have at least "View and create" on -- optionally skipping `exclude`."""
+    they have at least "View and create" on -- optionally skipping `exclude`.
+    Normally only causes they own are considered: what a collaborator shared is worked in
+    by choosing the collaborator's account in the title bar (`owned_only=False` for a guest's key session)."""
     with _cursor() as cur:
         cur.execute(
             """
             SELECT c.id FROM causes c
-            JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s AND uc.role IN ('owner', 'editor', 'creator')
+            JOIN eff_user_causes uc ON uc.cause_id = c.id AND uc.user_id = %s AND uc.role = ANY(%s)
             WHERE c.id IS DISTINCT FROM %s
             ORDER BY c.updated_at DESC LIMIT 1
             """,
-            (user_id, exclude),
+            (user_id, ["owner"] if owned_only else ["owner", "editor", "creator"], exclude),
         )
         row = cur.fetchone()
         return row["id"] if row else None

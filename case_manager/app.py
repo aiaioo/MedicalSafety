@@ -752,6 +752,70 @@ def create_default_cause():
     return storage.create_general_cause(g.user.id)
 
 
+# ---------------------------------------------------------------------------
+# Whose account the user is working in. Normally their own; when collaborators have shared things with them, a
+# dropdown in the title bar lets them work in a collaborator's account instead (the "view_owner" cookie): the lists
+# then show what that collaborator owns and the user can reach, and anything new goes where the collaborator has let
+# the user create -- a cause they can create in, or a case they can edit (the "view_target" cookie, "cause:<id>" or
+# "case:<id>"). With no such place there is no way to create anything in that account.
+# ---------------------------------------------------------------------------
+
+VIEW_OWNER_COOKIE = "view_owner"
+VIEW_TARGET_COOKIE = "view_target"
+
+
+def collaborator_accounts():
+    """[{"id", "label"}] of the confirmed collaborators who have shared something with the user, by name (else email),
+    for the title bar's account dropdown. Empty for a guest."""
+    if g.user.is_guest:
+        return []
+    if not hasattr(g, "collaborator_accounts"):
+        ids = [c["other_id"] for c in storage.list_collaborations(g.user.id) if c["status"] == "confirmed"]
+        ids = [i for i in ids if any(storage.list_shared_objects(i, g.user.id).values())]
+        names = storage.user_names(ids)
+        g.collaborator_accounts = sorted(({"id": i, "label": names.get(i, str(i))} for i in ids), key=lambda a: a["label"].lower())
+    return g.collaborator_accounts
+
+
+def viewing_owner_id():
+    """The collaborator whose account the user is working in, or None for their own."""
+    raw = request.cookies.get(VIEW_OWNER_COOKIE, "")
+    if not raw.isdigit() or g.user.is_guest:
+        return None
+    owner = int(raw)
+    return owner if any(a["id"] == owner for a in collaborator_accounts()) else None
+
+
+def creation_targets(owner_id):
+    """[{"value": "cause:<id>" | "case:<id>", "label"}] where the user may create things in this collaborator's account:
+    their causes the user can create in, and the cases the user can edit that sit under other causes."""
+    causes = [c for c in storage.list_causes(g.user.id) if c["role"] in ("editor", "creator")]
+    cause_owners = storage.owner_names("cause", [c["id"] for c in causes])
+    causes = [c for c in causes if cause_owners.get(c["id"], (None,))[0] == owner_id]
+    causes.sort(key=lambda c: c["updated_at"], reverse=True)
+    targets = [{"value": f"cause:{c['id']}", "label": c["title"] or c["id"]} for c in causes]
+    taken = {c["id"] for c in causes}
+    cases = [c for c in storage.list_cases(g.user.id) if c["role"] in ("owner", "editor") and c["cause_id"] not in taken]
+    case_cause_owners = storage.owner_names("cause", sorted({c["cause_id"] for c in cases}))
+    cases = [c for c in cases if case_cause_owners.get(c["cause_id"], (None,))[0] == owner_id]
+    cases.sort(key=lambda c: c["updated_at"], reverse=True)
+    return targets + [{"value": f"case:{c['id']}", "label": f"Case: {c['name'] or c['id']}"} for c in cases]
+
+
+def creation_target():
+    """("cause" | "case", id) where new things go in the collaborator's account being worked in; None if there is none
+    (or the user is working in their own account)."""
+    owner = viewing_owner_id()
+    if owner is None:
+        return None
+    if not hasattr(g, "creation_target"):
+        targets = creation_targets(owner)
+        wanted = request.cookies.get(VIEW_TARGET_COOKIE, "")
+        chosen = next((t["value"] for t in targets if t["value"] == wanted), targets[0]["value"] if targets else None)
+        g.creation_target = tuple(chosen.split(":", 1)) if chosen else None
+    return g.creation_target
+
+
 def resolve_default_cause_id(exclude_cause_id=None, create=True):
     """The user's default cause (see users.default_cause_id) -- the cause
     they last selected, as long as they can still create in it (View and
@@ -759,18 +823,33 @@ def resolve_default_cause_id(exclude_cause_id=None, create=True):
     created "General" cause they own, so a case or new report/source is
     never left without one. `exclude_cause_id` is passed when reassigning
     cases off a cause that's about to be deleted, so that cause is never
-    offered back as its own replacement."""
+    offered back as its own replacement.
+    Causes of their own only: working in a collaborator's account, it is the cause chosen for it (None if that is a
+    case, or there is nothing they can create in)."""
+    if viewing_owner_id() is not None:
+        target = creation_target()
+        if target and target[0] == "cause" and target[1] != exclude_cause_id:
+            return target[1]
+        if create:
+            raise DocumentError("You can't create anything in this account: the collaborator hasn't given you access to create in it", 403)
+        return None
     default = storage.get_default_cause(g.user.id)
-    if default and default != exclude_cause_id and has_role("cause", default, "creator"):
+    if default and default != exclude_cause_id and (
+            has_role("cause", default, "creator") if g.user.is_guest else storage.get_role(g.user.id, "cause", default) == "owner"):
         return default
-    fallback = storage.most_recently_updated_creatable_cause_id(g.user.id, exclude=exclude_cause_id)
+    fallback = storage.most_recently_updated_creatable_cause_id(g.user.id, exclude=exclude_cause_id, owned_only=not g.user.is_guest)
     return fallback or (create_default_cause() if create else None)
 
 
 def default_cause_link():
     """The association every newly created report or uploaded source gets:
-    the user's default cause. Whatever resolve_default_cause_id fell back to
-    is saved as the default, so it stays put from then on."""
+    the user's default cause (or, in a collaborator's account, the cause or case chosen for it). Whatever
+    resolve_default_cause_id fell back to is saved as the default, so it stays put from then on."""
+    if viewing_owner_id() is not None:
+        target = creation_target()
+        if target is None:
+            resolve_default_cause_id()  # raises: nothing to create in
+        return target
     cause_id = resolve_default_cause_id()
     storage.set_default_cause(g.user.id, cause_id)
     return "cause", cause_id
@@ -780,9 +859,89 @@ def default_cause_for_display():
     """{"id", "title"} of the cause new reports/uploads will be associated
     with, for showing on the page -- None if one would have to be created
     first (resolving it here, on a GET, never creates anything)."""
+    if viewing_owner_id() is not None:
+        target = creation_target()
+        if target is None:
+            return None
+        if target[0] == "case":
+            case = storage.get_case(target[1])
+            return {"id": target[1], "title": f"{(case or {}).get('name') or target[1]} (case)"}
+        cause = storage.get_cause(target[1])
+        return {"id": target[1], "title": (cause or {}).get("title") or target[1]}
     cause_id = resolve_default_cause_id(create=False)
     cause = storage.get_cause(cause_id) if cause_id else None
     return {"id": cause_id, "title": cause["title"] or cause_id} if cause else None
+
+
+def can_create_here():
+    """Whether anything can be created in the account being worked in: always in the user's own; in a collaborator's,
+    only where they have given the user cause-level create or case-level edit access."""
+    if viewing_owner_id() is not None:
+        return creation_target() is not None
+    return can_create_items()
+
+
+def can_create_cases_here():
+    """Whether new cases can be: in a collaborator's account that takes a cause the user can create in."""
+    if viewing_owner_id() is not None:
+        target = creation_target()
+        return bool(target and target[0] == "cause")
+    return can_create_items()
+
+
+def in_viewed_account(kind, items, id_key="id"):
+    """In a collaborator's account, `items` (dicts of cause / case / allegation / report / document `kind`) cut down to those
+    the collaborator owns; in the user's own, as they are."""
+    owner = viewing_owner_id()
+    if owner is None:
+        return items
+    owners = storage.owner_names(kind, [i[id_key] for i in items])
+    return [i for i in items if owners.get(i[id_key], (None,))[0] == owner]
+
+
+def scoped_source_docs():
+    """The documents on the annotations page: those of the default cause (the one picked in the title bar), or in a
+    collaborator's account everything of theirs the user can reach."""
+    if viewing_owner_id() is not None:
+        return in_viewed_account("source", list_source_docs())
+    return list_source_docs(resolve_default_cause_id(create=False))
+
+
+@app.route("/api/me/view-owner", methods=["POST"])
+def api_view_owner():
+    """The title bar's account dropdown: work in a collaborator's account (owner_id) or, with none, the user's own."""
+    body = request.get_json(silent=True) or {}
+    raw = body.get("owner_id")
+    owner = None
+    if raw not in (None, ""):
+        owner = raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+        if owner is None or not any(a["id"] == owner for a in collaborator_accounts()):
+            raise DocumentError("That user hasn't shared anything with you", 400)
+    resp = jsonify({"owner_id": owner})
+    if owner is None:
+        resp.delete_cookie(VIEW_OWNER_COOKIE, path="/")
+    else:
+        resp.set_cookie(VIEW_OWNER_COOKIE, str(owner), max_age=365 * 86400, samesite="Lax", httponly=True, path="/")
+    resp.delete_cookie(VIEW_TARGET_COOKIE, path="/")
+    return resp
+
+
+def switch_account_to(owner_id):
+    """A redirect to this same URL that first makes `owner_id` the account being worked in (so a link to something a
+    collaborator shared opens in their account), or None when it already is."""
+    if owner_id is None or owner_id == g.user.id or viewing_owner_id() == owner_id:
+        return None
+    if not any(a["id"] == owner_id for a in collaborator_accounts()):
+        return None
+    resp = redirect(request.full_path.rstrip("?"))
+    resp.set_cookie(VIEW_OWNER_COOKIE, str(owner_id), max_age=365 * 86400, samesite="Lax", httponly=True, path="/")
+    resp.delete_cookie(VIEW_TARGET_COOKIE, path="/")
+    return resp
+
+
+def switch_account_for_cause(cause_id):
+    owner = storage.owner_names("cause", [cause_id]).get(cause_id)
+    return switch_account_to(owner[0] if owner else None)
 
 
 # The site's display name follows the domain the visitor used (the same app
@@ -803,13 +962,24 @@ def inject_site_name():
 @app.context_processor
 def inject_cause_picker():
     """The title bar's cause picker (templates/_cause_picker.html): the
-    causes this user can create in (View and create, edit or own) -- only
-    those can be a default -- and which one is the default now."""
+    causes this user owns -- the one picked is the default -- or, working in a collaborator's account, the causes there
+    they can create in and the cases they can edit. Also the account dropdown (templates/_owner_picker.html), which
+    appears when collaborators have shared things with the user."""
     if not getattr(g, "user", None) or g.user.is_guest:
         return {}
+    accounts = collaborator_accounts()
+    owner = viewing_owner_id()
+    shared = {"owner_choices": accounts, "owner_current": owner or "", "owner_view": owner is not None,
+              "me_label": storage.user_names([g.user.id]).get(g.user.id, g.user.email) if accounts else "",
+              "can_create_here": can_create_here(), "can_create_cases_here": can_create_cases_here()}
+    if owner is not None:
+        targets = creation_targets(owner)
+        target = creation_target()
+        return {**shared, "picker_causes": [{"id": t["value"], "title": t["label"]} for t in targets],
+                "picker_current": f"{target[0]}:{target[1]}" if target else ""}
     causes = [
         {"id": c["id"], "title": c["title"] or c["id"]}
-        for c in storage.list_causes(g.user.id) if c["role"] in ("owner", "editor", "creator")
+        for c in storage.list_causes(g.user.id) if c["role"] == "owner"
     ]
     # Every user has a default cause: if theirs is gone (e.g. it was deleted
     # from under them by a collaborator), pick or create one and keep it.
@@ -818,7 +988,7 @@ def inject_cause_picker():
         storage.set_default_cause(g.user.id, current)
     if current not in {c["id"] for c in causes}:
         causes = [{"id": current, "title": (storage.get_cause(current) or {}).get("title") or current}, *causes]
-    return {"picker_causes": causes, "picker_current": current}
+    return {**shared, "picker_causes": causes, "picker_current": current}
 
 
 # ---------------------------------------------------------------------------
@@ -2812,7 +2982,7 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
-        return render_template("annotations.html", doc_id="", docs=attach_owners("source", list_source_docs(resolve_default_cause_id(create=False))), default_cause=default_cause_for_display(), can_create=can_create_items())
+        return render_template("annotations.html", doc_id="", docs=attach_owners("source", scoped_source_docs()), default_cause=default_cause_for_display(), can_create=can_create_here())
 
     try:
         page = int(request.args.get("page", 1))
@@ -2897,7 +3067,7 @@ def documents_view():
         report_id=report_id,
         can_edit=can_edit,
         shared_with_me=bool(report_id) and is_shared_with_me("report", report_id),
-        can_create=can_create_items(),
+        can_create=can_create_here(),
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
         preselect_type=preselect_type,
@@ -2930,6 +3100,10 @@ def allegations_view():
     if filter_case_id:
         check_report_id(filter_case_id)
         require_role("case", filter_case_id)
+        # A link to a collaborator's case opens in their account.
+        switch = switch_account_for_cause(storage.get_case(filter_case_id)["cause_id"])
+        if switch:
+            return switch
 
     # ?allegation= opens one allegation (a link to something shared with the user, who may not have its cause as their default).
     focus_id = request.args.get("allegation", "")
@@ -2939,10 +3113,13 @@ def allegations_view():
     if focus_id and not g.user.is_guest:
         allegation = storage.get_allegation(focus_id)
         if allegation is not None:
+            switch = switch_account_for_cause(allegation["cause_id"])
+            if switch:
+                return switch
             # Governed by the better of the cause and allegation roles (see require_allegation_role).
             roles = {storage.get_role(g.user.id, "cause", allegation["cause_id"]), storage.get_role(g.user.id, "allegation", focus_id)}
             shared = "owner" not in roles and bool(roles - {None})
-    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_items(), me_id="" if g.user.is_guest else g.user.id)
+    return render_template("allegations.html", filter_case_id=filter_case_id, focus_allegation_id=focus_id, shared_with_me=shared, can_create=can_create_here())
 
 
 ACTIVITY_KIND_LABELS = {"cause": "Cause", "case": "Case", "allegation": "Allegation", "report": "Report", "source": "Document"}
@@ -2972,7 +3149,14 @@ def activities_view():
 
 @app.route("/cases")
 def cases_view():
-    return render_template("cases.html", can_create=can_create_items(), me_id="" if g.user.is_guest else g.user.id)
+    # A link to a collaborator's case opens in their account.
+    wanted = request.args.get("case", "")
+    if wanted and DOC_ID_RE.match(wanted) and not g.user.is_guest:
+        case = storage.get_case(wanted)
+        switch = switch_account_for_cause(case["cause_id"]) if case and storage.get_role(g.user.id, "case", wanted) else None
+        if switch:
+            return switch
+    return render_template("cases.html", can_create=can_create_cases_here())
 
 
 @app.route("/case-details")
@@ -3006,16 +3190,6 @@ def own_collaboration(collaboration_id, *, confirmed=False):
 @app.route("/collaborations")
 def collaborations_view():
     return render_template("collaborations.html")
-
-
-@app.route("/api/collaborators")
-def api_collaborators():
-    """The confirmed collaborators, [{"id", "email"}], for labelling the sections of what they have shared with the user
-    on the cases and allegations pages."""
-    if g.user.is_guest:
-        return jsonify([])
-    cards = [c for c in storage.list_collaborations(g.user.id) if c["status"] == "confirmed"]
-    return jsonify(sorted(({"id": c["other_id"], "email": c["email"]} for c in cards), key=lambda c: c["email"].lower()))
 
 
 @app.route("/api/collaborations/captcha")
@@ -3905,6 +4079,9 @@ def api_reports():
     if request.method == "GET":
         items = storage.list_reports(g.user.id)
         items.sort(key=lambda x: x["updated_at"], reverse=True)
+        if viewing_owner_id() is not None:
+            # A collaborator's account: all of their reports that the user can reach.
+            return jsonify(add_cause_titles(in_viewed_account("report", items)))
         return jsonify(add_cause_titles(items, default_cause_only()))
 
     body = request.get_json(silent=True) or {}
@@ -4973,8 +5150,10 @@ def api_allegation_cases():
         allegation_counts = storage.count_allegations_by_case()
         # ?default_cause=1: only the cases under the user's default cause
         # (the one picked in the title bar), which is what the cases and
-        # allegations workspaces show.
-        only_cause = resolve_default_cause_id(create=False) if request.args.get("default_cause") else None
+        # allegations workspaces show -- or, working in a collaborator's account,
+        # all of theirs that the user can reach.
+        viewing = viewing_owner_id() if request.args.get("default_cause") else None
+        only_cause = resolve_default_cause_id(create=False) if request.args.get("default_cause") and viewing is None else None
         items = []
         for case in storage.list_cases(g.user.id):
             if only_cause and case["cause_id"] != only_cause:
@@ -4993,7 +5172,10 @@ def api_allegation_cases():
                 "updated_at": case["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return jsonify(attach_cause_owners(attach_owners("case", items)))
+        items = attach_cause_owners(attach_owners("case", items))
+        if viewing is not None:
+            items = [i for i in items if i.get("cause_owner_id") == viewing]
+        return jsonify(items)
 
     body = request.get_json(silent=True) or {}
     case_number = _sanitize_text(body.get("case_number"), CASE_MAX_NUMBER_CHARS)
@@ -5012,7 +5194,8 @@ def api_allegation_cases():
     # guaranteed to return a real, editable id.
     raw_cause_id = body.get("cause_id")
     cause_id = require_creatable_cause(raw_cause_id) if raw_cause_id else resolve_default_cause_id()
-    storage.set_default_cause(g.user.id, cause_id)
+    if viewing_owner_id() is None:
+        storage.set_default_cause(g.user.id, cause_id)
 
     case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
     now = datetime.now(timezone.utc).isoformat()
@@ -5278,6 +5461,9 @@ def api_allegations():
         # ?default_cause=1: only the allegations under the user's default
         # cause (the one picked in the title bar).
         if request.args.get("default_cause"):
+            viewing = viewing_owner_id()
+            if viewing is not None:  # a collaborator's account: all of theirs that the user can reach
+                return jsonify([a for a in with_allegation_roles(visible_allegations()) if a.get("cause_owner_id") == viewing])
             only_cause = resolve_default_cause_id(create=False)
             return jsonify(with_allegation_roles(storage.list_allegations({only_cause})) if only_cause else [])
         return jsonify(with_allegation_roles(visible_allegations()))
@@ -5291,6 +5477,15 @@ def api_allegations():
     raw_cause_id = body.get("cause_id")
     raw_case_id = body.get("case_id")
     case_ids = body.get("case_ids")
+    if not raw_cause_id and not raw_case_id and viewing_owner_id() is not None:
+        # In a collaborator's account, new allegations go where the picked cause or case says.
+        target = creation_target()
+        if target is None:
+            resolve_default_cause_id()  # raises: nothing to create in
+        elif target[0] == "case":
+            raw_case_id = target[1]
+        else:
+            raw_cause_id = target[1]
     if raw_case_id:
         check_report_id(raw_case_id)
         require_role("case", raw_case_id, "editor")
@@ -5384,6 +5579,15 @@ def api_default_cause():
     -- the cause every report/source they create is associated with, so it
     has to be one they can edit."""
     body = request.get_json(silent=True) or {}
+    if viewing_owner_id() is not None:
+        # In a collaborator's account the pick is a cause the user can create in or a case they can edit there, and is
+        # remembered in a cookie, leaving the user's own default cause alone.
+        picked = body.get("cause_id")
+        if not any(t["value"] == picked for t in creation_targets(viewing_owner_id())):
+            raise DocumentError("You can't create anything there", 403)
+        resp = jsonify({"default_cause_id": picked})
+        resp.set_cookie(VIEW_TARGET_COOKIE, picked, max_age=365 * 86400, samesite="Lax", httponly=True, path="/")
+        return resp
     cause_id = require_creatable_cause(body.get("cause_id"))
     storage.set_default_cause(g.user.id, cause_id)
     return jsonify({"default_cause_id": cause_id})

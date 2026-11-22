@@ -52,6 +52,7 @@
     {% else %}
     <a class="btn" style="margin-left: auto;" href="{{ url_for('page_view') }}">Documents</a>
     {% endif %}
+    {% if not report_id %}{% include "_owner_picker.html" %}{% endif %}
     <a class="btn disabled" id="lastSourceLink" aria-disabled="true" title="No document viewed yet">Last Document &raquo;</a>
   </header>
 
@@ -59,7 +60,7 @@
     <nav class="file-menu">
       <button type="button" class="menu-trigger" id="fileMenuBtn">File</button>
       <div class="menu-dropdown" id="fileMenuDropdown">
-        <button type="button" id="newDocBtn">New report&hellip;</button>
+        <button type="button" id="newDocBtn"{{ ' hidden' if owner_view and not can_create }}>New report&hellip;</button>
         <button type="button" id="openDocBtn">Open&hellip;</button>
         <div class="menu-submenu" id="recentMenu">
           <button type="button" id="recentMenuBtn" class="menu-submenu-trigger">Open Recent</button>
@@ -67,7 +68,7 @@
         </div>
         <button type="button" id="copyDocBtn" {{ 'disabled' if not report_id or not can_create }}>Make a copy</button>
         <hr>
-        <button type="button" id="uploadSourceMenuBtn">Upload document&hellip;</button>
+        <button type="button" id="uploadSourceMenuBtn"{{ ' hidden' if owner_view and not can_create }}>Upload document&hellip;</button>
         <input type="file" id="uploadSourceInput" accept=".pdf" hidden>
         <hr>
         <button type="button" id="pageSetupBtn" {{ 'disabled' if not report_id }}>Page setup&hellip;</button>

@@ -10,8 +10,6 @@
 <body{% if g.user and g.user.is_guest %} data-guest="1"{% endif %}>
 <div id="allegationsApp"
      data-can-create="{{ '1' if can_create else '' }}"
-     data-me-id="{{ me_id }}"
-     data-collaborators-url="{{ url_for('api_collaborators') }}"
      data-allegations-url="{{ url_for('api_allegations') }}"
      data-allegation-url-base="{{ url_for('api_allegation_item', allegation_id='__ID__') }}"
      data-allegations-order-url="{{ url_for('api_allegations_order') }}"
@@ -29,7 +27,8 @@
     {% else %}<a class="btn docbar-lead" href="{{ url_for('cases_view') }}">Cases</a>{% endif %}
     <div class="docbar-center"><span class="doc-name doc-name-static">Allegations</span>{% include "_cause_picker.html" %}</div>
     <span id="saveStatus" class="save-status"></span>
-    <a class="btn" style="margin-left: auto;" href="{{ url_for('documents_view') }}">Reports</a>
+    {% set owner_auto = true %}{% include "_owner_picker.html" %}
+    <a class="btn"{% if not owner_choices %} style="margin-left: auto;"{% endif %} href="{{ url_for('documents_view') }}">Reports</a>
   </header>
 
   <main class="allegations-layout">
@@ -37,12 +36,11 @@
       <aside class="allegations-column">
         <div class="allegations-column-head">
           <h2>Allegations</h2>
-          <button type="button" class="btn" id="addAllegationBtn" {{ 'disabled' if not can_create }}>+ Add allegation</button>
+          <button type="button" class="btn" id="addAllegationBtn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled' if not can_create }}>+ Add allegation</button>
         </div>
         <p class="allegations-filter-bar" id="filterBar" style="display:none"></p>
         <p class="empty" id="allegationListEmpty" style="display:none">No allegations yet. Add one to get started.</p>
         <div class="allegation-list" id="allegationList"></div>
-        <div class="collab-sections" id="sharedAllegations"></div>
       </aside>
       <section class="allegation-detail" id="allegationDetail">
         <p class="empty">Select or add an allegation on the left to see its evidence.</p>
@@ -53,7 +51,6 @@
 <script src="{{ url_for('static', filename='share-key.js') }}"></script>
 <script src="{{ url_for('static', filename='readonly-lock.js') }}"></script>
 <script src="{{ url_for('static', filename='suppress-page-save.js') }}"></script>
-<script src="{{ url_for('static', filename='collab-sections.js') }}"></script>
 <script src="{{ url_for('static', filename='allegations.js') }}"></script>
 </body>
 </html>
