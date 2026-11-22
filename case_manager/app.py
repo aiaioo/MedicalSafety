@@ -512,7 +512,7 @@ def add_cause_titles(items, only_cause=None):
     `only_cause` (a cause id, or a collection of them), returns just the
     items associated with any of those causes. Also sets item["all_cause_ids"]."""
     only = {only_cause} if isinstance(only_cause, str) else set(only_cause or ())
-    titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id)}
+    titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id) + storage.list_cause_names_only(g.user.id)}
     case_cause = {c["id"]: c["cause_id"] for c in storage.list_cases(g.user.id)}
     kept = []
     for item in items:
@@ -799,7 +799,11 @@ def creation_targets(owner_id):
     case_cause_owners = storage.owner_names("cause", sorted({c["cause_id"] for c in cases}))
     cases = [c for c in cases if case_cause_owners.get(c["cause_id"], (None,))[0] == owner_id]
     cases.sort(key=lambda c: c["updated_at"], reverse=True)
-    return targets + [{"value": f"case:{c['id']}", "label": f"Case: {c['name'] or c['id']}"} for c in cases]
+    # A case is grouped under the name of its cause (visible to the user even without a role on the cause), so the
+    # title bar shows that cause once, with its cases beneath it.
+    cause_titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id) + storage.list_cause_names_only(g.user.id)}
+    return targets + [{"value": f"case:{c['id']}", "label": c["name"] or c["id"], "group": cause_titles.get(c["cause_id"], c["cause_id"])}
+                      for c in cases]
 
 
 def creation_target():
@@ -985,7 +989,7 @@ def inject_cause_picker():
     if owner is not None:
         targets = creation_targets(owner)
         target = creation_target()
-        return {**shared, "picker_causes": [{"id": t["value"], "title": t["label"]} for t in targets],
+        return {**shared, "picker_causes": [{"id": t["value"], "title": t["label"], "group": t.get("group", "")} for t in targets],
                 "picker_current": f"{target[0]}:{target[1]}" if target else ""}
     causes = [
         {"id": c["id"], "title": c["title"] or c["id"]}
@@ -5411,6 +5415,10 @@ def api_causes():
                 "created_at": cause["created_at"],
                 "updated_at": cause["updated_at"],
             })
+        # Causes holding something shared with the user, though not the cause itself: just their names.
+        for cause in storage.list_cause_names_only(g.user.id):
+            items.append({"id": cause["id"], "title": cause["title"] or cause["id"], "role": "name",
+                          "created_at": cause["created_at"], "updated_at": cause["updated_at"]})
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return jsonify(attach_owners("cause", items))
 

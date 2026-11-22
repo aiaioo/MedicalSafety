@@ -1470,6 +1470,27 @@ def list_causes(user_id: int) -> list[dict]:
     ]
 
 
+def list_cause_names_only(user_id: int) -> list[dict]:
+    """Causes this user has no role on but that hold something they can see -- a case, allegation, report or
+    document shared with them directly. They get to see the cause's name and nothing else (no role is granted, so
+    nothing else in the cause opens up). Each is {"id", "title", "created_at", "updated_at"}."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.title, c.created_at, c.updated_at FROM causes c
+            WHERE NOT EXISTS (SELECT 1 FROM eff_user_causes uc WHERE uc.cause_id = c.id AND uc.user_id = %(u)s)
+              AND (EXISTS (SELECT 1 FROM cases k JOIN eff_user_cases e ON e.case_id = k.id AND e.user_id = %(u)s WHERE k.cause_id = c.id)
+                OR EXISTS (SELECT 1 FROM allegations a JOIN eff_user_allegations e ON e.allegation_id = a.id AND e.user_id = %(u)s WHERE a.cause_id = c.id)
+                OR EXISTS (SELECT 1 FROM report_causes rc JOIN eff_user_reports e ON e.report_id = rc.report_id AND e.user_id = %(u)s WHERE rc.cause_id = c.id)
+                OR EXISTS (SELECT 1 FROM source_causes sc JOIN eff_user_sources e ON e.document_id = sc.document_id AND e.user_id = %(u)s WHERE sc.cause_id = c.id))
+            """,
+            {"u": user_id},
+        )
+        rows = cur.fetchall()
+    return [{"id": c["id"], "title": _dec_text(c["title"]),
+             "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"])} for c in rows]
+
+
 def cause_exists(cause_id: str) -> bool:
     return _exists("causes", cause_id)
 

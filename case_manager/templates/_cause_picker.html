@@ -7,7 +7,7 @@
 {% if picker_causes and not cause_manage %}
 {% if picker_causes|length > 1 %}
 <span class="cause-label">Cause:</span>
-<a class="cause-picker cause-static" href="{{ url_for('cases_view') }}" title="Change the cause on the Cases page">{% for c in picker_causes %}{% if c.id == picker_current %}{{ c.title }}{% endif %}{% endfor %}</a>
+<a class="cause-picker cause-static" href="{{ url_for('cases_view') }}" title="Change the cause on the Cases page">{% for c in picker_causes %}{% if c.id == picker_current %}{% if c.group %}{{ c.group }} › {% endif %}{{ c.title }}{% endif %}{% endfor %}</a>
 {% endif %}
 {% elif picker_causes %}
 <label class="cause-label" for="causePicker">Cause:</label>
@@ -17,8 +17,15 @@
         data-causes-url="{{ url_for('api_causes') }}"
         data-cause-url-base="{{ url_for('api_cause', cause_id='__ID__') }}"{% endif %}>
   {% if not picker_current %}<option value="" selected disabled>Select a cause</option>{% endif %}
-  {% for c in picker_causes %}
+  {% for c in picker_causes if not c.group %}
   <option value="{{ c.id }}"{% if c.id == picker_current %} selected{% endif %}>{{ c.title }}</option>
+  {% endfor %}
+  {% for group in picker_causes | selectattr("group") | map(attribute="group") | unique %}
+  <optgroup label="{{ group }}">
+    {% for c in picker_causes if c.group == group %}
+    <option value="{{ c.id }}"{% if c.id == picker_current %} selected{% endif %}>{{ c.title }}</option>
+    {% endfor %}
+  </optgroup>
   {% endfor %}
   {% if cause_manage and not owner_view and not (g.user and g.user.is_guest) %}<option value="__new__">＋ New cause…</option>{% endif %}
 </select>

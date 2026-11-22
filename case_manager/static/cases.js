@@ -271,6 +271,8 @@
       select.appendChild(opt);
     }
     for (const cause of causes) {
+      // A cause the user can only see the name of (role "name") isn't somewhere a case can be moved to.
+      if (cause.role === "name" && cause.id !== c.cause_id) continue;
       const opt = document.createElement("option");
       opt.value = cause.id;
       opt.textContent = cause.title || cause.id;
