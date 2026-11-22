@@ -1478,11 +1478,12 @@ def list_cause_names_only(user_id: int) -> list[dict]:
         cur.execute(
             """
             SELECT c.id, c.title, c.created_at, c.updated_at FROM causes c
-            WHERE NOT EXISTS (SELECT 1 FROM eff_user_causes uc WHERE uc.cause_id = c.id AND uc.user_id = %(u)s)
-              AND (EXISTS (SELECT 1 FROM cases k JOIN eff_user_cases e ON e.case_id = k.id AND e.user_id = %(u)s WHERE k.cause_id = c.id)
-                OR EXISTS (SELECT 1 FROM allegations a JOIN eff_user_allegations e ON e.allegation_id = a.id AND e.user_id = %(u)s WHERE a.cause_id = c.id)
-                OR EXISTS (SELECT 1 FROM report_causes rc JOIN eff_user_reports e ON e.report_id = rc.report_id AND e.user_id = %(u)s WHERE rc.cause_id = c.id)
-                OR EXISTS (SELECT 1 FROM source_causes sc JOIN eff_user_sources e ON e.document_id = sc.document_id AND e.user_id = %(u)s WHERE sc.cause_id = c.id))
+            WHERE c.id NOT IN (SELECT cause_id FROM eff_user_causes WHERE user_id = %(u)s)
+              AND c.id IN (
+                SELECT k.cause_id FROM cases k WHERE k.id IN (SELECT case_id FROM eff_user_cases WHERE user_id = %(u)s)
+                UNION SELECT a.cause_id FROM allegations a WHERE a.id IN (SELECT allegation_id FROM eff_user_allegations WHERE user_id = %(u)s)
+                UNION SELECT rc.cause_id FROM report_causes rc WHERE rc.report_id IN (SELECT report_id FROM eff_user_reports WHERE user_id = %(u)s)
+                UNION SELECT sc.cause_id FROM source_causes sc WHERE sc.document_id IN (SELECT document_id FROM eff_user_sources WHERE user_id = %(u)s))
             """,
             {"u": user_id},
         )
