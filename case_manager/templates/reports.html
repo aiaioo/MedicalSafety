@@ -396,7 +396,7 @@
 (function () {
   var a = document.getElementById("lastSourceLink");
   var url = null;
-  try { url = localStorage.getItem("lastSourceUrl"); } catch (e) {}
+  try { if (localStorage.getItem("lastSourceWorkspace") === {{ (owner_current|string)|tojson }}) url = localStorage.getItem("lastSourceUrl"); } catch (e) {}
   if (a && url) {
     a.href = url;
     a.classList.remove("disabled");
@@ -406,7 +406,7 @@
 })();
 </script>
 {% if report_id %}<script>
-try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); } catch (e) {}
+try { localStorage.setItem("lastReportUrl", {{ (url_for('documents_view') ~ '?report=' ~ report_id) | tojson }}); localStorage.setItem("lastReportWorkspace", {{ (owner_current|string)|tojson }}); } catch (e) {}
 </script>{% endif %}
 <script src="{{ url_for('static', filename='share-key.js') }}"></script>
 {% if report_id %}<script>document.getElementById("shareBtn").addEventListener("click", function () { ShareKey.open("report", {{ report_id | tojson }}); });</script>{% endif %}

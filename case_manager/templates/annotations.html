@@ -196,13 +196,13 @@
   </main>
 </div>
 {% if doc_id %}<script>
-try { localStorage.setItem("lastSourceUrl", location.pathname + location.search); } catch (e) {}
+try { localStorage.setItem("lastSourceUrl", location.pathname + location.search); localStorage.setItem("lastSourceWorkspace", {{ (owner_current|string)|tojson }}); } catch (e) {}
 </script>{% endif %}
 <script>
 (function () {
   var a = document.getElementById("lastReportLink");
   var url = null;
-  try { url = localStorage.getItem("lastReportUrl"); } catch (e) {}
+  try { if (localStorage.getItem("lastReportWorkspace") === {{ (owner_current|string)|tojson }}) url = localStorage.getItem("lastReportUrl"); } catch (e) {}
   if (a && url) {
     a.href = url;
     a.classList.remove("disabled");
