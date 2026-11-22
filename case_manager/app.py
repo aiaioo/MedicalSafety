@@ -756,8 +756,9 @@ def create_default_cause():
 # Whose account the user is working in. Normally their own; when collaborators have shared things with them, a
 # dropdown in the title bar lets them work in a collaborator's account instead (the "view_owner" cookie): the lists
 # then show what that collaborator owns and the user can reach, and anything new goes where the collaborator has let
-# the user create -- a cause they can create in, or a case they can edit (the "view_target" cookie, "cause:<id>" or
-# "case:<id>"). With no such place there is no way to create anything in that account.
+# the user create -- a cause they can create in, or a cause holding cases they can edit (the "view_target" cookie,
+# "cause:<id>"; in the latter, new things are tied to those cases). With no such place there is no way to create
+# anything in that account.
 # ---------------------------------------------------------------------------
 
 VIEW_OWNER_COOKIE = "view_owner"
@@ -787,8 +788,9 @@ def viewing_owner_id():
 
 
 def creation_targets(owner_id):
-    """[{"value": "cause:<id>" | "case:<id>", "label"}] where the user may create things in this collaborator's account:
-    their causes the user can create in, and the cases the user can edit that sit under other causes."""
+    """[{"value": "cause:<id>", "label"}] where the user may create things in this collaborator's account: the causes
+    they can create in, and the causes holding cases they can edit (there they create only within those cases -- see
+    case_only_cause)."""
     causes = [c for c in storage.list_causes(g.user.id) if c["role"] in ("editor", "creator")]
     cause_owners = storage.owner_names("cause", [c["id"] for c in causes])
     causes = [c for c in causes if cause_owners.get(c["id"], (None,))[0] == owner_id]
@@ -799,15 +801,29 @@ def creation_targets(owner_id):
     case_cause_owners = storage.owner_names("cause", sorted({c["cause_id"] for c in cases}))
     cases = [c for c in cases if case_cause_owners.get(c["cause_id"], (None,))[0] == owner_id]
     cases.sort(key=lambda c: c["updated_at"], reverse=True)
-    # A case is grouped under the name of its cause (visible to the user even without a role on the cause), so the
-    # title bar shows that cause once, with its cases beneath it.
+    # A cause the user holds no role on is still named (see list_cause_names_only).
     cause_titles = {c["id"]: c["title"] or c["id"] for c in storage.list_causes(g.user.id) + storage.list_cause_names_only(g.user.id)}
-    return targets + [{"value": f"case:{c['id']}", "label": c["name"] or c["id"], "group": cause_titles.get(c["cause_id"], c["cause_id"])}
-                      for c in cases]
+    for case in cases:
+        value = f"cause:{case['cause_id']}"
+        if not any(t["value"] == value for t in targets):
+            targets.append({"value": value, "label": cause_titles.get(case["cause_id"], case["cause_id"])})
+    return targets
+
+
+def case_only_cause(cause_id):
+    """Whether the user can create in this cause only through cases they can edit in it (they hold no create role on
+    the cause itself)."""
+    return not has_role("cause", cause_id, "creator")
+
+
+def editable_cases_in_cause(cause_id):
+    """The cases in this cause the user can edit, most recently updated first."""
+    cases = [c for c in storage.list_cases(g.user.id) if c["role"] in ("owner", "editor") and c["cause_id"] == cause_id]
+    return sorted(cases, key=lambda c: c["updated_at"], reverse=True)
 
 
 def creation_target():
-    """("cause" | "case", id) where new things go in the collaborator's account being worked in; None if there is none
+    """("cause", id) where new things go in the collaborator's account being worked in; None if there is none
     (or the user is working in their own account)."""
     owner = viewing_owner_id()
     if owner is None:
@@ -828,11 +844,11 @@ def resolve_default_cause_id(exclude_cause_id=None, create=True):
     never left without one. `exclude_cause_id` is passed when reassigning
     cases off a cause that's about to be deleted, so that cause is never
     offered back as its own replacement.
-    Causes of their own only: working in a collaborator's account, it is the cause chosen for it (None if that is a
-    case, or there is nothing they can create in)."""
+    Causes of their own only: working in a collaborator's account, it is the cause chosen for it (None if they can
+    create there only within cases, or there is nothing they can create in)."""
     if viewing_owner_id() is not None:
         target = creation_target()
-        if target and target[0] == "cause" and target[1] != exclude_cause_id:
+        if target and target[1] != exclude_cause_id and not case_only_cause(target[1]):
             return target[1]
         if create:
             raise DocumentError("You can't create anything in this account: the collaborator hasn't given you access to create in it", 403)
@@ -847,12 +863,15 @@ def resolve_default_cause_id(exclude_cause_id=None, create=True):
 
 def default_cause_link():
     """The association every newly created report or uploaded source gets:
-    the user's default cause (or, in a collaborator's account, the cause or case chosen for it). Whatever
+    the user's default cause (or, in a collaborator's account, the cause chosen for it -- or, when they can create
+    there only within cases, the case they most recently touched in it). Whatever
     resolve_default_cause_id fell back to is saved as the default, so it stays put from then on."""
     if viewing_owner_id() is not None:
         target = creation_target()
         if target is None:
             resolve_default_cause_id()  # raises: nothing to create in
+        if case_only_cause(target[1]):
+            return "case", editable_cases_in_cause(target[1])[0]["id"]
         return target
     cause_id = resolve_default_cause_id()
     storage.set_default_cause(g.user.id, cause_id)
@@ -867,9 +886,9 @@ def default_cause_for_display():
         target = creation_target()
         if target is None:
             return None
-        if target[0] == "case":
-            case = storage.get_case(target[1])
-            return {"id": target[1], "title": f"{(case or {}).get('name') or target[1]} (case)"}
+        if case_only_cause(target[1]):
+            case = editable_cases_in_cause(target[1])[0]
+            return {"id": case["id"], "title": f"{case['name'] or case['id']} (case)"}
         cause = storage.get_cause(target[1])
         return {"id": target[1], "title": (cause or {}).get("title") or target[1]}
     cause_id = resolve_default_cause_id(create=False)
@@ -889,7 +908,7 @@ def can_create_cases_here():
     """Whether new cases can be: in a collaborator's account that takes a cause the user can create in."""
     if viewing_owner_id() is not None:
         target = creation_target()
-        return bool(target and target[0] == "cause")
+        return bool(target and not case_only_cause(target[1]))
     return can_create_items()
 
 
@@ -989,7 +1008,7 @@ def inject_cause_picker():
     if owner is not None:
         targets = creation_targets(owner)
         target = creation_target()
-        return {**shared, "picker_causes": [{"id": t["value"], "title": t["label"], "group": t.get("group", "")} for t in targets],
+        return {**shared, "picker_causes": [{"id": t["value"], "title": t["label"]} for t in targets],
                 "picker_current": f"{target[0]}:{target[1]}" if target else ""}
     causes = [
         {"id": c["id"], "title": c["title"] or c["id"]}
@@ -5527,14 +5546,17 @@ def api_allegations():
     raw_case_id = body.get("case_id")
     case_ids = body.get("case_ids")
     if not raw_cause_id and not raw_case_id and viewing_owner_id() is not None:
-        # In a collaborator's account, new allegations go where the picked cause or case says.
+        # In a collaborator's account, new allegations go in the picked cause. Where the user can create only
+        # through cases they can edit there, the allegation is linked to those cases (below).
         target = creation_target()
         if target is None:
             resolve_default_cause_id()  # raises: nothing to create in
-        elif target[0] == "case":
-            raw_case_id = target[1]
-        else:
-            raw_cause_id = target[1]
+        raw_cause_id = target[1]
+        if case_only_cause(raw_cause_id):
+            editable = [c["id"] for c in editable_cases_in_cause(raw_cause_id)]
+            chosen = [c for c in (case_ids if isinstance(case_ids, list) else []) if c in editable]
+            raw_case_id = (chosen or editable)[0]
+            case_ids = chosen or [raw_case_id]
     if raw_case_id:
         check_report_id(raw_case_id)
         require_role("case", raw_case_id, "editor")
