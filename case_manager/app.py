@@ -5171,6 +5171,21 @@ def api_case_tracker_suggest():
         return jsonify([])
 
 
+@app.route("/api/allegation-cases/order", methods=["POST"])
+def api_allegation_cases_order():
+    body = request.get_json(silent=True) or {}
+    raw_order = body.get("order")
+    if not isinstance(raw_order, list):
+        raise DocumentError("order must be a list of case ids", 400)
+    accessible = {c["id"] for c in storage.list_cases(g.user.id)}
+    order = []
+    for cid in raw_order[:2000]:
+        if isinstance(cid, str) and cid in accessible and cid not in order:
+            order.append(cid)
+    storage.set_case_order(g.user.id, order)
+    return jsonify({"order": order})
+
+
 @app.route("/api/allegation-cases", methods=["GET", "POST"])
 def api_allegation_cases():
     if request.method == "GET":
@@ -5199,6 +5214,9 @@ def api_allegation_cases():
                 "updated_at": case["updated_at"],
             })
         items.sort(key=lambda x: x["updated_at"], reverse=True)
+        # The user's own drag order: cases they have not placed (new ones) first, then the placed ones in order.
+        placed = storage.get_case_order(g.user.id)
+        items.sort(key=lambda x: (x["id"] in placed, placed.get(x["id"], 0)))
         items = attach_cause_owners(attach_owners("case", items))
         if viewing is not None:
             items = [i for i in items if i.get("cause_owner_id") == viewing]

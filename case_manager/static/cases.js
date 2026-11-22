@@ -2,6 +2,7 @@
   const appEl = document.getElementById("casesApp");
   if (!appEl) return;
   const casesUrl = appEl.dataset.casesUrl;
+  const casesOrderUrl = appEl.dataset.casesOrderUrl;
   const caseUrlBase = appEl.dataset.caseUrlBase;
   const allegationsUrlBase = appEl.dataset.allegationsUrlBase;
   const caseDetailsUrlBase = appEl.dataset.caseDetailsUrlBase;
@@ -295,6 +296,7 @@
     card.dataset.id = c.id;
     card.innerHTML = `
       <div class="allegation-card-head">
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
         <input type="text" class="allegation-title-input" placeholder="Case name" maxlength="200">
         ${c.hearing_count === 0 ? '<button type="button" class="card-delete-btn" title="Delete case">✕</button>' : ""}
       </div>
@@ -341,6 +343,12 @@
     if (!canEdit(c.role)) window.ReadOnlyLock.lock(card);
     else if (deleteBtn && c.role !== "owner") deleteBtn.disabled = true;
 
+    // Draggable only while the handle is held, so text in the fields can still be selected with the mouse.
+    const handle = card.querySelector(".drag-handle");
+    handle.addEventListener("mousedown", () => { card.draggable = true; });
+    card.addEventListener("dragend", () => { card.draggable = false; });
+    handle.addEventListener("mouseup", () => { card.draggable = false; });
+
     card.addEventListener("click", (e) => {
       if (e.target.closest("input, textarea, button, select")) return;
       selectCase(c.id);
@@ -369,6 +377,21 @@
     caseListEmpty.style.display = cases.length ? "none" : "block";
     for (const c of cases) caseListEl.appendChild(buildCaseCard(c));
   }
+
+  function reorderCasesFromDom() {
+    const ids = [...caseListEl.querySelectorAll(".case-card")].map((el) => el.dataset.id);
+    const byId = new Map(cases.map((c) => [c.id, c]));
+    cases = ids.map((id) => byId.get(id)).filter(Boolean);
+    setStatus("Saving…");
+    fetch(casesOrderUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: ids }),
+    })
+      .then((res) => { if (!res.ok) throw new Error(res.statusText); setStatus("Saved"); })
+      .catch((e) => setStatus("Could not save order: " + e.message, true));
+  }
+  enableDragReorder(caseListEl, ".case-card", reorderCasesFromDom);
 
   async function loadCases() {
     try {

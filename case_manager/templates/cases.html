@@ -11,6 +11,7 @@
 <div id="casesApp"
      data-can-create="{{ '1' if can_create else '' }}"
      data-cases-url="{{ url_for('api_allegation_cases') }}"
+     data-cases-order-url="{{ url_for('api_allegation_cases_order') }}"
      data-suggest-url="{{ url_for('api_case_tracker_suggest') }}"
      data-case-url-base="{{ url_for('api_allegation_case', case_id='__ID__') }}"
      data-allegations-url-base="{{ url_for('allegations_view') }}"

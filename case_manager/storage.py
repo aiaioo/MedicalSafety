@@ -1269,6 +1269,24 @@ def list_cases(user_id: int) -> list[dict]:
     return _assemble_cases(case_rows, hearing_rows, doc_link_rows, roles={c["id"]: c["role"] for c in case_rows})
 
 
+def get_case_order(user_id: int) -> dict[str, int]:
+    """{case id: position} of the cards this user has dragged into place on the Cases page."""
+    with _cursor() as cur:
+        cur.execute("SELECT case_id, position FROM user_case_order WHERE user_id = %s", (user_id,))
+        return {r["case_id"]: r["position"] for r in cur.fetchall()}
+
+
+def set_case_order(user_id: int, case_ids: list[str]) -> None:
+    """Records the order of `case_ids` (all of which the caller has checked the user can see) as the user's own."""
+    with _cursor() as cur:
+        for index, case_id in enumerate(case_ids):
+            cur.execute(
+                "INSERT INTO user_case_order (user_id, case_id, position) VALUES (%s, %s, %s)"
+                " ON CONFLICT (user_id, case_id) DO UPDATE SET position = EXCLUDED.position",
+                (user_id, case_id, index),
+            )
+
+
 def case_exists(case_id: str) -> bool:
     return _exists("cases", case_id)
 
