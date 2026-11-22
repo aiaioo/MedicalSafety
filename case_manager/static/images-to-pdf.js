@@ -388,7 +388,7 @@
       setStatus("Uploading…");
       const body = new FormData();
       body.append("file", new File([pdf], name.replace(/[\\/]/g, "-") + ".pdf", { type: "application/pdf" }));
-      const res = await fetch("/api/documents/upload" + (window.mandatoryCaseQuery ? window.mandatoryCaseQuery() : ""), { method: "POST", body });
+      const res = await fetch("/api/documents/upload", { method: "POST", body });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
       setStatus(`Saved as "${data.id}". Reloading…`);

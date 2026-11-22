@@ -260,7 +260,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       const res = await fetch(reportsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, source_doc, source_type, case_ids: window.mandatoryCaseIds ? window.mandatoryCaseIds() : [] }),
+        body: JSON.stringify({ name, source_doc, source_type }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -580,7 +580,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       try {
         const body = new FormData();
         body.append("file", file);
-        const res = await fetch("/api/documents/upload" + (window.mandatoryCaseQuery ? window.mandatoryCaseQuery() : ""), { method: "POST", body });
+        const res = await fetch("/api/documents/upload", { method: "POST", body });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Upload failed");
 
