@@ -33,6 +33,7 @@
             <div class="report-card-meta">{{ d.type }}</div>
             <div class="report-card-meta">{{ d.snippet_count }} {{ "snippet" if d.snippet_count == 1 else "snippets" }}</div>
             <div class="report-card-meta" title="{{ d.cause_titles | join(", ") }}">Cause: {{ d.cause_titles | join(", ") or "None" }}</div>
+            {% if d.role in ("owner", "editor") %}<button type="button" class="card-cases-btn" data-doc-id="{{ d.id }}" data-cause-ids="{{ d.cause_ids | join(",") }}" data-case-ids="{{ d.case_ids | join(",") }}">Cases…</button>{% endif %}
             {% if d.owner_name %}<div class="report-card-meta card-owner-line" title="Creator">Creator: {{ d.owner_name }}</div>{% endif %}
           </a>
           {% endfor %}
@@ -71,6 +72,7 @@
     <div class="modal-actions"><button type="button" id="imagesClose">Close</button></div>
   </div>
 </div>
+<script src="{{ url_for('static', filename='card-cases.js') }}"></script>
 <script src="{{ url_for('static', filename='images-to-pdf.js') }}"></script>
 <script src="{{ url_for('static', filename='annotations-landing.js') }}"></script>
 {% else %}

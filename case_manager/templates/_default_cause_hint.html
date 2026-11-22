@@ -10,3 +10,13 @@
   <a href="{{ url_for('cases_view') }}">Cases page</a>.
   {% endif %}
 </p>
+{% if mandatory_cases %}
+<fieldset class="modal-field mandatory-cases">
+  <legend>Associate with case(s)</legend>
+  <p class="modal-hint">You can add to this cause only through cases you can edit, so choose at least one.</p>
+  {% for c in mandatory_cases %}
+  <label class="case-link-row"><input type="checkbox" class="mandatory-case-cb" value="{{ c.id }}"{% if loop.first %} checked{% endif %}> {{ c.name }}</label>
+  {% endfor %}
+</fieldset>
+<script src="{{ url_for('static', filename='mandatory-cases.js') }}"></script>
+{% endif %}

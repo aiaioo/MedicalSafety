@@ -1305,3 +1305,6 @@ label.toggle-label #continuousToggle:focus-visible,
   background: transparent; color: #666; cursor: pointer;
 }
 .pw-toggle:hover, .pw-toggle:focus-visible { color: #000; background: rgba(0,0,0,.06); }
+
+.card-cases-btn { margin-top: 4px; padding: 1px 8px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+.card-cases-btn:hover { background: #f0f0f0; }

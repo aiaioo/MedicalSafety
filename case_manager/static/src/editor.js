@@ -260,7 +260,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       const res = await fetch(reportsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, source_doc, source_type }),
+        body: JSON.stringify({ name, source_doc, source_type, case_ids: window.mandatoryCaseIds ? window.mandatoryCaseIds() : [] }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -317,6 +317,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
           <div class="meta">${escapeHtml(sourceLabel)}</div>
           <div class="meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
           <div class="meta" title="${escapeHtml(causes)}">Cause: ${escapeHtml(causes)}</div>
+          ${r.role === "owner" || r.role === "editor" ? '<button type="button" class="card-cases-btn">Cases…</button>' : ""}
           <div class="meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>
         </div>`;
     } else {
@@ -327,8 +328,16 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         <div class="report-card-meta">${escapeHtml(sourceLabel)}</div>
         <div class="report-card-meta">${r.snippet_count || 0} ${r.snippet_count === 1 ? "snippet" : "snippets"}</div>
         <div class="report-card-meta" title="${escapeHtml(causes)}">Cause: ${escapeHtml(causes)}</div>
+        ${r.role === "owner" || r.role === "editor" ? '<button type="button" class="card-cases-btn">Cases…</button>' : ""}
         <div class="report-card-meta">Updated ${escapeHtml(fmtDate(r.updated_at))}</div>`;
     }
+    const casesBtn = card.querySelector(".card-cases-btn");
+    if (casesBtn) casesBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.openCaseLinks({ kind: "report", id: r.id, causeIds: r.cause_ids || [], caseIds: r.case_ids || [],
+        onChange: (ids) => { r.case_ids = ids; } });
+    });
     const deleteBtn = card.querySelector(".card-delete-btn");
     if (deleteBtn) wireConfirmDelete(deleteBtn, async () => {
       try {
@@ -571,7 +580,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       try {
         const body = new FormData();
         body.append("file", file);
-        const res = await fetch("/api/documents/upload", { method: "POST", body });
+        const res = await fetch("/api/documents/upload" + (window.mandatoryCaseQuery ? window.mandatoryCaseQuery() : ""), { method: "POST", body });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Upload failed");
 

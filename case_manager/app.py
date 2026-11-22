@@ -444,10 +444,12 @@ def visible_allegations():
     return storage.list_allegations(storage.accessible_ids(g.user.id, "cause"), storage.accessible_ids(g.user.id, "allegation"))
 
 
-def require_link_target(fields, what):
+def require_link_target(fields, what, adding=False):
     """The one cause or case a report/source is being associated with,
     from `fields` (a JSON body or form) carrying exactly one of cause_id /
-    case_id -- the user must be able to create things under it. Returns ("cause" | "case",
+    case_id -- the user must be able to create things under it. Editing a case includes adding things to it, so
+    when `adding`, a cause where the user can edit some case also passes; the caller then makes sure the thing is
+    associated with one of those cases (see _check_case_only_link). Returns ("cause" | "case",
     id), the shape storage's link functions take."""
     cause_id, case_id = fields.get("cause_id"), fields.get("case_id")
     if bool(cause_id) == bool(case_id):
@@ -455,6 +457,8 @@ def require_link_target(fields, what):
     target_kind, target_id = ("cause", cause_id) if cause_id else ("case", case_id)
     if not isinstance(target_id, str) or not DOC_ID_RE.match(target_id):
         raise DocumentError(f"Invalid {target_kind} id: {target_id!r}", 400)
+    if adding and target_kind == "cause" and case_only_cause(target_id) and editable_cases_in_cause(target_id):
+        return target_kind, target_id
     require_role(target_kind, target_id, "creator")
     return target_kind, target_id
 
@@ -861,6 +865,30 @@ def resolve_default_cause_id(exclude_cause_id=None, create=True):
     return fallback or (create_default_cause() if create else None)
 
 
+def mandatory_cases():
+    """[{"id", "name"}] -- in a collaborator's account where the user can create in the picked cause only through
+    cases they can edit, those cases (most recently updated first: the first is the default); else []. New things
+    must be associated with at least one of them."""
+    if viewing_owner_id() is None:
+        return []
+    target = creation_target()
+    if not target or not case_only_cause(target[1]):
+        return []
+    return [{"id": c["id"], "name": c["name"] or c["id"]} for c in editable_cases_in_cause(target[1])]
+
+
+def link_mandatory_case(kind, object_id, raw_case_ids=None):
+    """Where mandatory_cases() applies, associates the new report/source with the cases the user chose (those of
+    `raw_case_ids` that are among them) or, if none, the most recently updated one -- that association is what lets
+    them add to the cause."""
+    allowed = [c["id"] for c in mandatory_cases()]
+    if not allowed:
+        return
+    chosen = [c for c in (raw_case_ids if isinstance(raw_case_ids, list) else []) if c in allowed]
+    for case_id in dict.fromkeys(chosen or allowed[:1]):
+        storage.link_to(kind, object_id, "case", case_id)
+
+
 def default_cause_link():
     """The association every newly created report or uploaded source gets:
     the user's default cause (or, in a collaborator's account, the cause chosen for it). Whatever
@@ -996,7 +1024,7 @@ def inject_cause_picker():
         return {}
     accounts = collaborator_accounts()
     owner = viewing_owner_id()
-    shared = {"owner_choices": accounts, "owner_current": owner or "", "owner_view": owner is not None,
+    shared = {"mandatory_cases": mandatory_cases() if owner is not None else [], "owner_choices": accounts, "owner_current": owner or "", "owner_view": owner is not None,
               "me_label": storage.user_names([g.user.id]).get(g.user.id, g.user.email) if accounts else "",
               "can_create_here": can_create_here(), "can_create_cases_here": can_create_cases_here()}
     if owner is not None:
@@ -3534,6 +3562,7 @@ def api_upload_document():
     storage.create_document_streaming(
         doc_id, ext.lstrip("."), chunks, owner_id=g.user.id, link=default_cause_link(), validate=_check_pdf_stream,
     )
+    link_mandatory_case("source", doc_id, [c for c in request.args.get("case_ids", "").split(",") if c])
 
     return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
 
@@ -4150,6 +4179,7 @@ def api_reports():
         "updated_at": now,
     }
     storage.save_report(report_id, data, owner_id=g.user.id, link=default_cause_link())
+    link_mandatory_case("report", report_id, body.get("case_ids"))
     return jsonify({"id": report_id, **data})
 
 
@@ -4240,6 +4270,8 @@ def api_report_copy(report_id):
     links = [("cause", c) for c in (original or {}).get("cause_ids", [])]
     links += [("case", c) for c in (original or {}).get("case_ids", [])]
     storage.save_report(new_id, data, owner_id=g.user.id, link=links[0] if links else default_cause_link())
+    if not links:
+        link_mandatory_case("report", new_id)
     # The copy gets its own images (they belong to a report row, which now exists).
     localized = localize_report_images(data["doc"], new_id)
     if localized != data["doc"]:
@@ -5608,6 +5640,13 @@ def api_allegation_item(allegation_id):
     cause_id = body.get("cause_id", existing["cause_id"]) or existing["cause_id"]
     if cause_id != existing["cause_id"]:
         require_creatable_cause(cause_id)
+    new_case_ids = sanitize_case_ids(body.get("case_ids", existing.get("case_ids", [])),
+                                     linkable_ids("case", existing.get("case_ids", [])))
+    if case_only_cause(cause_id):
+        # Adding to a cause only through cases one can edit: the allegation must stay tied to one of them.
+        mine = {c["id"] for c in editable_cases_in_cause(cause_id)}
+        if mine and not mine & set(new_case_ids):
+            raise DocumentError("This allegation must stay linked to one of your cases in its cause", 400)
     data = {
         "cause_id": cause_id,
         "title": _sanitize_text(body.get("title", existing.get("title", "")), ALLEGATION_MAX_TITLE_CHARS),
@@ -5615,8 +5654,7 @@ def api_allegation_item(allegation_id):
         "to_prove": sanitize_to_prove_list(body.get("to_prove", existing.get("to_prove", [])), valid_evidence_ids),
         "inculpatory": inculpatory,
         "exculpatory": exculpatory,
-        "case_ids": sanitize_case_ids(body.get("case_ids", existing.get("case_ids", [])),
-                                      linkable_ids("case", existing.get("case_ids", []))),
+        "case_ids": new_case_ids,
         "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -5669,18 +5707,33 @@ def _update_links(kind, object_id):
     check_report_id(object_id) if kind == "report" else check_doc_id(object_id)
     require_role(kind, object_id, "editor")
     body = request.get_json(silent=True) or {}
-    target_kind, target_id = require_link_target(body, f"this {ACCESS_LABELS[kind]}")
+    target_kind, target_id = require_link_target(body, f"this {ACCESS_LABELS[kind]}", adding=request.method == "POST")
+    item = storage.get_report(object_id) if kind == "report" else next(
+        (d for d in storage.list_documents(g.user.id) if d["id"] == object_id), None)
+    label = ACCESS_LABELS[kind]
 
     if request.method == "POST":
+        # Users who can edit only some cases of a cause may associate with the cause only while the thing is
+        # also associated with one of those cases.
+        if target_kind == "cause" and case_only_cause(target_id):
+            mine = {c["id"] for c in editable_cases_in_cause(target_id)}
+            if not mine & set(item["case_ids"]):
+                raise DocumentError(f"Associate this {label} with one of your cases in that cause first: you can add to the cause only through a case you can edit", 400)
         storage.link_to(kind, object_id, target_kind, target_id)
     else:
-        item = storage.get_report(object_id) if kind == "report" else next(
-            (d for d in storage.list_documents(g.user.id) if d["id"] == object_id), None)
         links = item["cause_ids"] + item["case_ids"]
         if target_id not in item[f"{target_kind}_ids"]:
-            raise DocumentError(f"This {ACCESS_LABELS[kind]} isn't associated with that {target_kind}", 404)
+            raise DocumentError(f"This {label} isn't associated with that {target_kind}", 404)
         if len(links) <= 1:
-            raise DocumentError(f"A {ACCESS_LABELS[kind]} must stay associated with at least one cause or case", 400)
+            raise DocumentError(f"A {label} must stay associated with at least one cause or case", 400)
+        if target_kind == "case":
+            # Don't strip the case that justifies a cause association the user could not make on their own.
+            case = storage.get_case(target_id)
+            cause_id = case["cause_id"] if case else None
+            if cause_id in item["cause_ids"] and case_only_cause(cause_id):
+                mine = {c["id"] for c in editable_cases_in_cause(cause_id)}
+                if not (mine - {target_id}) & set(item["case_ids"]):
+                    raise DocumentError(f"A {label} in that cause must stay associated with one of your cases in it", 400)
         storage.unlink_from(kind, object_id, target_kind, target_id)
     return jsonify({"ok": True})
 

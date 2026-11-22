@@ -17,7 +17,7 @@
       try {
         const body = new FormData();
         body.append("file", file);
-        const res = await fetch("/api/documents/upload", { method: "POST", body });
+        const res = await fetch("/api/documents/upload" + (window.mandatoryCaseQuery ? window.mandatoryCaseQuery() : ""), { method: "POST", body });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Upload failed");
         uploadStatus.textContent = `Uploaded as "${data.id}". Reloading…`;
@@ -224,3 +224,19 @@
     });
   });
 })();
+
+// Edit a document's case associations from its card.
+document.querySelectorAll(".card-cases-btn").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const split = (v) => (v ? v.split(",") : []);
+    window.openCaseLinks({
+      kind: "doc",
+      id: btn.dataset.docId,
+      causeIds: split(btn.dataset.causeIds),
+      caseIds: split(btn.dataset.caseIds),
+      onChange: (ids) => { btn.dataset.caseIds = ids.join(","); },
+    });
+  });
+});
