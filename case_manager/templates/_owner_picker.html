@@ -3,7 +3,7 @@
     is to take the right-hand free space of the title bar (the page's rightmost button then gives its up). -#}
 {% if owner_choices %}
 <span class="owner-picker-wrap{% if owner_auto %} owner-auto{% endif %}">
-  <label class="cause-label" for="ownerPicker">Account:</label>
+  <label class="cause-label" for="ownerPicker">Workspace:</label>
   <select id="ownerPicker" class="cause-picker" title="Work in your own account, or in a collaborator's"
           data-url="{{ url_for('api_view_owner') }}">
     <option value=""{% if not owner_current %} selected{% endif %}>{{ me_label }}</option>
