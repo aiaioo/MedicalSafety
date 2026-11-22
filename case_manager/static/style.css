@@ -1294,3 +1294,14 @@ label.toggle-label #continuousToggle:focus-visible,
 .docbar:has(.owner-auto) > .btn { margin-left: 0 !important; }
 .owner-picker-wrap .cause-picker { max-width: 220px; }
 [hidden].btn, button[hidden] { display: none !important; }
+
+/* Show/hide button on password fields (static/password-toggle.js) */
+.pw-wrap { position: relative; display: block; margin-top: 4px; }
+.pw-wrap > input, .modal-field .pw-wrap > input { width: 100%; box-sizing: border-box; padding-right: 2.5rem; margin: 0; }
+.pw-toggle {
+  position: absolute; top: 50%; right: 0.4rem; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 1.9rem; height: 1.9rem; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: #666; cursor: pointer;
+}
+.pw-toggle:hover, .pw-toggle:focus-visible { color: #000; background: rgba(0,0,0,.06); }
