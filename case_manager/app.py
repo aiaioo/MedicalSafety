@@ -863,15 +863,12 @@ def resolve_default_cause_id(exclude_cause_id=None, create=True):
 
 def default_cause_link():
     """The association every newly created report or uploaded source gets:
-    the user's default cause (or, in a collaborator's account, the cause chosen for it -- or, when they can create
-    there only within cases, the case they most recently touched in it). Whatever
+    the user's default cause (or, in a collaborator's account, the cause chosen for it). Whatever
     resolve_default_cause_id fell back to is saved as the default, so it stays put from then on."""
     if viewing_owner_id() is not None:
         target = creation_target()
         if target is None:
             resolve_default_cause_id()  # raises: nothing to create in
-        if case_only_cause(target[1]):
-            return "case", editable_cases_in_cause(target[1])[0]["id"]
         return target
     cause_id = resolve_default_cause_id()
     storage.set_default_cause(g.user.id, cause_id)
@@ -886,9 +883,6 @@ def default_cause_for_display():
         target = creation_target()
         if target is None:
             return None
-        if case_only_cause(target[1]):
-            case = editable_cases_in_cause(target[1])[0]
-            return {"id": case["id"], "title": f"{case['name'] or case['id']} (case)"}
         cause = storage.get_cause(target[1])
         return {"id": target[1], "title": (cause or {}).get("title") or target[1]}
     cause_id = resolve_default_cause_id(create=False)
