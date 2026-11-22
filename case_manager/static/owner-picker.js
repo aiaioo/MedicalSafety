@@ -17,6 +17,7 @@
       const url = new URL(location.href);
       url.searchParams.delete("case");
       url.searchParams.delete("allegation");
+      url.searchParams.delete("owner");
       location.assign(url.toString());
     } catch (e) {
       console.error(e);

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape, unescape
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 import fitz  # PyMuPDF
@@ -933,10 +933,20 @@ def switch_account_to(owner_id):
         return None
     if not any(a["id"] == owner_id for a in collaborator_accounts()):
         return None
-    resp = redirect(request.full_path.rstrip("?"))
+    rest = [(k, v) for k, v in request.args.items(multi=True) if k != "owner"]
+    resp = redirect(request.path + ("?" + urlencode(rest) if rest else ""))
     resp.set_cookie(VIEW_OWNER_COOKIE, str(owner_id), max_age=365 * 86400, samesite="Lax", httponly=True, path="/")
     resp.delete_cookie(VIEW_TARGET_COOKIE, path="/")
     return resp
+
+
+def owner_link_id(kind, object_id):
+    """For a link back to the Documents / Reports list from something a collaborator shared: the collaborator's id, to
+    open that list in their account (?owner=); None for something the user owns."""
+    if g.user.is_guest or not is_shared_with_me(kind, object_id):
+        return None
+    owner = storage.owner_names(kind, [object_id]).get(object_id)
+    return owner[0] if owner else None
 
 
 def switch_account_for_cause(cause_id):
@@ -2982,6 +2992,10 @@ def page_view():
     raw_type = request.args.get("type", "pdf")
 
     if not doc_id:
+        # ?owner= opens the list in that collaborator's account (the back link from a document they shared).
+        switch = switch_account_to(request.args.get("owner", type=int))
+        if switch:
+            return switch
         return render_template("annotations.html", doc_id="", docs=attach_owners("source", scoped_source_docs()), default_cause=default_cause_for_display(), can_create=can_create_here())
 
     try:
@@ -3018,6 +3032,9 @@ def page_view():
         split_url=url_for("api_doc_split", doc_id=doc_id),
         splitting=storage.is_document_splitting(doc_id),
         shared_with_me=is_shared_with_me("source", doc_id),
+        owner_link_id=owner_link_id("source", doc_id),
+        has_reports=bool(in_viewed_account("report", storage.list_reports(g.user.id))),
+        can_create=can_create_here(),
         title_url=url_for("api_doc_title", doc_id=doc_id),
         page=page,
         page_count=page_count,
@@ -3029,6 +3046,11 @@ def page_view():
 
 @app.route("/reports")
 def documents_view():
+    if not request.args.get("report"):
+        # ?owner= opens the list in that collaborator's account (the back link from a report they shared).
+        switch = switch_account_to(request.args.get("owner", type=int))
+        if switch:
+            return switch
     source_docs = list_source_docs()
 
     report_id = request.args.get("report", "")
@@ -3067,6 +3089,7 @@ def documents_view():
         report_id=report_id,
         can_edit=can_edit,
         shared_with_me=bool(report_id) and is_shared_with_me("report", report_id),
+        owner_link_id=owner_link_id("report", report_id) if report_id else None,
         can_create=can_create_here(),
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,

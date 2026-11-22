@@ -101,8 +101,7 @@
     <div class="doc-title">
       <a href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
       <a class="btn disabled" id="lastReportLink" aria-disabled="true" title="No report viewed yet">&laquo; Last Report</a>
-      {% if shared_with_me %}<a class="btn" href="{{ url_for('collaborations_view') }}">Collaborations</a>
-      {% else %}<a class="btn" href="{{ url_for('page_view') }}">Documents</a>{% endif %}
+      <a class="btn" href="{{ url_for('page_view', owner=owner_link_id) if owner_link_id else url_for('page_view') }}">Documents</a>
       <input id="titleInput" class="doc-name" type="text" placeholder="Untitled document" value="{{ doc_title }}">
       <span class="tag">{{ doc_type }}</span>
     </div>
@@ -208,8 +207,15 @@ try { localStorage.setItem("lastSourceUrl", location.pathname + location.search)
     a.classList.remove("disabled");
     a.removeAttribute("aria-disabled");
     a.title = "Back to the last viewed report";
-  } else if (a) {
-    // No report viewed yet: offer "New report..." for this document instead.
+  } else if (a && {{ 'true' if has_reports else 'false' }}) {
+    // No report viewed yet, but the workspace has some: go to the list to pick one.
+    a.innerHTML = "&laquo; Reports";
+    a.title = "Choose a report";
+    a.href = {{ (url_for('documents_view', owner=owner_link_id) if owner_link_id else url_for('documents_view'))|tojson }};
+    a.classList.remove("disabled");
+    a.removeAttribute("aria-disabled");
+  } else if (a && {{ 'true' if can_create else 'false' }}) {
+    // No reports in the workspace: offer "New report..." for this document instead.
     a.innerHTML = "&laquo; Create report";
     a.title = "Create a new report";
     a.href = {{ url_for('documents_view')|tojson }}{% if doc_id %} + "?source=" + encodeURIComponent({{ doc_id|tojson }}) + "&type=" + encodeURIComponent({{ doc_type|tojson }}){% endif %};
