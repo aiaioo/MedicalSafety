@@ -1545,25 +1545,25 @@
 
   // Turns the current page upside down. Unsaved annotations are saved first, since the server turns the
   // saved ones along with the page; then the viewer reloads on the same page to show the new image.
-  // The button first swaps itself for a "Confirm" span, which must be clicked to apply the rotation.
+  // The first click turns the button red ("✕ Confirm rotate 180°?", like Clear Page); a second click within
+  // three seconds applies the rotation.
   const rotateBtn = document.getElementById("rotateBtn");
-  const rotateConfirm = document.getElementById("rotateConfirm");
-  const cancelRotate = () => { rotateConfirm.hidden = true; rotateBtn.hidden = false; };
-  rotateBtn.addEventListener("click", () => {
+  const rotateLbl = rotateBtn.querySelector(".lbl");
+  const rotateLabel = rotateLbl.textContent;
+  const cancelRotate = () => {
+    clearTimeout(rotateBtn._confirmTimer);
+    rotateBtn.classList.remove("confirming");
+    rotateLbl.textContent = rotateLabel;
+  };
+  rotateBtn.addEventListener("click", async () => {
     if (!canEdit) return;
-    rotateBtn.hidden = true;
-    rotateConfirm.hidden = false;
-    rotateConfirm.focus();
-  });
-  document.addEventListener("click", (e) => {
-    if (!rotateConfirm.hidden && e.target !== rotateConfirm && !rotateBtn.contains(e.target)) cancelRotate();
-  });
-  rotateConfirm.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rotateConfirm.click(); }
-    else if (e.key === "Escape") cancelRotate();
-  });
-  rotateConfirm.addEventListener("click", async () => {
-    if (!canEdit) return;
+    if (!rotateBtn.classList.contains("confirming")) {
+      rotateBtn.classList.add("confirming");
+      rotateLbl.textContent = "✕ Confirm rotate 180°?";
+      rotateBtn._confirmTimer = setTimeout(cancelRotate, 3000);
+      return;
+    }
+    cancelRotate();
     const page = currentPage;
     try {
       const dirtyPages = Array.from(pageState.entries()).filter(([, s]) => s.dirty).map(([p]) => p);
