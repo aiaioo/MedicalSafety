@@ -163,7 +163,7 @@
         wrap.style.maxWidth = "100%";
         wrap.style.background = "white";
         wrap.innerHTML = `<span class="page-label">${esc(d.title)} &middot; page ${n}</span>` +
-          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}${state.annotations !== "none" ? "&annotations=" + state.annotations : ""}">`;
+          `<img alt="${esc(d.title)} page ${n}" data-src="/api/doc/${encodeURIComponent(d.id)}/render/${n}?type=${encodeURIComponent(d.type)}&r=${d.rev || 0}${state.annotations !== "none" ? "&annotations=" + state.annotations : ""}">`;
         shown++;
         const pageNo = pn.position !== "none" ? pageNumberAt(shown - 1) : null;
         if (pageNo !== null) {

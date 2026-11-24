@@ -3048,6 +3048,7 @@ def page_view():
     # literal "/1" segment right after the fixed route prefix is unambiguous
     # since doc_id can never contain "/", so this string-replace is safe).
     render_url_base = url_for("api_render", doc_id=doc_id, page=1, type=raw_type).replace("/render/1", "/render/__PAGE__")
+    render_url_base += f"&r={storage.get_document_rev(doc_id)}"  # changes when a page is rotated, so cached images are not reused
     annotations_url_base = url_for("api_annotations", doc_id=doc_id, page=1, type=raw_type).replace(
         "/annotations/1", "/annotations/__PAGE__"
     )
@@ -3803,7 +3804,7 @@ def api_render(doc_id, page):
     annotations = []
     if mode in ("blackouts", "all"):
         annotations = annexure_annotations_to_draw(storage.get_page_annotations(doc_id, page), mode)
-    cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str))
+    cache_key = (doc_id, page, dpi, json.dumps(annotations, sort_keys=True, default=str), storage.get_document_rev(doc_id))
     etag = hashlib.sha1(repr(cache_key).encode()).hexdigest()
     if etag in request.if_none_match:
         resp = Response(status=304)
@@ -3867,6 +3868,24 @@ def api_annotations(doc_id, page):
     refreshed = refresh_page_snippets(doc_id, page, raw_type, anns)
     log_activity("save", "source", doc_id, f"Annotations, page {page}")
     return jsonify({"status": "ok", "count": len(anns), "snippets_refreshed": refreshed})
+
+
+@app.route("/api/doc/<doc_id>/rotate/<int:page>", methods=["POST"])
+def api_rotate_page(doc_id, page):
+    """Turns a page by 180 degrees (for a page scanned upside down), moving its annotations and snippet
+    crops with it and re-rendering its snippets."""
+    check_doc_id(doc_id)
+    raw_type = request.args.get("type", "pdf")
+    _check_pdf_access(doc_id, raw_type, "editor")
+    try:
+        anns = storage.rotate_document_page(doc_id, page, sanitize_annotations(storage.get_page_annotations(doc_id, page)))
+    except storage.StorageError as exc:
+        raise DocumentError(str(exc), 400) from exc
+    _pdfium_forget(doc_id)
+    _page_png_cache_forget(doc_id)
+    refreshed = refresh_page_snippets(doc_id, page, raw_type, anns)
+    log_activity("save", "source", doc_id, f"Rotated page {page} by 180 degrees")
+    return jsonify({"status": "ok", "rev": storage.get_document_rev(doc_id), "snippets_refreshed": refreshed})
 
 
 def refresh_page_snippets(doc_id, page, raw_type, raw_annotations):
@@ -4656,7 +4675,7 @@ def _annexure_payload(report_id, saved, page_numbers=None, annotations=None, doc
         },
         "documents": [
             {"id": o["id"], "title": docs[o["id"]]["title"], "type": docs[o["id"]]["type"],
-             "description": docs[o["id"]].get("description", ""),
+             "description": docs[o["id"]].get("description", ""), "rev": docs[o["id"]].get("rev", 0),
              "snippet_pages": snippet_pages.get(o["id"], []), "locked": o["id"] in snippet_pages,
              "page_mode": "all" if o["page_mode"] == "snippets" and o["id"] not in snippet_pages else o["page_mode"],
              "page_range": o["page_range"]}

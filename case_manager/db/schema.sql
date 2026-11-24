@@ -40,6 +40,7 @@ CREATE TABLE documents (
     doc_type    TEXT NOT NULL CHECK (doc_type IN ('pdf', 'docx', 'doc')),
     title       TEXT NOT NULL DEFAULT '',        -- user-editable display title; defaults to id in the app
     description TEXT NOT NULL DEFAULT '',        -- optional user-entered description (feeds the annexure's List of Documents)
+    rotation_rev INTEGER NOT NULL DEFAULT 0,     -- bumped when a page is rotated, to refresh cached page images
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

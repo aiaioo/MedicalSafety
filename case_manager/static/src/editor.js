@@ -910,6 +910,23 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     });
   }
 
+  // Returning from a cited page (?rpage=N): scroll back to that report page. Images
+  // loading re-flow the pagination, so retry for a moment unless the user scrolls.
+  function restoreReportPage() {
+    const n = parseInt(new URLSearchParams(location.search).get("rpage"), 10);
+    if (!n || n < 2) return;
+    const box = document.querySelector(".editor-container");
+    let moved = false;
+    const stop = () => { moved = true; };
+    ["wheel", "touchstart", "keydown", "mousedown"].forEach((ev) => box.addEventListener(ev, stop, { once: true, passive: true }));
+    const go = () => {
+      if (moved) return;
+      const brk = Array.from(document.querySelectorAll(".page-break")).find((b) => parseInt(b.dataset.page, 10) === n);
+      if (brk) box.scrollTop += brk.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    };
+    [0, 300, 800, 1600, 3000].forEach((ms) => setTimeout(go, ms));
+  }
+
   editor.view.dom.setAttribute("data-placeholder", "Start writing your document. Click a snippet on the right to insert it here.");
 
   // A window resize or an async image load changes layout height without
@@ -1931,6 +1948,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       if (loaded) showInsertStyle(loaded);
       dirty = false;
       setStatus("");
+      restoreReportPage();
     } catch (e) {
       setStatus("Failed to load document: " + e.message, true);
     } finally {

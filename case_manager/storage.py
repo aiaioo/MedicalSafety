@@ -239,7 +239,7 @@ def list_documents(user_id: int) -> list[dict]:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.doc_type, d.title, d.description, us.role, {links},
+            SELECT d.id, d.doc_type, d.title, d.description, d.rotation_rev, us.role, {links},
                    (SELECT count(*) FROM snippets s WHERE s.document_id = d.id) AS snippet_count
             FROM documents d JOIN eff_user_sources us ON us.document_id = d.id AND us.user_id = %s
             ORDER BY d.id
@@ -249,11 +249,54 @@ def list_documents(user_id: int) -> list[dict]:
         rows = cur.fetchall()
     return [
         {"id": r["id"], "type": r["doc_type"], "title": _dec_text(r["title"]), "description": _dec_text(r["description"]),
-         "role": r["role"],
+         "rev": r["rotation_rev"], "role": r["role"],
          "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"]),
          "snippet_count": r["snippet_count"]}
         for r in rows
     ]
+
+
+def get_document_rev(document_id: str) -> int:
+    """How many page rotations the document has had (0 if none, or no such document)."""
+    with _cursor() as cur:
+        cur.execute("SELECT rotation_rev FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+        return row["rotation_rev"] if row else 0
+
+
+def rotate_document_page(document_id: str, page: int, annotations: list) -> list:
+    """Turns one page of the document's PDF by 180 degrees, in place. Everything stored as fractions of
+    the displayed page moves with it: the page's annotations (returned, turned) and its snippets' crop
+    rectangles, so each snippet still frames the same content. Bumps the document's rotation counter."""
+    import pikepdf
+    with _cursor() as cur:
+        _require_unlocked(cur, document_id)
+    key = _document_pdf_key(document_id)
+    backend = get_storage_backend()
+    with backend.open_read(key) as f, pikepdf.open(f) as pdf:
+        if not 1 <= page <= len(pdf.pages):
+            raise StorageError("Page out of range")
+        pg = pdf.pages[page - 1]
+        pg.obj["/Rotate"] = (int(pg.obj.get("/Rotate", 0)) + 180) % 360
+        out = io.BytesIO()
+        pdf.save(out)
+    backend.write_bytes(key, out.getvalue())
+
+    turned = []
+    for a in annotations:
+        a = dict(a)
+        if a.get("kind") == "freehand":
+            a["points"] = [[1 - px, 1 - py] for px, py in a["points"]]
+        else:
+            a["x"], a["y"] = 1 - a["x"] - a["w"], 1 - a["y"] - a["h"]
+        turned.append(a)
+    set_page_annotations(document_id, page, turned)
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE snippets SET rect_x = 1 - rect_x - rect_w, rect_y = 1 - rect_y - rect_h "
+            "WHERE document_id = %s AND page_number = %s", (document_id, page))
+        cur.execute("UPDATE documents SET rotation_rev = rotation_rev + 1 WHERE id = %s", (document_id,))
+    return turned
 
 
 def document_exists(document_id: str) -> bool:

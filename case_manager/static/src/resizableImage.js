@@ -54,6 +54,24 @@ function pageUrl(docId, page) {
   return `/annotations?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(type)}&page=${page}`;
 }
 
+// Before leaving the report for a cited page, remember which report page is
+// at the top of the view, so the document's "<< Last report" link returns there.
+function rememberReportPage() {
+  try {
+    const box = document.querySelector(".editor-container");
+    let page = 1;
+    if (box) {
+      const top = box.getBoundingClientRect().top;
+      document.querySelectorAll(".page-break").forEach((b) => {
+        if (b.getBoundingClientRect().top <= top + 1) page = Math.max(page, parseInt(b.dataset.page, 10) || 1);
+      });
+    }
+    const params = new URLSearchParams(location.search);
+    params.set("rpage", String(page));
+    localStorage.setItem("lastReportUrl", location.pathname + "?" + params.toString());
+  } catch (e) { /* storage unavailable */ }
+}
+
 // Marks a reference element so a click on it opens the page it cites.
 function markRef(el, docId, page) {
   el.dataset.refDoc = docId;
@@ -161,8 +179,7 @@ function mergedRefWidget(run) {
       a.textContent = text;
       a.className = "snippet-ref-link";
       a.href = pageUrl(key.docId, key.page) || annexureUrl || "#";
-      a.target = "_blank";
-      a.rel = "noopener";
+      a.addEventListener("click", rememberReportPage);
       a.title = "Open this page of the document";
       dom.appendChild(a);
     });
@@ -198,7 +215,8 @@ export const SnippetRefGroups = Node.create({
               const url = pageUrl(el.dataset.refDoc, el.dataset.refPage);
               if (!url) return false;
               event.preventDefault();
-              window.open(url, "_blank", "noopener");
+              rememberReportPage();
+              window.location.href = url;
               return true;
             },
           },

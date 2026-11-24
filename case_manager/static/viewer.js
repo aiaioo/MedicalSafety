@@ -1460,7 +1460,7 @@
     canEdit = mayEdit && !locked;
     appEl.classList.toggle("doc-readonly", !canEdit);
     titleInput.readOnly = descInput.readOnly = !canEdit;
-    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #pageSetupBtn").forEach((el) => {
+    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #rotateBtn, #pageSetupBtn").forEach((el) => {
       el.disabled = !canEdit;
     });
     if (!canEdit) setMode(null);
@@ -1492,6 +1492,41 @@
       setStatus(dirtyPages.length > 1 ? `Saved ${dirtyPages.length} pages` : "Saved");
     } catch (e) {
       setStatus("Save failed: " + e.message, true);
+    }
+  });
+
+  // Turns the current page upside down. Unsaved annotations are saved first, since the server turns the
+  // saved ones along with the page; then the viewer reloads on the same page to show the new image.
+  // The button first swaps itself for a "Confirm" span, which must be clicked to apply the rotation.
+  const rotateBtn = document.getElementById("rotateBtn");
+  const rotateConfirm = document.getElementById("rotateConfirm");
+  const cancelRotate = () => { rotateConfirm.hidden = true; rotateBtn.hidden = false; };
+  rotateBtn.addEventListener("click", () => {
+    if (!canEdit) return;
+    rotateBtn.hidden = true;
+    rotateConfirm.hidden = false;
+    rotateConfirm.focus();
+  });
+  document.addEventListener("click", (e) => {
+    if (!rotateConfirm.hidden && e.target !== rotateConfirm && !rotateBtn.contains(e.target)) cancelRotate();
+  });
+  rotateConfirm.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rotateConfirm.click(); }
+    else if (e.key === "Escape") cancelRotate();
+  });
+  rotateConfirm.addEventListener("click", async () => {
+    if (!canEdit) return;
+    const page = currentPage;
+    try {
+      const dirtyPages = Array.from(pageState.entries()).filter(([, s]) => s.dirty).map(([p]) => p);
+      await Promise.all(dirtyPages.map(saveOnePage));
+      if (titleDirty) await saveTitle();
+      setStatus("Rotating page…");
+      const res = await fetch(`/api/doc/${encodeURIComponent(docId)}/rotate/${page}?type=${encodeURIComponent(docType)}`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      window.location.href = `?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(docType)}&page=${page}`;
+    } catch (e) {
+      setStatus("Rotate failed: " + e.message, true);
     }
   });
 
@@ -1713,7 +1748,7 @@
   if (!canEdit) {
     titleInput.readOnly = true;
     descInput.readOnly = true;
-    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #pageSetupBtn").forEach((el) => {
+    document.querySelectorAll(".mode-btn, #colorBtn, #undoBtn, #clearBtn, #saveBtn, #rotateBtn, #pageSetupBtn").forEach((el) => {
       el.disabled = true;
     });
   }
