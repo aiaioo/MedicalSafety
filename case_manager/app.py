@@ -930,7 +930,9 @@ def in_viewed_account(kind, items, id_key="id"):
     if owner is None:
         return items
     owners = storage.owner_names(kind, [i[id_key] for i in items])
-    return [i for i in items if owners.get(i[id_key], (None,))[0] in (owner, g.user.id)]
+    # Documents belong to the workspace owner alone (uploads there are registered to them); the user's own stay in their own.
+    mine = (owner,) if kind == "source" else (owner, g.user.id)
+    return [i for i in items if owners.get(i[id_key], (None,))[0] in mine]
 
 
 def scoped_source_docs():
@@ -3552,8 +3554,8 @@ def api_upload_document():
 
     link = default_cause_link()
     owner_id, editor_id = g.user.id, None
-    if request.args.get("owner") == "workspace" and viewing_owner_id() is not None:
-        # Uploaded for the collaborator to own; the uploader keeps editing it.
+    if viewing_owner_id() is not None:
+        # Uploaded into the collaborator's workspace: they own it; the uploader keeps editing it.
         owner_id, editor_id = viewing_owner_id(), g.user.id
     storage.create_document_streaming(
         doc_id, ext.lstrip("."), chunks, owner_id=owner_id, link=link, validate=_check_pdf_stream, editor_id=editor_id,

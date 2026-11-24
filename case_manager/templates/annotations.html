@@ -44,7 +44,6 @@
         <div class="upload-form">
           <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
           <button type="button" id="imagesOpen" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images and PDF sections&hellip;</button>
-          {% if owner_view and can_create %}<label class="upload-owner" title="Who will own the uploaded document. The owner can delete it; you can edit it either way.">Owned by <select id="uploadOwner"><option value="workspace">the workspace owner</option><option value="me">me</option></select></label>{% endif %}
           <input type="file" id="uploadInput" accept=".pdf" hidden>
           <span id="uploadStatus" class="upload-status"></span>
         </div>
