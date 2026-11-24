@@ -1608,7 +1608,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   }
   function showInsertStyle(style) {
     insertStyleInputs.forEach((el) => { el.checked = el.value === style; });
-    if (!insertStyleInputs.some((el) => el.checked) && insertStyleInputs[0]) insertStyleInputs[0].checked = true;
+    if (!insertStyleInputs.some((el) => el.checked)) showInsertStyle("both"); // the default
   }
   try { showInsertStyle(localStorage.getItem(INSERT_STYLE_KEY)); } catch (e) {}
 

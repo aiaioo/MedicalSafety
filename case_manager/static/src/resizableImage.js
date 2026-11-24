@@ -47,6 +47,21 @@ export function setSnippetRefs(next, annexureHref) {
   refListeners.forEach((fn) => fn());
 }
 
+// Where a reference points: the document's annotation page, at that page. Null if unknown.
+function pageUrl(docId, page) {
+  const type = refMeta[docId] && refMeta[docId].type;
+  if (!type) return null;
+  return `/annotations?doc=${encodeURIComponent(docId)}&type=${encodeURIComponent(type)}&page=${page}`;
+}
+
+// Marks a reference element so a click on it opens the page it cites.
+function markRef(el, docId, page) {
+  el.dataset.refDoc = docId;
+  el.dataset.refPage = String(page);
+  el.title = "Open this page of the document";
+  el.classList.add("snippet-ref-clickable");
+}
+
 // Pieces of the merged text for consecutive references, mirroring the server's
 // group_ref_pieces: [{text, key?: {docId, page}}] -- a key marks a clickable piece.
 function joinAnd(n, i) {
@@ -145,10 +160,10 @@ function mergedRefWidget(run) {
       const a = document.createElement("a");
       a.textContent = text;
       a.className = "snippet-ref-link";
-      a.href = annexureUrl || "#";
+      a.href = pageUrl(key.docId, key.page) || annexureUrl || "#";
       a.target = "_blank";
       a.rel = "noopener";
-      a.title = "Open the annexure";
+      a.title = "Open this page of the document";
       dom.appendChild(a);
     });
     return dom;
@@ -173,7 +188,21 @@ export const SnippetRefGroups = Node.create({
           init: (_, state) => build(state.doc),
           apply: (tr, old) => (tr.docChanged || tr.getMeta(groupKey) ? build(tr.doc) : old),
         },
-        props: { decorations: (state) => groupKey.getState(state) },
+        props: {
+          decorations: (state) => groupKey.getState(state),
+          handleDOMEvents: {
+            // Clicking a reference's text opens the cited page in the viewer.
+            click(view, event) {
+              const el = event.target.closest && event.target.closest("[data-ref-doc]");
+              if (!el) return false;
+              const url = pageUrl(el.dataset.refDoc, el.dataset.refPage);
+              if (!url) return false;
+              event.preventDefault();
+              window.open(url, "_blank", "noopener");
+              return true;
+            },
+          },
+        },
       }),
     ];
   },
@@ -223,6 +252,8 @@ function applyWrapperAttrs(wrapper, img, attrs) {
     caption.style.display = text ? "" : "none";
     caption.textContent = text;
     caption.classList.toggle("missing", text === MISSING_REF);
+    if (text && text !== MISSING_REF) markRef(caption, source.docId, source.page);
+    else caption.classList.remove("snippet-ref-clickable");
   }
 
   const align = attrs.align || "left";
@@ -434,6 +465,8 @@ export const SnippetRef = Node.create({
         const text = source && (refs[source.docId] || {})[source.page];
         dom.textContent = text || MISSING_REF;
         dom.classList.toggle("missing", !text);
+        if (text) markRef(dom, source.docId, source.page);
+        else dom.classList.remove("snippet-ref-clickable");
       };
       render();
       views.add(render);

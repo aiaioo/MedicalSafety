@@ -1308,3 +1308,6 @@ label.toggle-label #continuousToggle:focus-visible,
 
 .card-cases-btn { margin-top: 4px; padding: 1px 8px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
 .card-cases-btn:hover { background: #f0f0f0; }
+
+.editor .tiptap-content .snippet-ref-clickable { cursor: pointer; }
+.editor .tiptap-content .snippet-ref-clickable:hover { text-decoration: underline; }

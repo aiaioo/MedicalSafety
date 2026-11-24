@@ -1649,7 +1649,7 @@ def annexure_ref_data(report_id):
         label = doc_number_label(dn, numbered) if dn["enabled"] else (d["description"] or d["title"]).strip()
         numbered += 1
         texts = refs[d["id"]] = {}
-        info = meta[d["id"]] = {"label": label, "order": numbered - 1, "numbered": number_docs, "pages": {}}
+        info = meta[d["id"]] = {"label": label, "order": numbered - 1, "numbered": number_docs, "type": d["type"], "pages": {}}
         for i, p in enumerate(pages):
             number = annexure_page_range(shown + i, shown + i, pn) if pn["position"] != "none" else "-"
             if number == "-" and pn["position"] != "none" and pn.get("alternate") and (shown + i) % 2 == 1 and i > 0:
