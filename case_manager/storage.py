@@ -1063,8 +1063,9 @@ def _heal_split_refs(cur, doc):
 
 
 def save_report(report_id: str, data: dict, owner_id: int | None = None,
-                link: tuple[str, str] | None = None) -> None:
-    """Creates or overwrites a report. When creating, pass `owner_id` and
+                link: tuple[str, str] | None = None, editor_id: int | None = None) -> None:
+    """Creates or overwrites a report. `editor_id` is the creator when the report is registered as owned by
+    someone else (a collaborator creating in the owner's workspace): they keep editing rights. When creating, pass `owner_id` and
     `link` (its first association, ("cause" | "case", id)) to record both in
     the same transaction. Associations are otherwise managed with
     link_to/unlink_from, never by a save."""
@@ -1099,6 +1100,8 @@ def save_report(report_id: str, data: dict, owner_id: int | None = None,
             )
         if owner_id is not None:
             _grant(cur, owner_id, "report", report_id, "owner")
+            if editor_id is not None and editor_id != owner_id:
+                _grant(cur, editor_id, "report", report_id, "editor")
         if link is not None:
             _link(cur, "report", report_id, *link)
 

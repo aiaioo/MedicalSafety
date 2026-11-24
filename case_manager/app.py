@@ -930,8 +930,8 @@ def in_viewed_account(kind, items, id_key="id"):
     if owner is None:
         return items
     owners = storage.owner_names(kind, [i[id_key] for i in items])
-    # Documents belong to the workspace owner alone (uploads there are registered to them); the user's own stay in their own.
-    mine = (owner,) if kind == "source" else (owner, g.user.id)
+    # Documents and reports belong to the workspace owner alone (uploads and new reports there are registered to them); the user's own stay in their own.
+    mine = (owner,) if kind in ("source", "report") else (owner, g.user.id)
     return [i for i in items if owners.get(i[id_key], (None,))[0] in mine]
 
 
@@ -4190,7 +4190,11 @@ def api_reports():
         "created_at": now,
         "updated_at": now,
     }
-    storage.save_report(report_id, data, owner_id=g.user.id, link=default_cause_link())
+    owner_id, editor_id = g.user.id, None
+    if viewing_owner_id() is not None:
+        # Created in the collaborator's workspace: they own it; the creator keeps editing it.
+        owner_id, editor_id = viewing_owner_id(), g.user.id
+    storage.save_report(report_id, data, owner_id=owner_id, link=default_cause_link(), editor_id=editor_id)
     return jsonify({"id": report_id, **data})
 
 
