@@ -44,6 +44,7 @@
         <div class="upload-form">
           <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
           <button type="button" id="imagesOpen" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images and PDF sections&hellip;</button>
+          {% if owner_view and can_create %}<label class="upload-owner" title="Who will own the uploaded document. The owner can delete it; you can edit it either way.">Owned by <select id="uploadOwner"><option value="workspace">the workspace owner</option><option value="me">me</option></select></label>{% endif %}
           <input type="file" id="uploadInput" accept=".pdf" hidden>
           <span id="uploadStatus" class="upload-status"></span>
         </div>
@@ -123,6 +124,7 @@
       <div class="menu-dropdown" id="fileMenuDropdown">
         <button type="button" id="pageSetupBtn" title="Choose paper size, margins and page numbering for downloads">Page setup&hellip;</button>
         <button type="button" id="splitDocBtn" {% if not can_split %}disabled title="Only the owner can split this document"{% elif page_count < 2 %}disabled title="A one-page document can't be split"{% else %}title="Split this document into smaller documents at page numbers you choose"{% endif %}>Split document&hellip;</button>
+        {% if can_transfer %}<button type="button" id="transferOwnerBtn" title="Make the owner of this workspace the owner of this document. This can't be undone by you.">Transfer ownership to workspace owner&hellip;</button>{% endif %}
         <hr>
         <button type="button" id="downloadBtn" title="Download the whole document with your annotations drawn on it">Download annotated PDF</button>
         <button type="button" id="downloadPagesBtn" disabled title="Download only the pages that have annotations or snippets">Download annotated pages only</button>
@@ -196,6 +198,15 @@
     </aside>
   </main>
 </div>
+{% if doc_id and can_transfer %}<script>
+document.getElementById("transferOwnerBtn").addEventListener("click", async () => {
+  if (!confirm("Make the workspace owner the owner of this document? You will keep editing access, but only the owner can delete it, and you can't transfer it back.")) return;
+  const res = await fetch({{ url_for('api_transfer_document_ownership', doc_id=doc_id) | tojson }}, { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(data.error || "Transfer failed"); return; }
+  location.reload();
+});
+</script>{% endif %}
 {% if doc_id %}<script>
 try { localStorage.setItem("lastSourceUrl", location.pathname + location.search); localStorage.setItem("lastSourceWorkspace", {{ (owner_current|string)|tojson }}); } catch (e) {}
 </script>{% endif %}

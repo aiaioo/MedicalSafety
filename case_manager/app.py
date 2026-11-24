@@ -924,12 +924,13 @@ def can_create_cases_here():
 
 def in_viewed_account(kind, items, id_key="id"):
     """In a collaborator's account, `items` (dicts of cause / case / allegation / report / document `kind`) cut down to those
-    the collaborator owns; in the user's own, as they are."""
+    the collaborator owns or the user themself created there (an uploader owns what they upload, whoever's account it
+    sits in); in the user's own, as they are."""
     owner = viewing_owner_id()
     if owner is None:
         return items
     owners = storage.owner_names(kind, [i[id_key] for i in items])
-    return [i for i in items if owners.get(i[id_key], (None,))[0] == owner]
+    return [i for i in items if owners.get(i[id_key], (None,))[0] in (owner, g.user.id)]
 
 
 def scoped_source_docs():
@@ -3061,6 +3062,8 @@ def page_view():
         doc_description=storage.get_document_description(doc_id),
         description_url=url_for("api_doc_description", doc_id=doc_id),
         can_edit=has_role("source", doc_id, "editor"),
+        can_transfer=has_role("source", doc_id, "owner") and not g.user.is_guest
+            and any(u != g.user.id for u in storage.document_cause_owner_ids(doc_id)),
         can_split=has_role("source", doc_id, "owner") and not g.user.is_guest,
         split_url=url_for("api_doc_split", doc_id=doc_id),
         splitting=storage.is_document_splitting(doc_id),
@@ -3547,8 +3550,13 @@ def api_upload_document():
     while storage.document_exists(doc_id):
         doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
 
+    link = default_cause_link()
+    owner_id, editor_id = g.user.id, None
+    if request.args.get("owner") == "workspace" and viewing_owner_id() is not None:
+        # Uploaded for the collaborator to own; the uploader keeps editing it.
+        owner_id, editor_id = viewing_owner_id(), g.user.id
     storage.create_document_streaming(
-        doc_id, ext.lstrip("."), chunks, owner_id=g.user.id, link=default_cause_link(), validate=_check_pdf_stream,
+        doc_id, ext.lstrip("."), chunks, owner_id=owner_id, link=link, validate=_check_pdf_stream, editor_id=editor_id,
     )
 
     return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
@@ -3603,6 +3611,21 @@ def api_doc_description(doc_id):
     storage.set_document_description(doc_id, description)
     log_activity("save", "source", doc_id, "Description")
     return jsonify({"description": description})
+
+
+@app.route("/api/doc/<doc_id>/transfer-ownership", methods=["POST"])
+def api_transfer_document_ownership(doc_id):
+    """Hands a document the user owns over to the owner of the workspace (cause) it sits in. One way only."""
+    check_doc_id(doc_id)
+    require_role("source", doc_id, "owner")
+    if g.user.is_guest:
+        raise DocumentError("You don't have permission to transfer this document", 403)
+    targets = [u for u in storage.document_cause_owner_ids(doc_id) if u != g.user.id]
+    if not targets:
+        raise DocumentError("This document is already in your own workspace", 400)
+    storage.transfer_document_ownership(doc_id, g.user.id, targets[0])
+    log_activity("save", "source", doc_id, "Ownership transferred to the workspace owner")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/document/<doc_id>", methods=["DELETE"])

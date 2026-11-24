@@ -313,11 +313,12 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
 
 
 def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id: int, link: tuple[str, str],
-                              validate=None) -> None:
+                              validate=None, editor_id: int | None = None) -> None:
     """Like create_document, but the bytes arrive as an iterable of chunks and are encrypted as they
     come, so the file is never held whole in memory (or on disk unencrypted). `validate`, if given,
     is called with a seekable decrypting file object once everything is stored; if it raises, the
-    stored file is removed and nothing is registered."""
+    stored file is removed and nothing is registered. `editor_id`, if given, is the uploader when the document is
+    registered as owned by someone else: they keep editing rights on it."""
     with _cursor() as cur:
         owner = _cause_owner_dir(cur, link, owner_id)
     backend = get_storage_backend()
@@ -333,10 +334,33 @@ def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id:
                 (document_id, doc_type, _enc_text(document_id), owner),
             )
             _grant(cur, owner_id, "source", document_id, "owner")
+            if editor_id is not None and editor_id != owner_id:
+                _grant(cur, editor_id, "source", document_id, "editor")
             _link(cur, "source", document_id, *link)
     except BaseException:
         backend.delete(key)
         raise
+
+
+def document_cause_owner_ids(document_id: str) -> list[int]:
+    """User ids of the owners of the causes the document sits under (directly, or through a case)."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT uc.user_id FROM user_causes uc WHERE uc.role = 'owner' AND uc.cause_id IN (
+                SELECT cause_id FROM source_causes WHERE document_id = %s
+                UNION SELECT c.cause_id FROM source_cases sc JOIN cases c ON c.id = sc.case_id WHERE sc.document_id = %s)
+            """,
+            (document_id, document_id),
+        )
+        return [r["user_id"] for r in cur.fetchall()]
+
+
+def transfer_document_ownership(document_id: str, from_user_id: int, to_user_id: int) -> None:
+    """Makes `to_user_id` the document's owner; the previous owner stays on as an editor."""
+    with _cursor() as cur:
+        _grant(cur, to_user_id, "source", document_id, "owner")
+        _grant(cur, from_user_id, "source", document_id, "editor")
 
 
 def delete_document(document_id: str) -> None:
