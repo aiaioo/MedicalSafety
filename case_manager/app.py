@@ -4174,6 +4174,25 @@ def api_delete_snippet(doc_id, snippet_id):
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/doc/<doc_id>/snippet/<snippet_id>/rect", methods=["POST"])
+def api_set_snippet_rect(doc_id, snippet_id):
+    """Resizes a snippet's crop (fractions of the page). Its image is re-rendered by the page's next
+    annotation save, which the viewer makes straight after."""
+    check_doc_id(doc_id)
+    normalize_type(request.args.get("type", "pdf"))
+    require_role("source", doc_id, "editor")
+    body = request.get_json(silent=True) or {}
+    try:
+        x, y, w, h = (float(body[k]) for k in ("x", "y", "w", "h"))
+    except (KeyError, TypeError, ValueError):
+        raise DocumentError("Body must contain numeric x, y, w, h fractions (0-1)", 400)
+    if not (0 <= x < 1 and 0 <= y < 1 and w > 0 and h > 0 and x + w <= 1.0001 and y + h <= 1.0001):
+        raise DocumentError("Invalid rectangle", 400)
+    if not storage.set_snippet_rect(doc_id, snippet_id, {"x": x, "y": y, "w": w, "h": h}):
+        raise DocumentError(f"No snippet with id {snippet_id}", 404)
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/reports", methods=["GET", "POST"])
 def api_reports():
     if request.method == "GET":

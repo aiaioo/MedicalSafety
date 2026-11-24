@@ -593,6 +593,16 @@ def replace_snippet_image(document_id: str, snippet: dict, annotated: bool, png_
         cur.execute("UPDATE snippets SET annotated = %s WHERE id = %s", (annotated, snippet["id"]))
 
 
+def set_snippet_rect(document_id: str, snippet_id: str, rect: dict) -> bool:
+    """Changes the area of the page a snippet is cut from. The image is re-rendered afterwards by the caller."""
+    with _cursor() as cur:
+        _require_unlocked(cur, document_id)
+        cur.execute(
+            "UPDATE snippets SET rect_x = %s, rect_y = %s, rect_w = %s, rect_h = %s WHERE id = %s AND document_id = %s",
+            (rect["x"], rect["y"], rect["w"], rect["h"], snippet_id, document_id))
+        return cur.rowcount > 0
+
+
 def delete_snippet(document_id: str, snippet_id: str) -> bool:
     """Refused while a report's content embeds the snippet's image (reports
     reference it by URL; save_report mirrors those URLs into report_snippets)."""

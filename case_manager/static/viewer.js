@@ -691,8 +691,9 @@
         a.y = Math.min(Math.max(o.y + dy, 0), 1 - o.h);
       } else {
         let x0 = o.x, x1 = o.x + o.w, y0 = o.y, y1 = o.y + o.h;
-        if (ed.l) x0 = Math.min(o.x + dx, x1 - 0.03);
-        if (ed.r) x1 = Math.max(o.x + o.w + dx, x0 + 0.03);
+        const minW = a.kind === "text" ? 0.03 : 0.005;
+        if (ed.l) x0 = Math.min(o.x + dx, x1 - minW);
+        if (ed.r) x1 = Math.max(o.x + o.w + dx, x0 + minW);
         if (ed.t) y0 = Math.min(o.y + dy, y1 - 0.01);
         if (ed.b) y1 = Math.max(o.y + o.h + dy, y0 + 0.01);
         x0 = Math.max(0, x0);
@@ -704,7 +705,7 @@
         a.y = y0;
         a.h = y1 - y0;
         // The box can't shrink below its text; dragging the top edge keeps the bottom anchored.
-        const need = textLayout(ctx, canvas, a, pageWidthPt(pageNum)).needH;
+        const need = a.kind === "text" ? textLayout(ctx, canvas, a, pageWidthPt(pageNum)).needH : 0;
         if (a.h < need) {
           if (ed.t && !ed.b) a.y = Math.max(0, y1 - need);
           a.h = need;
@@ -780,11 +781,13 @@
         const idx = hitTestAnnotations(canvas, state.annotations, x, y);
         selected = idx >= 0 ? { controller, index: idx } : null;
         const a = idx >= 0 ? state.annotations[idx] : null;
-        if (a && a.kind === "text") {
+        const rectEdges = a && a.kind === "rect" ? textEdgeHit(canvas, a, x * canvas.width, y * canvas.height) : null;
+        if (a && (a.kind === "text" || (rectEdges && (rectEdges.l || rectEdges.r || rectEdges.t || rectEdges.b)))) {
           canvas.setPointerCapture(e.pointerId);
           controller.drag = {
             a,
-            edges: textEdgeHit(canvas, a, x * canvas.width, y * canvas.height),
+            index: idx,
+            edges: rectEdges || textEdgeHit(canvas, a, x * canvas.width, y * canvas.height),
             startX: x,
             startY: y,
             orig: { x: a.x, y: a.y, w: a.w, h: a.h },
@@ -816,10 +819,13 @@
           const [x, y] = clientToFrac(canvas, e.clientX, e.clientY);
           const idx = hitTestAnnotations(canvas, state.annotations, x, y);
           const a = idx >= 0 ? state.annotations[idx] : null;
+          const rectEdges = a && a.kind === "rect" ? textEdgeHit(canvas, a, x * canvas.width, y * canvas.height) : null;
           canvas.style.cursor =
             a && a.kind === "text"
               ? textEdgeCursor(textEdgeHit(canvas, a, x * canvas.width, y * canvas.height))
-              : idx >= 0 ? "pointer" : "default";
+              : rectEdges && (rectEdges.l || rectEdges.r || rectEdges.t || rectEdges.b)
+                ? textEdgeCursor(rectEdges)
+                : idx >= 0 ? "pointer" : "default";
         }
         return;
       }
@@ -845,7 +851,10 @@
         const d = controller.drag;
         controller.drag = null;
         redraw();
-        if (d.moved) {
+        if (d.moved && d.a.kind === "rect") {
+          state.dirty = true;
+          resizeRectSnippet(controller, d);
+        } else if (d.moved) {
           state.dirty = true;
           saveAfterAddition(controller, "Text box saved");
         }
@@ -1268,6 +1277,45 @@
       if (snippetId) await deleteSnippet(snippetId);
       await saveAfterRemoval(controller);
     })();
+  }
+
+  // The snippet cut around a rectangle: the one made with it this session, else the one on that page whose
+  // crop is the rectangle padded as when it was made (found by position, since the link isn't stored).
+  function snippetForRect(controller, index, canvas, r) {
+    const id = controller.state.annotationSnippetIds[index];
+    if (id) return allSnippets.find((s) => s.id === id) || null;
+    const want = boundsToPaddedRect(canvas, r.x, r.y, r.x + r.w, r.y + r.h, 5);
+    let best = null;
+    let bestDiff = 0.02;
+    for (const s of allSnippets) {
+      if (s.page !== controller.pageNum) continue;
+      const diff = Math.max(Math.abs(s.rect.x - want.x), Math.abs(s.rect.y - want.y),
+        Math.abs(s.rect.w - want.w), Math.abs(s.rect.h - want.h));
+      if (diff < bestDiff) { best = s; bestDiff = diff; }
+    }
+    return best;
+  }
+
+  // A rectangle's edge was dragged: its snippet is re-cropped to the new size (the page save re-renders it).
+  async function resizeRectSnippet(controller, d) {
+    try {
+      const snippet = snippetForRect(controller, d.index, controller.canvas, d.orig);
+      if (snippet) {
+        const a = d.a;
+        const rect = boundsToPaddedRect(controller.canvas, a.x, a.y, a.x + a.w, a.y + a.h, 5);
+        const res = await fetch(snippetDeleteBase.replace("__ID__", encodeURIComponent(snippet.id)).replace("?", "/rect?"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rect),
+        });
+        // A 404 means the snippet was deleted meanwhile: the rectangle is still resized and saved.
+        if (!res.ok && res.status !== 404) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      }
+      await saveAfterAddition(controller, snippet ? "Rectangle and snippet resized" : "Rectangle resized");
+      await loadAllSnippets();
+    } catch (e) {
+      setStatus("Resize failed: " + e.message, true);
+    }
   }
 
   // Removing an annotation saves its page right away (not just on the Save
