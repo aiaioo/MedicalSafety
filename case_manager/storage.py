@@ -356,7 +356,7 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
 
 
 def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id: int, link: tuple[str, str],
-                              validate=None, editor_id: int | None = None) -> None:
+                              validate=None, editor_id: int | None = None, title: str = "") -> None:
     """Like create_document, but the bytes arrive as an iterable of chunks and are encrypted as they
     come, so the file is never held whole in memory (or on disk unencrypted). `validate`, if given,
     is called with a seekable decrypting file object once everything is stored; if it raises, the
@@ -374,7 +374,7 @@ def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id:
         with _cursor() as cur:
             cur.execute(
                 "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
-                (document_id, doc_type, _enc_text(document_id), owner),
+                (document_id, doc_type, _enc_text(title or document_id), owner),
             )
             _grant(cur, owner_id, "source", document_id, "owner")
             if editor_id is not None and editor_id != owner_id:

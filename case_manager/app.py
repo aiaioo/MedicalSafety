@@ -737,6 +737,12 @@ def _pdfium_page_sizes(f):
             doc.close()
 
 
+def new_object_id():
+    """An opaque id for a new document, report, case, cause or template. It appears in URLs, so it must
+    not be derived from anything a user typed (patient names especially)."""
+    return uuid.uuid4().hex
+
+
 def slugify_report_name(name):
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
     return slug[:50] or "document"
@@ -3548,10 +3554,8 @@ def api_upload_document():
     if norm_type is None:
         raise DocumentError(f"Unsupported file type {ext!r}. Upload a .pdf file.", 400)
 
-    stem = slugify_report_name(Path(filename).stem)
-    doc_id = stem
-    while storage.document_exists(doc_id):
-        doc_id = f"{stem}-{uuid.uuid4().hex[:6]}"
+    title = Path(filename).stem.strip()[:200]
+    doc_id = new_object_id()
 
     link = default_cause_link()
     owner_id, editor_id = g.user.id, None
@@ -3560,6 +3564,7 @@ def api_upload_document():
         owner_id, editor_id = viewing_owner_id(), g.user.id
     storage.create_document_streaming(
         doc_id, ext.lstrip("."), chunks, owner_id=owner_id, link=link, validate=_check_pdf_stream, editor_id=editor_id,
+        title=title,
     )
 
     return jsonify({"id": doc_id, "type": norm_type, "filename": f"{doc_id}{ext}"})
@@ -4057,10 +4062,15 @@ class _PdfStream:
                 self._release()
 
 
+def _download_stem(doc_id):
+    """File-name stem for a download: the document's title (the id is opaque)."""
+    return slugify_report_name(storage.get_document_title(doc_id)) or "document"
+
+
 def _annotated_pdf_response(doc_id, annotated_only):
     raw_type = request.args.get("type", "pdf")
     suffix = "annotated-pages" if annotated_only else "annotated"
-    headers = {"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{doc_id}-{suffix}.pdf"'}
+    headers = {"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{_download_stem(doc_id)}-{suffix}.pdf"'}
 
     f, _ = _open_pdf(doc_id, raw_type)
     src = None
@@ -4145,7 +4155,7 @@ def api_download_original(doc_id):
     resp.headers["Content-Length"] = str(f.seek(0, io.SEEK_END))
     f.seek(0)
     resp.headers["Cache-Control"] = "no-store"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{doc_id}.pdf"'
+    resp.headers["Content-Disposition"] = f'attachment; filename="{_download_stem(doc_id)}.pdf"'
     return resp
 
 
@@ -4216,7 +4226,7 @@ def api_reports():
         if not storage.document_exists(source_doc) or not has_role("source", source_doc, "viewer"):
             source_doc, source_type = "", "pdf"
 
-    report_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    report_id = new_object_id()
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "name": name,
@@ -4318,7 +4328,7 @@ def api_report_copy(report_id):
         "created_at": now,
         "updated_at": now,
     }
-    new_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    new_id = new_object_id()
     original = next((r for r in listed if r["id"] == report_id), None)
     links = [("cause", c) for c in (original or {}).get("cause_ids", [])]
     links += [("case", c) for c in (original or {}).get("case_ids", [])]
@@ -5338,7 +5348,7 @@ def api_allegation_cases():
     if viewing_owner_id() is None:
         storage.set_default_cause(g.user.id, cause_id)
 
-    case_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    case_id = new_object_id()
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "name": name,
@@ -5472,7 +5482,7 @@ def api_cause_title_templates():
         return jsonify(storage.list_cause_title_templates())
     require_admin()
     name, body = _cause_title_template_fields(request.get_json(silent=True) or {})
-    template_id = f"{slugify_report_name(name)}-{uuid.uuid4().hex[:6]}"
+    template_id = new_object_id()
     storage.save_cause_title_template(template_id, name, body)
     return jsonify({"id": template_id, "name": name, "body": body})
 
@@ -5541,7 +5551,7 @@ def api_causes():
     if not title:
         raise DocumentError("A cause title is required", 400)
 
-    cause_id = f"{slugify_report_name(title)}-{uuid.uuid4().hex[:6]}"
+    cause_id = new_object_id()
     now = datetime.now(timezone.utc).isoformat()
     data = {"title": title, "created_at": now, "updated_at": now}
     storage.save_cause(cause_id, data, owner_id=g.user.id)
