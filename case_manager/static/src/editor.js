@@ -922,7 +922,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     const go = () => {
       if (moved) return;
       const brk = Array.from(document.querySelectorAll(".page-break")).find((b) => parseInt(b.dataset.page, 10) === n);
-      if (brk) box.scrollTop += brk.getBoundingClientRect().top - box.getBoundingClientRect().top;
+      if (brk) brk.scrollIntoView({ block: "start" }); // works whether the container or the window scrolls
     };
     [0, 300, 800, 1600, 3000].forEach((ms) => setTimeout(go, ms));
   }

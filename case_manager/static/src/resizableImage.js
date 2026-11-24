@@ -61,7 +61,9 @@ function rememberReportPage() {
     const box = document.querySelector(".editor-container");
     let page = 1;
     if (box) {
-      const top = box.getBoundingClientRect().top;
+      // The top of what is visible: the container's own top if it scrolls inside the page, else the
+      // window's (a container that grows with the report is scrolled by the window, so its top is far above).
+      const top = Math.max(box.getBoundingClientRect().top, 0) + 60;
       document.querySelectorAll(".page-break").forEach((b) => {
         if (b.getBoundingClientRect().top <= top + 1) page = Math.max(page, parseInt(b.dataset.page, 10) || 1);
       });
