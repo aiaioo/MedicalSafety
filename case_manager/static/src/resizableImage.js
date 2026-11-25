@@ -214,6 +214,9 @@ export const SnippetRefGroups = Node.create({
             click(view, event) {
               const el = event.target.closest && event.target.closest("[data-ref-doc]");
               if (!el) return false;
+              // In an editable report a click on the image selects it (resize, align,
+              // delete, drag); only viewers get the image as a link.
+              if (el.tagName === "IMG" && view.editable) return false;
               const url = pageUrl(el.dataset.refDoc, el.dataset.refPage);
               if (!url) return false;
               event.preventDefault();
@@ -266,6 +269,15 @@ function applyWrapperAttrs(wrapper, img, attrs) {
   wrapper.classList.toggle("img-wrap-ref-only", style === "reference");
   // Whole annexed pages sit side by side, as many as fit a line.
   wrapper.classList.toggle("img-wrap-page", /\/p\d+_page\.png$/.test((attrs.src || "").split("?")[0]));
+  if (source && style !== "reference") {
+    img.dataset.refDoc = source.docId;
+    img.dataset.refPage = String(source.page);
+    img.title = "Open this page of the document";
+  } else {
+    delete img.dataset.refDoc;
+    delete img.dataset.refPage;
+    img.removeAttribute("title");
+  }
   const caption = wrapper.querySelector(".snippet-ref");
   if (caption) {
     const text = style === "image" ? "" : (refs[source.docId] || {})[source.page] || MISSING_REF;

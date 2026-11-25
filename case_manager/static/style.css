@@ -1062,7 +1062,7 @@ a.cause-static { text-decoration: none; color: inherit; }
 .editor .tiptap-content .snippet-ref-inline.missing { color: #a33; }
 .editor .tiptap-content .snippet-ref-inline.ProseMirror-selectednode { outline: 2px solid #2266dd; }
 .editor .tiptap-content .snippet-ref-hidden { display: none; }
-.editor .tiptap-content .snippet-ref-group a.snippet-ref-link { color: inherit; text-decoration: underline; cursor: pointer; }
+.editor .tiptap-content .snippet-ref-group a.snippet-ref-link { color: #1a56c4; text-decoration: underline; cursor: pointer; }
 
 .annexed-docs { display: flex; flex-direction: column; gap: 10px; }
 .annexed-doc { border: 1px solid #e0e2e8; border-radius: 6px; padding: 6px 8px; }
@@ -1315,5 +1315,9 @@ label.toggle-label #continuousToggle:focus-visible,
 .card-cases-btn { margin-top: 4px; padding: 1px 8px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
 .card-cases-btn:hover { background: #f0f0f0; }
 
-.editor .tiptap-content .snippet-ref-clickable { cursor: pointer; }
-.editor .tiptap-content .snippet-ref-clickable:hover { text-decoration: underline; }
+/* Viewers: the snippet image itself opens the page it comes from. */
+#docApp.report-readonly .tiptap-content img.doc-snippet[data-ref-doc] { cursor: pointer; }
+
+/* References that open the cited page look like links (on screen only; exports are unaffected). */
+.editor .tiptap-content .snippet-ref-clickable { cursor: pointer; color: #1a56c4; text-decoration: underline; }
+.editor .tiptap-content .snippet-ref-clickable:hover { color: #0f3d94; }
