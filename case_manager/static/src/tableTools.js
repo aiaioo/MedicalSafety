@@ -204,6 +204,7 @@ export const TableRowResize = Extension.create({
           },
           handleDOMEvents: {
             mousemove(view, e) {
+              if (!view.editable) return false;
               if (!drag) view.dom.classList.toggle("row-resize-cursor", !!rowBoundaryHit(view, e));
               return false;
             },
@@ -212,6 +213,7 @@ export const TableRowResize = Extension.create({
               return false;
             },
             mousedown(view, e) {
+              if (!view.editable) return false;
               const trEl = rowBoundaryHit(view, e);
               const pos = trEl && rowPosFromDom(view, trEl);
               if (pos == null) return false;
