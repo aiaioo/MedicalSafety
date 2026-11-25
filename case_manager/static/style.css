@@ -1315,6 +1315,9 @@ label.toggle-label #continuousToggle:focus-visible,
 .card-cases-btn { margin-top: 4px; padding: 1px 8px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
 .card-cases-btn:hover { background: #f0f0f0; }
 
+/* The hidden Annexures link carried the auto margin that pushes the right-hand links over. */
+#docApp.report-readonly #lastSourceLink { margin-left: auto; }
+
 /* Viewers: the snippet image itself opens the page it comes from. */
 #docApp.report-readonly .tiptap-content img.doc-snippet[data-ref-doc] { cursor: pointer; }
 
