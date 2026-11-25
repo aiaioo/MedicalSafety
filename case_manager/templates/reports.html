@@ -31,7 +31,7 @@
   <header class="docbar">
     <a class="home-link docbar-lead" href="{{ url_for('index') }}" title="Home"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/><path d="M6.5 14v-4h3v4"/></svg></a>
     {% if report_id %}
-    <a class="btn docbar-lead" href="{{ url_for('documents_view', owner=owner_link_id) if owner_link_id else url_for('documents_view') }}">Reports</a>
+    <a class="btn docbar-lead ro-hide" href="{{ url_for('documents_view', owner=owner_link_id) if owner_link_id else url_for('documents_view') }}">Reports</a>
     {% else %}
     {% if g.user.show_advanced %}<a class="btn docbar-lead" href="{{ url_for('allegations_view') }}">Allegations</a>{% endif %}
     {% endif %}
@@ -46,8 +46,8 @@
     {% endif %}
 
     {% if report_id %}
-    <a class="btn" id="annexureLink" style="margin-left: auto;" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Annexures &raquo;</a>
-    <a class="btn" href="{{ url_for('page_view') }}">Documents</a>
+    <a class="btn ro-hide" id="annexureLink" style="margin-left: auto;" href="{{ url_for('annexures_view') }}?annexure={{ report_id }}">Annexures &raquo;</a>
+    <a class="btn ro-hide" href="{{ url_for('page_view') }}">Documents</a>
     {% else %}
     {% set owner_auto = true %}{% include "_owner_picker.html" %}
     <a class="btn"{% if not owner_choices %} style="margin-left: auto;"{% endif %} href="{{ url_for('page_view') }}">Documents</a>
@@ -213,7 +213,7 @@
     </div>
     {% if report_id %}
     <aside class="sidebar">
-      <div class="source-picker">
+      <div class="source-picker ro-hide">
         <div class="source-group">
         <label class="jump">Insert from
           <select id="sourceSelect">
@@ -234,6 +234,7 @@
       <div id="reportAnnexedDocs" class="annexed-docs">
         <p class="empty">No documents are annexed yet.</p>
       </div>
+      <div class="ro-hide">
       <h3 class="annex-section-divider">Snippet style</h3>
       <details class="annex-collapse">
         <summary>Snippet style settings</summary>
@@ -300,6 +301,7 @@
         <p class="empty" style="margin: 0">Pages before the start page are left unnumbered; numbering then restarts at 1 there. With "Number alternate pages", only the front (recto) of each sheet is numbered (PDF and preview; Word files number every page). Shown in the page preview and included in exported PDF/Word files. In Word files a circle comes out as a box.</p>
       </div>
       </details>
+      </div>
     </aside>
     {% endif %}
   </main>

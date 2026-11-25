@@ -978,6 +978,11 @@ a.cause-static { text-decoration: none; color: inherit; }
 #docApp.report-readonly #saveBtn,
 #docApp.report-readonly #saveStatus { display: none; }
 
+/* Anything marked ro-hide is an editing control or setting: not shown to viewers. */
+#docApp.report-readonly .resize-handle,
+#docApp.report-readonly .ro-hide,
+#app.annex-readonly .ro-hide { display: none !important; }
+
 /* Annotations page for viewers: no editing controls, no snippet Delete. */
 #app.doc-readonly .del-snippet,
 #app.doc-readonly #saveBtn,
