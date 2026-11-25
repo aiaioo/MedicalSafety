@@ -981,6 +981,7 @@ a.cause-static { text-decoration: none; color: inherit; }
 /* Anything marked ro-hide is an editing control or setting: not shown to viewers. */
 #docApp.report-readonly .resize-handle,
 #docApp.report-readonly .ro-hide,
+#docApp.report-readonly .sidebar-grip,
 #app.annex-readonly .ro-hide,
 #app.doc-readonly .ro-hide { display: none !important; }
 
