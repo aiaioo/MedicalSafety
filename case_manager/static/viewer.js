@@ -67,7 +67,8 @@
   };
 
   let mode = null; // null = idle/select mode; otherwise "rect" | "freehand" | "snippet" | "text" | "blackout"
-  let continuousMode = localStorage.getItem(CONTINUOUS_PREF_KEY) === "1";
+  // On unless the person has switched it off before.
+  let continuousMode = localStorage.getItem(CONTINUOUS_PREF_KEY) !== "0";
   let currentPage = initialPage; // "active" page: scrollspy-tracked in continuous mode
   let selected = null; // { controller, index } | null
   let allSnippets = [];
