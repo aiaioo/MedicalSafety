@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS analysis_timeline (
     case_key                text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS analysis_timeline_court ON analysis_timeline (court, id);
+CREATE INDEX IF NOT EXISTS analysis_timeline_case ON analysis_timeline (case_key);  -- a case page reads its own rows' texts
 
 -- enquiries.json: everything about each enquiry/case, as the analysis built it
 CREATE TABLE IF NOT EXISTS analysis_enquiries (

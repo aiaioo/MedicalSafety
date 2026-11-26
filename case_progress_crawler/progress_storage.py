@@ -205,6 +205,27 @@ def load_case_documents(name, courts=None, case_keys=None):
         return {r["case_key"]: r["doc"] for r in cur.fetchall()}
 
 
+def load_status_summaries(courts=None, case_keys=None):
+    """{case key: status document} cut down to what the analyses and the viewer read of it -- caseStage, caseFilingDate,
+    filedInComissionName and, of each entry of caseHearingDetails, dateOfHearing, proceedingText and caseStage -- for
+    the cases of the analysed `courts`, or of `case_keys`. The whole documents are several times the size."""
+    where, value = (("case_key = ANY(%s)", list(case_keys)) if case_keys is not None else
+                    ("case_key IN (SELECT case_key FROM analysis_status WHERE court = ANY(%s))", list(courts)))
+    with _db() as cur:
+        cur.execute(f"""
+            SELECT case_key, jsonb_build_object(
+                'caseStage', doc->'caseStage', 'caseFilingDate', doc->'caseFilingDate',
+                'filedInComissionName', doc->'filedInComissionName',
+                'caseHearingDetails', (
+                    SELECT jsonb_agg(jsonb_build_object('dateOfHearing', h->'dateOfHearing',
+                                     'proceedingText', h->'proceedingText', 'caseStage', h->'caseStage') ORDER BY n)
+                    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(doc->'caseHearingDetails') = 'array'
+                                                   THEN doc->'caseHearingDetails' ELSE '[]'::jsonb END)
+                         WITH ORDINALITY AS e(h, n))) AS doc
+            FROM case_documents WHERE name = 'status.json' AND {where}""", (value,))
+        return {r["case_key"]: r["doc"] for r in cur.fetchall()}
+
+
 def save_case_document_version(case_key, name, stamp, doc):
     """Keep an earlier copy of a document that has changed (stamp: when it was replaced)."""
     with _db() as cur:
@@ -423,16 +444,12 @@ def state_of_case(case_key):
         return row["state"] if row else None
 
 
-def state_version(courts):
-    """Something that changes whenever these courts' analysis is replaced or a status / history document of one of their
-    cases is added or changed, for caches: it looks at those courts' cases only, so another state's crawl changes nothing."""
+def analysis_stamp(courts):
+    """Something that changes whenever any of these courts' analysis is replaced, for caches: it looks at those courts
+    only, so another state's analysis changes nothing."""
     with _db() as cur:
         cur.execute("SELECT string_agg(court || '=' || run_at::text, ',' ORDER BY court) AS runs FROM analysis_runs WHERE court = ANY(%s)", (list(courts),))
-        runs = cur.fetchone()["runs"]
-        cur.execute("SELECT count(*) AS n, max(d.saved_at)::text AS latest FROM case_documents d WHERE d.name IN ('status.json', 'history.json') "
-                    "AND d.case_key IN (SELECT case_key FROM analysis_status WHERE court = ANY(%s))", (list(courts),))
-        row = cur.fetchone()
-        return (runs, row["n"], row["latest"])
+        return cur.fetchone()["runs"]
 
 
 def count_label(courts, label):
@@ -457,15 +474,26 @@ def analysis_version(court):
         return row["run_at"] if row else None
 
 
-def load_analysis(court):
+def load_analysis(court, texts=True):
     """{"status": [row dict], "parties": [...], "advocates": [...], "timeline": [...]} for a court, rows in the
-    order they were written, keyed by the column names of ANALYSIS_TABLES (all values strings)."""
+    order they were written, keyed by the column names of ANALYSIS_TABLES (all values strings). With texts=False
+    the timeline rows come without raw_text, the longest column (see timeline_texts)."""
     out = {}
     with _db() as cur:
         for table, columns in ANALYSIS_TABLES.items():
+            columns = [c for c in columns if texts or c != "raw_text"]
             cur.execute(f"SELECT {', '.join(columns)} FROM analysis_{table} WHERE court = %s ORDER BY id", (court,))
             out[table] = list(cur.fetchall())
     return out
+
+
+def timeline_texts(case_keys):
+    """The timeline rows of these cases with their raw_text, in the order written: [{"court", "case_key", "hearing_date",
+    "hearing_time", "list", "purpose_text", "outcome_text", "raw_text"}]."""
+    with _db() as cur:
+        cur.execute("SELECT court, case_key, hearing_date, hearing_time, list, purpose_text, outcome_text, raw_text "
+                    "FROM analysis_timeline WHERE case_key = ANY(%s) ORDER BY id", (list(case_keys),))
+        return list(cur.fetchall())
 
 
 def load_enquiries(court):

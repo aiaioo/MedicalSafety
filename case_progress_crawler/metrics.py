@@ -171,6 +171,7 @@ def rebuild():
     today = datetime.date.today().isoformat()
     case_rows, hearing_rows, courts = [], [], []
     viewer.USE_STORED_METRICS = False  # work every figure out afresh, never from the rows being replaced
+    viewer.KEEP_TEXTS = True  # hearing_labels() reads each hearing's record
     try:
         for state in storage.analysis_states():  # one state's cases in memory at a time
             with viewer.in_state(state):
@@ -181,6 +182,7 @@ def rebuild():
             viewer._cache.clear()
     finally:
         viewer.USE_STORED_METRICS = True
+        viewer.KEEP_TEXTS = False
     storage.replace_metrics(case_rows, hearing_rows, courts)
     return len(case_rows), len(hearing_rows)
 

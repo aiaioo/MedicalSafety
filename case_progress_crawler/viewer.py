@@ -40,6 +40,7 @@ import datetime
 from collections import OrderedDict
 import re
 import statistics
+import sys
 import threading
 import time
 from html import unescape
@@ -81,8 +82,10 @@ PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
-_cache = OrderedDict()  # (state, selection) -> {"mtimes", "data"}: the most recently used few; a state not asked for is not held
-MAX_CACHED = 6
+_cache = OrderedDict()  # state -> {"version", "data", "selections"}: the most recently used few; a state not asked for is not held
+MAX_CACHED = 6  # states
+_load_lock = threading.RLock()  # one load at a time: two at once would need twice the memory
+KEEP_TEXTS = False  # hold each hearing's long texts too (metrics.py works from them); otherwise a page reads them when shown
 load_observer = lambda label: contextlib.nullcontext()  # `with load_observer(label):` wraps each (re)load; the case manager sets it to log memory
 USE_STORED_METRICS = True  # load() takes each consumer case's outcome, gaps and adjournments from the stored metrics (metrics.py) when they are recent; metrics.py itself turns this off
 # Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name. Keys are
@@ -344,6 +347,50 @@ def court_ids(sel, st=None):
 BLANK_HEARING = {"hearing_time": "", "list": "", "held": "", "purpose_tags": "", "purpose_text": "", "outcome_text": "",
                  "next_date": "", "next_sitting": "", "prev_sitting": "", "postponed_from": "", "raw_text": "",
                  "next_stage_tags": "", "cross_examination_of": ""}
+
+
+TEXT_FIELDS = ("raw_text", "record")  # a hearing's long texts: as printed on the cause list, and the court's record
+EXCERPT = 106  # characters of the record the hearings list needs: more than its truncate(100) looks at
+SHORT = 80  # strings shorter than this repeat from hearing to hearing: one copy of each is held
+
+
+def compact_hearing(h):
+    """A hearing as it is held: without its long texts (with_texts() reads them back), keeping the start of the court's
+    record, and sharing its short strings with other hearings."""
+    share = lambda d: {k: sys.intern(v) if type(v) is str and len(v) < SHORT else v for k, v in d.items() if k not in TEXT_FIELDS}
+    out = share(h)
+    if out.get("history"):
+        out["history"] = share(out["history"])
+    out["record_excerpt"] = (h.get("record") or "")[:EXCERPT]
+    return out
+
+
+def with_texts(entries):
+    """[(case, hearing)] with each hearing a copy that has its long texts ("raw_text", "record"), read from the database
+    for just these cases."""
+    keys = sorted({c["case_key"] for c, _ in entries})
+    if not keys:
+        return []
+    records = {k: proceedings_of(doc) for k, doc in storage.load_status_summaries(case_keys=keys).items()}
+    printed = defaultdict(list)  # what identifies a cause-list hearing -> the texts of the rows that match, in order
+    for r in storage.timeline_texts(keys):
+        r["hearing_date"] = ist_date(r["hearing_date"])
+        printed[_row_key(r["court"], r["case_key"], r)].append(r["raw_text"])
+    used, out = Counter(), []
+    for c, h in entries:
+        texts, raw = [], ""
+        if not (h.get("from_history") or h.get("from_order")):
+            key = _row_key(c["court"], c["case_key"], h)
+            texts = printed.get(key) or []
+            if texts:
+                raw = texts[min(used[key], len(texts) - 1)]
+                used[key] += 1
+        out.append((c, {**h, "raw_text": raw, "record": records.get(c["case_key"], {}).get(h["hearing_date"], "")}))
+    return out
+
+
+def _row_key(court, case_key, h):
+    return (court, case_key, h["hearing_date"], h["hearing_time"], h["list"], h["purpose_text"], h["outcome_text"])
 
 
 def history_of(raw):
@@ -620,33 +667,59 @@ def panel_stats(st, sel, year, non_medical):
 
 
 def load(sel=None, st=None, refresh=False):
-    """The analysed data of a court selection of a state (default: this request's). It reads that state's courts and their
-    cases' documents only. It is kept until the analysis changes, the most recently used MAX_CACHED selections at most; once
-    the background refresher is running (warm_cache) only it reloads, and a visitor is given the data already loaded
-    (refresh=True is the refresher)."""
+    """The analysed data of a court selection of a state (default: this request's). A state's cases are read once, for all
+    its courts, and a narrower selection is drawn from them. The data is kept until the analysis changes, for the most
+    recently used MAX_CACHED states at most; once the background refresher is running (warm_cache) only it reloads, and a
+    visitor is given the data already loaded. refresh=True reloads it now if the analysis has changed."""
     st = st or state()
     sel = sel or selection()
-    ids = court_ids(sel, st)
-    ckey = (st, sel)
-    mtimes = None if _refresher_running and not refresh and ckey in _cache else storage.state_version(ids)
-    if ckey in _cache and (mtimes is None or _cache[ckey]["mtimes"] == mtimes):
-        _cache.move_to_end(ckey)
-        return _cache[ckey]["data"]
+    entry = _cache.get(st)
+    if entry is None or refresh or not _refresher_running:
+        entry = _current(st)
+    else:
+        with contextlib.suppress(KeyError):  # dropped for a reload just now: `entry` still has the data
+            _cache.move_to_end(st)
+    if sel == "all":
+        return entry["data"]
+    data = entry["selections"].get(sel)
+    if data is None:  # the same case objects, indexed for these courts only
+        ids = court_ids(sel, st)
+        data = entry["selections"][sel] = _indexed([c for c in entry["data"]["ordered"] if c["court"] in ids])
+    return data
 
-    with load_observer(f"tracker load state={st} courts={sel} refresh={refresh} held={len(_cache)}"):
-        return _read(st, ids, ckey, mtimes)
+
+def _current(st):
+    """The cache entry of state `st`, read (again) if it is not held or its analysis has changed."""
+    ids = courts_of(st)
+    entry = _cache.get(st)
+    if entry is not None and entry["version"] == storage.analysis_stamp(ids):
+        return entry
+    with _load_lock:
+        version = storage.analysis_stamp(ids)
+        entry = _cache.get(st)
+        if entry is None or entry["version"] != version:
+            _cache.pop(st, None)  # let go of the old data before reading the new: a visitor wanting it meanwhile waits
+            for key in [k for k in list(_memo) if k[0] == st]:  # the analytics tables worked out from it hold it too
+                _memo.pop(key, None)
+            entry = None
+            with load_observer(f"tracker load state={st} held={len(_cache)}"):
+                data = _read(st, ids)
+            entry = _cache[st] = {"version": version, "data": data, "selections": {}}
+            while len(_cache) > MAX_CACHED:
+                _cache.popitem(last=False)
+        return entry
 
 
-def _read(st, ids, ckey, mtimes):
-    """Build the data of the courts `ids` of state `st` (see load()) and hold it in the cache under `ckey`."""
+def _read(st, ids):
+    """Every case of the courts `ids` of state `st`, built and indexed (see _indexed)."""
     parties = defaultdict(list)
     advocate_rows = defaultdict(list)
     hearings = defaultdict(list)
     status_rows = []  # case keys are distinct across courts
-    histories, statuses = storage.load_case_documents("history.json", ids), storage.load_case_documents("status.json", ids)
+    histories, statuses = storage.load_case_documents("history.json", ids), storage.load_status_summaries(ids)
     stored = {c: storage.stored_case_metrics(c) for c in ids if kind_of(c) == "consumer"} if USE_STORED_METRICS else {}  # the medical councils are small, and their outcome rests on later steps
     for c in ids:
-        analysis = storage.load_analysis(c)
+        analysis = storage.load_analysis(c, texts=KEEP_TEXTS)
         for r in analysis["parties"]:
             parties[r["case_key"]].append(r)
         for r in analysis["advocates"]:
@@ -693,11 +766,14 @@ def _read(st, ids, ckey, mtimes):
             filing_date = dates[0] if dates else ""
             end_date = r.get("status_since") or (dates[-1] if len(dates) > 1 else "")
         commission = ((statuses.get(key) or {}).get("filedInComissionName") or "").strip() if kind_of(r["court"]) == "consumer" else ""
+        dismissal_text = dismissal_reason_from(hs) if outcome == "dismissed" else None  # while the texts are at hand
+        if not KEEP_TEXTS:
+            hs = [compact_hearing(h) for h in hs]
         cases[key] = {**r, "outcome": outcome, "commission": commission_label(commission) if kind_of(r["court"]) == "consumer" else "", "filing_date": filing_date, "n_held": 0 if r["court"] in REGISTER_COURTS else len(held_dates),
                       "days_to_close": days_to_close(filing_date, end_date, outcome), "hospitals": hospitals, "provider_hospitals": provider_hospitals, "provider_side": provider,
                       "gaps": gaps, "adjournments": adjourned, "advocate_info": case_advocates(advocate_rows[key]), "kind": kind, "seq": seq, "year": year,
                       "complainants": names("complainant"), "respondents": names("respondent"),
-                      "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else ""}
+                      "hearings": hs, "last_hearing": hs[0]["hearing_date"] if hs else "", "dismissal_by_hearing": dismissal_text}
     for c in cases.values():  # whom each side's lawyers act for, worked out once (represents() is called a great many times)
         c["party_of"] = {role: MATCHER.party_of(c["complainants"], c["respondents"], role) for role in ("complainant", "respondent")}
     slug_uses = defaultdict(int)
@@ -708,7 +784,16 @@ def _read(st, ids, ckey, mtimes):
     for c in cases.values():
         c["hospitals"] = {slug_map[slug]: n for slug, n in c["hospitals"].items()}
         c["provider_hospitals"] = {slug_map.get(slug, slug): n for slug, n in c["provider_hospitals"].items()}
-    ordered = sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True)
+    for c in cases.values():
+        c["advocate_links"] = {role: sorted(((slug, advocate_display(a["names"])) for slug, a in c["advocate_info"].items()
+                                             if role in a["roles"] and slug), key=lambda x: x[1].lower())
+                               for role in ("complainant", "respondent")}
+        c["advocates"] = {role: [n for _, n in links] for role, links in c["advocate_links"].items()}
+    return _indexed(sorted(cases.values(), key=lambda c: (c["year"], c["seq"], c["kind"]), reverse=True))
+
+
+def _indexed(ordered):
+    """The data of a set of cases, in list order: them by key, and by hearing date, hospital and advocate."""
     by_date = defaultdict(list)  # hearing date -> [(case, hearing)], cases in list order
     for c in ordered:
         for h in c["hearings"]:
@@ -728,46 +813,42 @@ def _read(st, ids, ckey, mtimes):
                 adv["names"][n] += k
             adv["cases"].append(c)
             adv["sides"][c["case_key"]] = sorted(a["roles"])
-        c["advocate_links"] = {role: sorted(((slug, advocate_display(a["names"])) for slug, a in c["advocate_info"].items()
-                                             if role in a["roles"] and slug), key=lambda x: x[1].lower())
-                               for role in ("complainant", "respondent")}
-        c["advocates"] = {role: [n for _, n in links] for role, links in c["advocate_links"].items()}
     advocates = {s: {"slug": s, "name": advocate_display(a["names"]), "cases": a["cases"], "sides": a["sides"]}
                  for s, a in advocates.items() if s}
-    data = {"cases": cases, "hospitals": hospitals, "advocates": advocates, "ordered": ordered, "by_date": by_date,
-            "years": sorted({c["year"] for c in ordered if c["year"] >= MIN_YEAR}, reverse=True),
+    return {"cases": {c["case_key"]: c for c in ordered}, "hospitals": hospitals, "advocates": advocates, "ordered": ordered,
+            "by_date": by_date, "years": sorted({c["year"] for c in ordered if c["year"] >= MIN_YEAR}, reverse=True),
             "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
-    _cache[ckey] = {"mtimes": mtimes, "data": data}
-    _cache.move_to_end(ckey)
-    while len(_cache) > MAX_CACHED:
-        _cache.popitem(last=False)
-    return data
 
 
 REFRESH_EVERY = 60  # seconds between looks for newly analysed data
+SETTLE = 600  # seconds a new analysis must stand unchanged before it is read: the crawl replaces several in turn
 
 
 def warm_cache():
-    """Start the background refresher: it loads the default state's data, then looks every minute at what is held (the few
-    most recently used states' selections) for newly analysed data -- the daily crawl, or an analysis run by hand -- and
-    reloads that, so no visitor waits for it. The analytics pages need none of this: their tables are stored (see
-    dashboard_stats.py). Until the first load finishes a request loads what it needs itself."""
+    """Start the background refresher: it loads each state's data, the default state's first, then looks every minute at
+    the states held for a new analysis -- the daily crawl's, or one run by hand -- and reloads a state SETTLE seconds
+    after its analysis last changed, so once for a whole crawl. Changes to case documents alone reload nothing. The
+    analytics pages need none of this: their tables are stored (see dashboard_stats.py). Until the first load finishes a
+    request loads what it needs itself."""
     def run():
         global _refresher_running
         started = False
+        changed = {}  # state -> (the new version of its analysis, when it was first seen)
         while True:
             try:
                 if not started:
-                    for sel in [DEFAULT_SELECTION] + [x for x in SELECTIONS if x != DEFAULT_SELECTION]:
-                        load(sel, default_state(), refresh=True)
-                    for st in states():  # the other states' full lists too, so a visitor choosing one does not wait for it
-                        if st != default_state():
-                            load(DEFAULT_SELECTION, st, refresh=True)
+                    for st in sorted(states(), key=lambda s: s != default_state()):
+                        load("all", st, refresh=True)
                     started = _refresher_running = True
-                for st, sel in list(_cache):
-                    entry = _cache.get((st, sel))
-                    if entry and storage.state_version(court_ids(sel, st)) != entry["mtimes"]:
-                        load(sel, st, refresh=True)
+                for st, entry in list(_cache.items()):
+                    version = storage.analysis_stamp(courts_of(st))
+                    if version == entry["version"]:
+                        changed.pop(st, None)
+                    elif changed.get(st, (None,))[0] != version:
+                        changed[st] = version, time.monotonic()
+                    elif time.monotonic() - changed[st][1] >= SETTLE:
+                        changed.pop(st)
+                        load("all", st, refresh=True)
             except Exception as e:  # a request will hit and report the same problem
                 print(f"case tracker: refreshing failed: {e!r}")
             time.sleep(REFRESH_EVERY)
@@ -1013,7 +1094,8 @@ def case_prefill(number, with_court=True):
             court = (CONSUMER_COMMISSION_NAMES.get(commission.upper())
                      or f"{commission} District Consumer Disputes Redressal Commission")
     days = {}  # a day can have more than one list entry: they become one hearing
-    for h in sorted(c["hearings"], key=lambda h: (h["hearing_date"], h["hearing_time"])):
+    read = [h for _, h in with_texts([(c, h) for h in c["hearings"]])]
+    for h in sorted(read, key=lambda h: (h["hearing_date"], h["hearing_time"])):
         if not h["hearing_date"]:
             continue
         text = [x for x in (h.get("outcome_text"), h.get("record")) if x]
@@ -1258,7 +1340,12 @@ def dismissal_reason_of(c):
     j = judgement_of(c["case_key"])
     if j and j["reason"] and j["reason"] != "other":
         return j["reason"]
-    last = c["hearings"][0] if c["hearings"] else {}
+    return c["dismissal_by_hearing"]
+
+
+def dismissal_reason_from(hearings):
+    """The reason for a dismissal that the record of the last hearing (newest first) gives, or "other"."""
+    last = hearings[0] if hearings else {}
     text = f"{last.get('record') or ''} {last.get('outcome_text') or ''}"
     return dismissal_reason(text) if text.strip() else "other"
 
@@ -1499,7 +1586,7 @@ def day(date):
         datetime.date.fromisoformat(date)
     except ValueError:
         abort(404)
-    entries = [(c, h) for c, h in load()["by_date"].get(date, []) if visible(c)]  # a future next date has no hearings yet
+    entries = with_texts([(c, h) for c, h in load()["by_date"].get(date, []) if visible(c)])  # a future next date has no hearings yet
     return render_template("case_tracker/day.html", date=date, entries=entries,
                            pdfs=pdfs_for_date(date) if PDF_COURT in court_ids(selection()) else [])
 
@@ -1672,8 +1759,9 @@ def case(case_key):
     # dated on a day absent from both still gets an entry of its own (from_order).
     orders = orders_of(case_key)
     known = {h["hearing_date"] for h in c["hearings"]}
-    hearings = c["hearings"] + [{**BLANK_HEARING, "hearing_date": d, "history": None, "record": "", "from_order": True}
-                                for d in orders if d not in known]
+    hearings = [h for _, h in with_texts([(c, h) for h in c["hearings"]])]
+    hearings += [{**BLANK_HEARING, "hearing_date": d, "history": None, "record": "", "from_order": True}
+                 for d in orders if d not in known]
     hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)
     return render_template("case_tracker/case.html", c=c, hearings=hearings, links=court_links().get(case_key, []), orders=orders)
 
