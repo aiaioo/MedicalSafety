@@ -1955,10 +1955,10 @@ def _as_this_user(load):
     drawing annotations depends on that (a Share-link visitor's blackouts remove what is under them)."""
     app_object, user = current_app._get_current_object(), g.user
 
-    def run(*args):
+    def run(*args, **kwargs):
         with app_object.app_context():
             g.user = user
-            return load(*args)
+            return load(*args, **kwargs)
     return run
 
 
@@ -4861,215 +4861,18 @@ def _displayed_size(page):
     return (h, w) if int(page.obj.get("/Rotate", 0)) % 180 else (w, h)
 
 
-def _append_annexure(out, payload, opened):
-    """Appends the annexure's pages to the pikepdf document `out` -- annotations burned in, page and document
-    numbers stamped, the List of Documents in front -- and returns how many List of Documents pages it added.
-    Pages are copied straight from each source (opened lazily from its decrypting reader), so only the pages
-    the annexure includes are ever in memory, never whole source documents. Every pikepdf object and file it
-    opens goes on `opened`, for the caller to close once `out` is saved. Raises _NeedWholeDocument if qpdf
-    cannot open a source."""
+ANNEXURE_SEGMENT = 10  # annexure pages put together, written out and let go of at a time; their source is then reopened
+
+
+def _annexure_plan(payload):
+    """(plan, spans) for the annexure, with every source opened once to check access and count its pages. `plan` has one
+    entry per page, [(document id or None for an empty page, 1-based source page, annotations to burn in, (width,
+    height), document number if it is a document's first page, whether the page is one that gets numbers)]; `spans`
+    [(document, first, last index in the plan)] one per document with pages. Raises _NeedWholeDocument if qpdf can't
+    open a source."""
     import pikepdf
     mode = guest_annotation_mode(payload["annotations"])
-    base = len(out.pages)
-    first_pages = []  # index among the annexure's pages of each document's first page
-    spans = []  # (document, first, last index among the annexure's pages) of each document with pages
-    for d in payload["documents"]:
-        f, _ = _open_pdf(d["id"], d["type"])
-        try:
-            src = pikepdf.open(f)
-        except Exception as exc:
-            f.close()
-            raise _NeedWholeDocument() from exc
-        opened.extend([src, f])
-        pages = annexure_selected_pages(d, len(src.pages))
-        to_draw = {}
-        if mode != "none" and pages:
-            for n, raw_anns in storage.get_all_annotations(d["id"]).items():
-                if n.isdigit():
-                    drawn = annexure_annotations_to_draw(raw_anns, mode)
-                    if drawn:
-                        to_draw[int(n)] = drawn
-        if pages:
-            here = len(out.pages) - base
-            first_pages.append(here)
-            spans.append((d, here, here + len(pages) - 1))
-        for p in pages:
-            if p in to_draw:
-                one = _annotated_single_page(src, p - 1, to_draw[p])
-                opened.append(one)
-                out.pages.append(one.pages[0])
-            else:
-                out.pages.append(src.pages[p - 1])
-        if pages and annexure_doc_padding(len(pages), payload["pageNumbers"]):
-            w, h = _displayed_size(out.pages[-1])
-            out.add_blank_page(page_size=(w, h))
-
-    pn, dn = payload["pageNumbers"], payload["docNumbers"]
-    band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
-    count = len(out.pages) - base
-    stamped = set()
-    if pn["position"] != "none":
-        stamped |= {i for i in range(pn["skip"], count) if page_number_label(i, pn) is not None}
-    if dn["enabled"]:
-        stamped |= set(first_pages)
-    if stamped:
-        # The numbers are drawn on blank pages the size of the pages they belong to (by the same code as
-        # always), then laid over those pages: their own content is never rewritten, and what they share
-        # (fonts, images) stays shared.
-        with fitz.open() as ov:
-            for i in range(count):
-                w, h = _displayed_size(out.pages[base + i])
-                ov.new_page(width=w, height=h)
-            stamp_page_numbers(ov, pn, band)
-            stamp_doc_numbers(ov, dn, pn, band, first_pages)
-            overlay = pikepdf.open(io.BytesIO(ov.tobytes(garbage=4, deflate=True)))  # duplicate fonts merged
-        opened.append(overlay)
-        for i in sorted(stamped):
-            out.pages[base + i].add_overlay(overlay.pages[i])
-
-    front = 0
-    if payload["listOfDocuments"]["enabled"]:
-        # Added after the stamping, so its pages stay unnumbered and the annexure's numbering is unchanged.
-        rows = []
-        for n, (d, first, last) in enumerate(spans):
-            text = (d["description"] or d["title"]).strip()
-            rows.append((f"{doc_number_label(dn, n)} - {text}" if dn["enabled"] else text, annexure_page_range(first, last, pn)))
-        with fitz.open(stream=list_of_documents_pdf(payload["listOfDocuments"], rows), filetype="pdf") as lod_doc:
-            lod = pikepdf.open(io.BytesIO(lod_doc.tobytes(garbage=4, deflate=True)))
-        opened.append(lod)
-        for k, pg in enumerate(lod.pages):
-            out.pages.insert(base + k, pg)
-        front = len(lod.pages)
-    return front
-
-
-def _add_goto_link(out, from_page, rect, to_page):
-    """A link on page index `from_page` of `out`, over `rect` (PyMuPDF page coordinates: origin top left),
-    that jumps to the top of page index `to_page`."""
-    import pikepdf
-    page = out.pages[from_page]
-    x0, y0, x1, y1 = (float(v) for v in page.mediabox)
-    height = y1 - y0
-    target = out.pages[to_page]
-    top = float(target.mediabox[3])
-    link = pikepdf.Dictionary(
-        Type=pikepdf.Name.Annot, Subtype=pikepdf.Name.Link, Border=pikepdf.Array([0, 0, 0]),
-        Rect=pikepdf.Array([x0 + rect.x0, y0 + height - rect.y1, x0 + rect.x1, y0 + height - rect.y0]),
-        Dest=pikepdf.Array([target.obj, pikepdf.Name.XYZ, 0, top, None]),
-    )
-    if "/Annots" not in page.obj:
-        page.obj.Annots = out.make_indirect(pikepdf.Array())
-    page.obj.Annots.append(out.make_indirect(link))
-
-
-def _annexure_stream(payload, report=None, links=None, positions=None, turn=None, images=None):
-    """A streamed response body (a _Stream) for the annexure -- appended to `report` (the report's open pikepdf
-    document, which this closes) when given, with `links` ((page index in the report, "<document id>:<page>", rect))
-    turned into jumps to the annexed pages, and the report's pictures (`images`, an export_stream.PdfImages) put in
-    as it is written. Keeps the turn (`turn`, or one taken here) until the body is closed, since the pages being
-    copied are in memory until the PDF has been sent. Raises _NeedWholeDocument (turn given back) if qpdf can't read
-    a source."""
-    import pikepdf
-    turn = turn or _Turn()
-    opened = []
-    try:
-        out = report if report is not None else pikepdf.new()
-        opened.append(out)
-        if report is not None and len(out.pages) % 2:
-            # The annexure starts on the front of a sheet when printed double-sided.
-            w, h = _displayed_size(out.pages[-1])
-            out.add_blank_page(page_size=(w, h))
-        report_pages = len(out.pages)
-        front = _append_annexure(out, payload, opened)
-        if len(out.pages) % 2:  # always an even total, whatever the page-numbering options
-            w, h = _displayed_size(out.pages[-1])
-            out.add_blank_page(page_size=(w, h))
-        for pno, key, rect in links or []:
-            doc_id, page = key.rsplit(":", 1)
-            target = (positions or {}).get((doc_id, int(page)))
-            if target is not None:
-                _add_goto_link(out, pno, rect, report_pages + front + target)
-    except BaseException:
-        for obj in opened:
-            try:
-                obj.close()
-            except Exception:
-                pass
-        turn.release()
-        raise
-    chunks = (lambda: images.stream(out)) if images else (lambda: _stream_pikepdf(out))
-    return _Stream(chunks, opened, release=turn.release)
-
-
-class _AnnexurePages:
-    """Draws the annexure's pages one at a time, as _append_annexure puts them together -- annotations burned in, page
-    and document numbers stamped, an empty page where one is due -- holding one page and one open source at a time.
-    `plan` is [(document id or None for an empty page, 1-based source page, annotations, (width, height),
-    document number if it is a document's first page, whether the page is one that gets numbers)]."""
-
-    def __init__(self, plan, payload):
-        self.plan, self.pn, self.dn = plan, payload["pageNumbers"], payload["docNumbers"]
-        self._open = None  # (document id, pikepdf document, file)
-
-    def _source(self, doc_id):
-        import pikepdf
-        if self._open is None or self._open[0] != doc_id:
-            self.close()
-            f = storage.open_document_pdf(doc_id)  # access was checked when the plan was made
-            self._open = (doc_id, pikepdf.open(f), f)
-        return self._open[1]
-
-    def jpeg(self, i):
-        import pikepdf
-        doc_id, page, annotations, size, first_of, numbered = self.plan[i]
-        if doc_id is not None and annotations:
-            one = _annotated_single_page(self._source(doc_id), page - 1, annotations)
-        else:
-            one = pikepdf.new()
-            if doc_id is None:
-                one.add_blank_page(page_size=size)
-            else:
-                one.pages.append(self._source(doc_id).pages[page - 1])
-        overlay = None
-        buf = io.BytesIO()
-        try:
-            pn, dn = self.pn, self.dn
-            number = numbered and pn["position"] != "none" and i >= pn["skip"] and page_number_label(i, pn) is not None
-            label = dn["enabled"] and first_of is not None
-            if number or label:
-                band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
-                width, height = _displayed_size(one.pages[0])
-                with fitz.open() as ov:
-                    ov.new_page(width=width, height=height)
-                    if number:
-                        stamp_page_numbers(ov, pn, band, offset=i)
-                    if label:
-                        stamp_doc_numbers(ov, dn, pn, band, [0], first_doc=first_of)
-                    overlay = pikepdf.open(io.BytesIO(ov.tobytes(garbage=4, deflate=True)))
-                one.pages[0].add_overlay(overlay.pages[0])
-            one.save(buf)
-        finally:
-            one.close()
-            if overlay is not None:
-                overlay.close()
-        with fitz.open(stream=buf.getvalue(), filetype="pdf") as d:
-            return _page_jpeg(d[0])
-
-    def close(self):
-        if self._open is not None:
-            _, doc, f = self._open
-            self._open = None
-            doc.close()
-            f.close()
-
-
-def _annexure_page_images(payload):
-    """([(width, height in points, load)], to_close) for the annexure's pages as pictures: load() draws a page when the
-    Word file reaches it. Raises _NeedWholeDocument if qpdf can't open a source."""
-    import pikepdf
-    mode = guest_annotation_mode(payload["annotations"])
-    plan = []
-    documents = 0
+    plan, spans = [], []
     for d in payload["documents"]:
         f, _ = _open_pdf(d["id"], d["type"])
         try:
@@ -5086,16 +4889,231 @@ def _annexure_page_images(payload):
                     for n, raw_anns in storage.get_all_annotations(d["id"]).items():
                         if n.isdigit():
                             drawn[int(n)] = annexure_annotations_to_draw(raw_anns, mode)
+                spans.append((d, len(plan), len(plan) + len(pages) - 1))
                 for k, p in enumerate(pages):
                     size = _displayed_size(src.pages[p - 1])
-                    plan.append((d["id"], p, drawn.get(p), size, documents if k == 0 else None, True))
-                documents += 1
+                    plan.append((d["id"], p, drawn.get(p), size, len(spans) - 1 if k == 0 else None, True))
                 if annexure_doc_padding(len(pages), payload["pageNumbers"]):
                     plan.append((None, 0, None, plan[-1][3], None, True))
         finally:
             f.close()
-    if len(plan) % 2:  # always an even total, as in the PDF; this last empty page is not numbered
+    if len(plan) % 2:  # always an even total, whatever the page-numbering options; this last empty page is not numbered
         plan.append((None, 0, None, plan[-1][3], None, False))
+    return plan, spans
+
+
+class _AnnexurePages:
+    """Puts together the annexure's pages a few at a time, as _annexure_plan lays them out -- annotations burned in,
+    page and document numbers stamped, empty pages where due -- holding only those pages and one open source. Pages
+    are copied from each source (opened lazily from its decrypting reader), and a source is reopened after every
+    ANNEXURE_SEGMENT pages taken from it, since qpdf holds on to what it has read for as long as it is open."""
+
+    def __init__(self, plan, payload):
+        self.plan, self.pn, self.dn = plan, payload["pageNumbers"], payload["docNumbers"]
+        self._open = None  # (document id, pikepdf document, file, {page object: number} once needed)
+        self._taken = 0  # pages taken from it
+        self._where = {(e[0], e[1]): i for i, e in enumerate(plan) if e[0] is not None}
+
+    def _source(self, doc_id):
+        """The open source document, to take one page from."""
+        import pikepdf
+        if self._open is None or self._open[0] != doc_id or self._taken >= ANNEXURE_SEGMENT:
+            self.close()
+            f = storage.open_document_pdf(doc_id)  # access was checked when the plan was made
+            self._open, self._taken = (doc_id, pikepdf.open(f), f, None), 0
+        self._taken += 1
+        return self._open[1]
+
+    def pdf(self, start, stop, link_pages=False):
+        """(pages `start` to `stop` - 1 as a pikepdf document, [further documents to close after it]). With
+        `link_pages`, a source's link to another of its pages in the annexure is left as the name
+        export_stream.PAGE_NAME % (that page's index in the plan), since the page may not be in this document."""
+        import pikepdf
+        out, opened, overlay_for = pikepdf.new(), [], []
+        try:
+            for i in range(start, stop):
+                doc_id, page, annotations, size, first_of, numbered = self.plan[i]
+                if doc_id is None:
+                    out.add_blank_page(page_size=size)
+                elif annotations:
+                    one = _annotated_single_page(self._source(doc_id), page - 1, annotations)
+                    opened.append(one)
+                    out.pages.append(one.pages[0])
+                else:
+                    src = self._source(doc_id)
+                    internal = self._internal_links(doc_id, src, page) if link_pages else []
+                    out.pages.append(src.pages[page - 1])
+                    for position, key, target in internal:
+                        annotation = out.pages[-1].obj.Annots[position]
+                        holder, entry = (annotation, "/Dest") if key == "/Dest" else (annotation.A, "/D")
+                        holder[entry] = pikepdf.Array([pikepdf.Name(export_stream.PAGE_NAME % target)] + list(holder[entry])[1:])
+                pn, dn = self.pn, self.dn
+                number = numbered and pn["position"] != "none" and i >= pn["skip"] and page_number_label(i, pn) is not None
+                if number or (dn["enabled"] and first_of is not None):
+                    overlay_for.append(i - start)
+            if overlay_for:
+                overlay = self._overlay(out, start, stop)
+                opened.append(overlay)
+                for k in overlay_for:
+                    out.pages[k].add_overlay(overlay.pages[k])
+        except BaseException:
+            for obj in [out, *opened]:
+                obj.close()
+            raise
+        return out, opened
+
+    def _internal_links(self, doc_id, src, page):
+        """[(annotation's position, "/Dest" or "/A", plan index)] for the links on source page `page` that point to a
+        page of the same document that is also in the annexure."""
+        import pikepdf
+        found = []
+        annotations = src.pages[page - 1].obj.get("/Annots")
+        if annotations is None:
+            return found
+        numbers = None
+        for position, annotation in enumerate(annotations):
+            if not isinstance(annotation, pikepdf.Dictionary) or annotation.get("/Subtype") != "/Link":
+                continue
+            key, dest = "/Dest", annotation.get("/Dest")
+            action = annotation.get("/A")
+            if dest is None and isinstance(action, pikepdf.Dictionary) and action.get("/S") == "/GoTo":
+                key, dest = "/A", action.get("/D")
+            if not (isinstance(dest, pikepdf.Array) and len(dest) and isinstance(dest[0], pikepdf.Dictionary)):
+                continue
+            if numbers is None:  # worked out once per source, and only for one that has such links
+                if self._open[3] is None:
+                    self._open = (*self._open[:3], {p.obj.objgen: n for n, p in enumerate(src.pages, 1)})
+                numbers = self._open[3]
+            target = self._where.get((doc_id, numbers.get(dest[0].objgen)))
+            if target is not None:
+                found.append((position, key, target))
+        return found
+
+    def _overlay(self, out, start, stop):
+        """The numbers of plan pages `start` to `stop` - 1 drawn on blank pages the size of the pages of `out` they
+        belong to, to be laid over them: the pages' own content is never rewritten."""
+        import pikepdf
+        pn, dn = self.pn, self.dn
+        band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
+        entries = self.plan[start:stop]
+        firsts = [k for k, e in enumerate(entries) if e[4] is not None]
+        with fitz.open() as ov:
+            for k, e in enumerate(entries):
+                if e[5]:  # only the last page of all goes without a number
+                    width, height = _displayed_size(out.pages[k])
+                    ov.new_page(width=width, height=height)
+            stamp_page_numbers(ov, pn, band, offset=start)
+            if firsts:
+                stamp_doc_numbers(ov, dn, pn, band, firsts, first_doc=entries[firsts[0]][4])
+            return pikepdf.open(io.BytesIO(ov.tobytes(garbage=4, deflate=True)))  # duplicate fonts merged
+
+    def jpeg(self, i):
+        """Page `i` as the picture the Word export shows it as."""
+        one, opened = self.pdf(i, i + 1)
+        buf = io.BytesIO()
+        try:
+            one.save(buf)
+        finally:
+            for obj in [one, *opened]:
+                obj.close()
+        with fitz.open(stream=buf.getvalue(), filetype="pdf") as d:
+            return _page_jpeg(d[0])
+
+    def close(self):
+        if self._open is not None:
+            _, doc, f, _ = self._open
+            self._open = None
+            doc.close()
+            f.close()
+
+
+def _list_of_documents_front(payload, spans):
+    """The List of Documents that goes ahead of the annexed pages, as a pikepdf document, or None if there is none. Its
+    pages carry no numbers, and the annexure's numbering takes no account of them."""
+    import pikepdf
+    if not payload["listOfDocuments"]["enabled"]:
+        return None
+    dn, pn = payload["docNumbers"], payload["pageNumbers"]
+    rows = []
+    for n, (d, first, last) in enumerate(spans):
+        text = (d["description"] or d["title"]).strip()
+        rows.append((f"{doc_number_label(dn, n)} - {text}" if dn["enabled"] else text, annexure_page_range(first, last, pn)))
+    with fitz.open(stream=list_of_documents_pdf(payload["listOfDocuments"], rows), filetype="pdf") as doc:
+        return pikepdf.open(io.BytesIO(doc.tobytes(garbage=4, deflate=True)))
+
+
+def _goto_link(page, rect, target, top):
+    """A link annotation for the pikepdf page `page`, over `rect` (PyMuPDF page coordinates: origin top left), that
+    jumps to height `top` of the page written as object `target`."""
+    x0, y0, x1, y1 = (float(v) for v in page.mediabox)
+    height = y1 - y0
+    return (b"<< /Type /Annot /Subtype /Link /Border [ 0 0 0 ] /Rect [ %f %f %f %f ] /Dest [ %d 0 R /XYZ 0 %f null ] >>"
+            % (x0 + rect.x0, y0 + height - rect.y1, x0 + rect.x1, y0 + height - rect.y0, target, top))
+
+
+def _annexure_parts(draw, count, front, report, links, positions, images):
+    """Yields the bytes of the annexure -- after the report's pages, when `report` is given -- a segment at a time. The
+    annexed pages are written first, then what goes ahead of them: the order of the objects in a PDF is free."""
+    out = export_stream.PdfJoin(images)
+    yield from out.head()
+    report_pages = []
+    if report is not None:
+        if len(report.pages) % 2:
+            # The annexure starts on the front of a sheet when printed double-sided.
+            report.add_blank_page(page_size=_displayed_size(report.pages[-1]))
+        report_pages = [(page.obj, out.reserve()) for page in report.pages]
+    front_pages = [(page.obj, out.reserve()) for page in front.pages] if front is not None else []
+    annexed = [out.reserve() for _ in range(count)]
+    targets = dict(enumerate(annexed))
+    tops = []  # the height of each annexed page's top edge
+    for start in range(0, count, ANNEXURE_SEGMENT):
+        segment, opened = draw(start, min(start + ANNEXURE_SEGMENT, count), link_pages=True)
+        try:
+            tops += [float(page.mediabox[3]) for page in segment.pages]
+            pages = [(page.obj, annexed[start + k]) for k, page in enumerate(segment.pages)]
+            yield from out.pages(segment, pages, targets=targets)
+        finally:
+            for obj in [segment, *opened]:
+                obj.close()
+        fitz.TOOLS.store_shrink(100)
+    if front is not None:
+        yield from out.pages(front, front_pages)
+    if report is not None:
+        added = collections.defaultdict(list)
+        for pno, key, rect in links or []:
+            doc_id, page = key.rsplit(":", 1)
+            target = (positions or {}).get((doc_id, int(page)))
+            if target is not None:
+                added[report_pages[pno][1]].append(_goto_link(report.pages[pno], rect, annexed[target], tops[target]))
+        yield from out.pages(report, report_pages, links=added)
+    yield from out.finish([number for _, number in report_pages + front_pages] + annexed)
+
+
+def _annexure_stream(payload, report=None, links=None, positions=None, turn=None, images=None):
+    """A streamed response body (a _Stream) for the annexure -- appended to `report` (the report's open pikepdf
+    document, which this closes) when given, with `links` ((page index in the report, "<document id>:<page>", rect))
+    turned into jumps to the annexed pages, and the report's pictures (`images`, an export_stream.PdfImages) put in
+    as it is written. Keeps the turn (`turn`, or one taken here) until the body is closed. Raises _NeedWholeDocument
+    (turn given back, report closed) if qpdf can't read a source."""
+    turn = turn or _Turn()
+    try:
+        plan, spans = _annexure_plan(payload)
+        front = _list_of_documents_front(payload, spans)
+    except BaseException:
+        if report is not None:
+            report.close()
+        turn.release()
+        raise
+    drawer = _AnnexurePages(plan, payload)
+    draw = _as_this_user(drawer.pdf)
+    parts = lambda: export_stream.in_chunks(_annexure_parts(draw, len(plan), front, report, links, positions, images))
+    return _Stream(parts, [obj for obj in (drawer, front, report) if obj is not None], release=turn.release)
+
+
+def _annexure_page_images(payload):
+    """([(width, height in points, load)], to_close) for the annexure's pages as pictures: load() draws a page when the
+    Word file reaches it. Raises _NeedWholeDocument if qpdf can't open a source."""
+    plan, _ = _annexure_plan(payload)
     drawer = _AnnexurePages(plan, payload)
     draw = _as_this_user(drawer.jpeg)
     return [(*entry[3], functools.partial(draw, i)) for i, entry in enumerate(plan)], [drawer]

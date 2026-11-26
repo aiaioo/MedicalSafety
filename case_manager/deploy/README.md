@@ -83,8 +83,8 @@ Follow `total` (RAM plus swap, in MB); `change` is how much it moved during that
 When a request or reload leaves the process 32 MB bigger than before, it also gives freed memory back to the system
 (a `memory trim` line says how much).
 
-Report exports (PDF and Word) are written a piece at a time (`export_stream.py`) and run one at a time, along with
-the annexure PDF.
+Report exports (PDF and Word) and the annexure PDF are written a piece at a time (`export_stream.py`; annexed pages
+ten at a time) and run one at a time.
 
 ## Case tracker
 
