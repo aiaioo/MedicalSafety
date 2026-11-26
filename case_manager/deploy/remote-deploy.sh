@@ -79,6 +79,10 @@ elif ! grep -q '^CASE_PROGRESS_DATABASE_URL=' "$ENV_FILE"; then
 else
   (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && runuser -u case-manager -- "$APP_DIR/.venv/bin/python" progress_storage.py init) \
     || echo "WARNING: couldn't create the case tracker's tables (does the database exist?)" >&2
+  # The tracker's pages read tables the daily crawl builds: build them now if there are none yet, or the code now
+  # expects another format. A few minutes at most; the crawl rebuilds them every day.
+  (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && runuser -u case-manager -- "$APP_DIR/.venv/bin/python" dashboard_stats.py --pages-if-needed) \
+    || echo "WARNING: couldn't build the case tracker's pages: its case lists are empty or old until the crawl (or dashboard_stats.py) runs" >&2
 fi
 
 # The daily crawl of the case tracker's data (see case_progress_crawler/deploy/README.md):

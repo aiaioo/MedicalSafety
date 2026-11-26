@@ -176,10 +176,9 @@ def rebuild():
         for state in storage.analysis_states():  # one state's cases in memory at a time
             with viewer.in_state(state):
                 courts += viewer.courts_of(state)
-                ordered = viewer.load("all", state, refresh=True)["ordered"]
+                ordered = viewer.build_state(state)["ordered"]
                 for c in ordered:
                     _add_rows({**c, "hearings": []} if c["court"] in REGISTER_COURTS else c, today, case_rows, hearing_rows)
-            viewer._cache.clear()
     finally:
         viewer.USE_STORED_METRICS = True
         viewer.KEEP_TEXTS = False

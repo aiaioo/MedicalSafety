@@ -1,4 +1,5 @@
 {% extends "case_tracker/base.html" %}
+{% from "case_tracker/_pager.html" import pager as page_nav %}
 {% block title %}Hearings{% endblock %}
 {% block top %}{% include "case_tracker/_search.html" %}{% endblock %}
 {% block body %}
@@ -13,8 +14,10 @@
     </select>
   </label>
   <noscript><button>Filter</button></noscript>
-  <span class="muted">{{ days|length }} hearing dates</span>
+  <span class="muted">{{ total }} hearing dates</span>
 </form>
+{% macro dates_pager() %}{{ page_nav('case_tracker.hearings', page, pages, first, first + days|length - 1, total, 'hearing dates', {'q': q or None, 'year': year or None, 'state': state}) }}{% endmacro %}
+{{ dates_pager() }}
 {% for date, entries in days %}
 <h2 id="{{ date }}"><a href="{{ url_for('case_tracker.day', date=date) }}">{{ date }}</a> <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h2>
 <table>
@@ -33,4 +36,5 @@
 </table>
 <p class="muted"><a href="{{ url_for('case_tracker.day', date=date) }}">Full details for {{ date }} &rarr;</a></p>
 {% endfor %}
+{{ dates_pager() }}
 {% endblock %}

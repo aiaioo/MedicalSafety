@@ -13,6 +13,7 @@ In the database (by court id, e.g. "kmc", "consumer", where a function takes one
   cause_lists       courts/consumer.py:  the e-Jagriti cause lists, every revision       save_cause_list / latest_cause_lists
   case_documents    courts/ejagriti_case: a case's status, history, meta, classification  load_case_document / save_case_document ...
   analysis_*        analysis*.py:        status, parties, advocates, timeline, enquiries replace_analysis / load_analysis
+  view_*            dashboard_stats.py:  the cases and hearings as the pages show them     replace_views / view_*
 
 On disk (files, not data): the order PDFs and HTML pages in case_details/consumer/<case key>/orders/ (order_path,
 order_files, save_order_file ...), and the KMC's PDFs in pdfs/, which the court crawlers and the viewer handle as
@@ -387,6 +388,184 @@ def load_analytics_page(state, page, period, non_medical):
                     (state, page, period, non_medical))
         r = cur.fetchone()
         return r["doc"] if r else None
+
+
+# ---------------------------------------------------------------------------------------------
+# The tracker's pages: a state's cases and hearings ready to show (see viewer.view_rows, which makes the rows)
+
+def replace_views(state, format, cases, hearings, links, names, terms):
+    """Replace everything stored for a state's pages, in one transaction. `cases`: (case_key, ord, court, year, outcome,
+    label, enquiry_id, number_key, haystack, id_tokens, doc); `hearings`: (case_key, n, hearing_date, doc); `links`:
+    (kind, slug, case_key); `names`: (sel, kind, slug, name); `terms`: (court, label, term)."""
+    tables = [("view_cases", "case_key, ord, court, year, outcome, label, enquiry_id, number_key, haystack, id_tokens, doc",
+               ((*r[:-1], _json(r[-1])) for r in cases)),
+              ("view_hearings", "case_key, n, hearing_date, doc", ((*r[:-1], _json(r[-1])) for r in hearings)),
+              ("view_links", "kind, slug, case_key", links),
+              ("view_names", "sel, kind, slug, name", names),
+              ("view_terms", "court, label, term", terms)]
+    with _db() as cur:
+        for table, columns, rows in tables:
+            cur.execute(f"DELETE FROM {table} WHERE state = %s", (state,))
+            psycopg2.extras.execute_values(cur, f"INSERT INTO {table} (state, {columns}) VALUES %s",
+                                           ((state, *row) for row in rows), page_size=500)
+        cur.execute("INSERT INTO view_runs (state, format) VALUES (%s, %s) "
+                    "ON CONFLICT (state) DO UPDATE SET format = EXCLUDED.format, built_at = now()", (state, format))
+
+
+def view_formats():
+    """{state: format} of the states whose pages are built."""
+    with _db() as cur:
+        cur.execute("SELECT state, format FROM view_runs")
+        return {r["state"]: r["format"] for r in cur.fetchall()}
+
+
+def _view_filter(state, courts, medical_only=False, year=None, outcome=None, words=None, tokens=None):
+    """(WHERE clause on view_cases c, its parameters). A search is (every word of `words` somewhere in the names) or
+    (every one of `tokens` starting a word of the case number)."""
+    where, params = ["c.state = %s", "c.court = ANY(%s)"], [state, list(courts)]
+    if medical_only:
+        where.append("c.label <> 'not_medical'")
+    if year is not None:
+        where.append("c.year = %s")
+        params.append(year)
+    if outcome:
+        where.append("c.outcome = %s")
+        params.append(outcome)
+    if words:
+        by_name = " AND ".join(["c.haystack LIKE %s"] * len(words))
+        by_number = " AND ".join(["c.id_tokens LIKE %s"] * len(tokens)) or "TRUE"
+        where.append(f"(({by_name}) OR ({by_number}))")
+        params += [f"%{_like(w)}%" for w in words] + [f"% {_like(t)}%" for t in tokens]
+    return " AND ".join(where), params
+
+
+def _like(text):
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def view_case_keys(state, courts, **filters):
+    """The keys of the cases that pass the filters (see _view_filter), in list order."""
+    where, params = _view_filter(state, courts, **filters)
+    with _db() as cur:
+        cur.execute(f"SELECT c.case_key FROM view_cases c WHERE {where} ORDER BY c.ord", params)
+        return [r["case_key"] for r in cur.fetchall()]
+
+
+def view_linked_keys(state, courts, kind, slug, medical_only=False):
+    """The keys of the cases that name this hospital or advocate, in list order."""
+    where, params = _view_filter(state, courts, medical_only=medical_only)
+    with _db() as cur:
+        cur.execute(f"SELECT c.case_key FROM view_links l JOIN view_cases c ON c.case_key = l.case_key "
+                    f"WHERE l.state = %s AND l.kind = %s AND l.slug = %s AND {where} ORDER BY c.ord", [state, kind, slug, *params])
+        return [r["case_key"] for r in cur.fetchall()]
+
+
+def view_case_docs(case_keys=None, state=None):
+    """The stored cases with these keys, in the order given, or all of a state's, in list order."""
+    with _db() as cur:
+        if case_keys is None:
+            cur.execute("SELECT doc FROM view_cases WHERE state = %s ORDER BY ord", (state,))
+            return [r["doc"] for r in cur.fetchall()]
+        cur.execute("SELECT case_key, doc FROM view_cases WHERE case_key = ANY(%s)", (list(case_keys),))
+        found = {r["case_key"]: r["doc"] for r in cur.fetchall()}
+        return [found[k] for k in case_keys if k in found]
+
+
+def view_years(state, courts):
+    """The years cases of these courts were filed in."""
+    with _db() as cur:
+        cur.execute("SELECT DISTINCT year FROM view_cases WHERE state = %s AND court = ANY(%s)", (state, list(courts)))
+        return [r["year"] for r in cur.fetchall()]
+
+
+def view_case_hearings(case_key):
+    with _db() as cur:
+        cur.execute("SELECT doc FROM view_hearings WHERE case_key = %s ORDER BY n", (case_key,))
+        return [r["doc"] for r in cur.fetchall()]
+
+
+def view_hearing_years(state, courts):
+    with _db() as cur:
+        cur.execute("SELECT DISTINCT left(h.hearing_date, 4) AS year FROM view_hearings h JOIN view_cases c ON c.case_key = h.case_key "
+                    "WHERE h.state = %s AND c.court = ANY(%s)", (state, list(courts)))
+        return [r["year"] for r in cur.fetchall()]
+
+
+def view_hearing_dates(state, courts, year=None, **filters):
+    """[(date, entries on it)] for the hearings of the cases that pass the filters, newest date first, of one year if given."""
+    where, params = _view_filter(state, courts, **filters)
+    if year:
+        where += " AND h.hearing_date LIKE %s"
+        params.append(f"{_like(year)}%")
+    with _db() as cur:
+        cur.execute(f'SELECT h.hearing_date AS date, count(*) AS n FROM view_hearings h JOIN view_cases c ON c.case_key = h.case_key '
+                    f'WHERE h.state = %s AND {where} GROUP BY h.hearing_date ORDER BY h.hearing_date COLLATE "C" DESC', [state, *params])
+        return [(r["date"], r["n"]) for r in cur.fetchall()]
+
+
+def view_hearings_on(state, courts, dates, **filters):
+    """[(date, case doc, hearing doc)] on these dates, for the cases that pass the filters: cases in list order, and a
+    case's hearings in its own order."""
+    where, params = _view_filter(state, courts, **filters)
+    with _db() as cur:
+        cur.execute(f"SELECT h.hearing_date AS date, c.doc AS case_doc, h.doc AS hearing_doc FROM view_hearings h "
+                    f"JOIN view_cases c ON c.case_key = h.case_key WHERE h.state = %s AND h.hearing_date = ANY(%s) AND {where} "
+                    f"ORDER BY c.ord, h.n", [state, list(dates), *params])
+        return [(r["date"], r["case_doc"], r["hearing_doc"]) for r in cur.fetchall()]
+
+
+def view_names(state, sel, kind):
+    """{slug: name shown} for the hospitals or advocates under a court selection."""
+    with _db() as cur:
+        cur.execute("SELECT slug, name FROM view_names WHERE state = %s AND sel = %s AND kind = %s", (state, sel, kind))
+        return {r["slug"]: r["name"] for r in cur.fetchall()}
+
+
+def view_name(state, sel, kind, slug):
+    with _db() as cur:
+        cur.execute("SELECT name FROM view_names WHERE state = %s AND sel = %s AND kind = %s AND slug = %s", (state, sel, kind, slug))
+        row = cur.fetchone()
+        return row["name"] if row else None
+
+
+def view_link_counts(state, kind):
+    """{slug: number of cases} over every court of a state."""
+    with _db() as cur:
+        cur.execute("SELECT slug, count(*) AS n FROM view_links WHERE state = %s AND kind = %s GROUP BY slug", (state, kind))
+        return {r["slug"]: r["n"] for r in cur.fetchall()}
+
+
+def view_suggestions(state, sel, courts, q, medical_only, limit):
+    """Case numbers and party, hospital and advocate names of the listed cases containing `q` (lower case): those that
+    start with it first, then the shortest."""
+    shown = " AND c.label <> 'not_medical'" if medical_only else ""
+    with _db() as cur:
+        cur.execute(f"""
+            SELECT term FROM (
+                SELECT c.term FROM view_terms c WHERE c.state = %(state)s AND c.court = ANY(%(courts)s){shown}
+                UNION
+                SELECT n.name FROM view_links l JOIN view_cases c ON c.case_key = l.case_key
+                  JOIN view_names n ON n.state = l.state AND n.sel = %(sel)s AND n.kind = l.kind AND n.slug = l.slug
+                  WHERE l.state = %(state)s AND c.court = ANY(%(courts)s){shown}
+            ) t WHERE lower(term) LIKE %(any)s
+            ORDER BY (lower(term) NOT LIKE %(start)s), char_length(term), term COLLATE "C" LIMIT %(limit)s""",
+                    {"state": state, "sel": sel, "courts": list(courts), "any": f"%{_like(q)}%", "start": f"{_like(q)}%", "limit": limit})
+        return [r["term"] for r in cur.fetchall()]
+
+
+def view_cases_by_number(key, states, limit=None, exact=False):
+    """The listed (not not_medical) cases of these states whose number is `key` (`exact`), or contains it. Exact matches
+    come in the order of `states`, then of each state's list; others with those that start with `key` first, then the
+    shortest numbers."""
+    match, value = ("=", key) if exact else ("LIKE", f"%{_like(key)}%")
+    order, ordering = "array_position(%s, state), ord", [list(states)]
+    if not exact:
+        order, ordering = f"(number_key NOT LIKE %s), char_length(enquiry_id), {order}", [f"{_like(key)}%", *ordering]
+    with _db() as cur:
+        cur.execute(f"SELECT doc FROM view_cases WHERE number_key {match} %s AND label <> 'not_medical' AND state = ANY(%s) "
+                    f"ORDER BY {order}" + (" LIMIT %s" if limit else ""),
+                    [value, list(states), *ordering, *([limit] if limit else [])])
+        return [r["doc"] for r in cur.fetchall()]
 
 
 def load_judgements():

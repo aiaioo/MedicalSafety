@@ -1,18 +1,16 @@
 """Logs how much memory the app's process is using, to find what makes it grow, and gives freed memory back.
 
-Three kinds of line go to stderr (the journal under systemd), each starting "memory ":
+Two kinds of line go to stderr (the journal under systemd), each starting "memory ", besides the "trim" lines below:
   * request -- one per request (static files left out), written when the response has been sent
-  * task    -- one around a piece of background work (measure()), e.g. a case tracker reload
   * sample  -- from a background thread: when the total has moved by SAMPLE_STEP_MB since the last sample logged, and
                at least every HEARTBEAT seconds
 
 Sizes are in MB: rss is what is in RAM, swap what has been swapped out, total their sum (the figure to follow: a rise in
-swap alone may only be other processes pushing this one out of RAM), change the difference in total over the request or
-task. The figures are for the whole process, so work done at the same time by other threads is counted too.
+swap alone may only be other processes pushing this one out of RAM), change the difference in total over the request. The figures are for the whole process, so work done at the same time by other threads is counted too.
 
     journalctl -u case-manager | grep ' memory '
 
-After a request or task that has left the process TRIM_STEP_MB bigger, trim() empties MuPDF's cache and has the C
+After a request that has left the process TRIM_STEP_MB bigger, trim() empties MuPDF's cache and has the C
 library return its free memory to the system, which by itself it largely doesn't; a "trim" line says what that freed.
 
 It reads /proc/self/status, so it does nothing where there is none (macOS).
@@ -23,7 +21,6 @@ import logging
 import sys
 import threading
 import time
-from contextlib import contextmanager
 
 import fitz
 from flask import g, request
@@ -83,17 +80,6 @@ def trim_if_grown():
         trim()
         _write("trim", before, started, "freed")
         _floor = sum(usage() or before)
-
-
-@contextmanager
-def measure(label):
-    """Logs the memory before and after the work in the block."""
-    before, started = usage(), time.monotonic()
-    try:
-        yield
-    finally:
-        _write("task", before, started, label)
-        trim_if_grown()
 
 
 def init_app(app):

@@ -227,3 +227,69 @@ CREATE TABLE IF NOT EXISTS analytics_pages (
 
 -- which state a case is in (the page of a case knows only its key)
 CREATE INDEX IF NOT EXISTS analysis_status_case ON analysis_status (case_key);
+
+-- ---- the tracker's pages (dashboard_stats.py rebuilds one state at a time) ------------------------------------------
+-- Every case and hearing as viewer.py builds them from the analysis, ready to show, so a page reads only the rows it
+-- shows and the web app holds no cases in memory. view_runs says which states are built, and in which format.
+
+CREATE TABLE IF NOT EXISTS view_runs (
+    state          text PRIMARY KEY,
+    format         integer NOT NULL,               -- viewer.VIEW_FORMAT of the code that built the rows
+    built_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS view_cases (
+    case_key       text PRIMARY KEY,
+    state          text NOT NULL,
+    ord            integer NOT NULL,               -- the case's place in the state's list
+    court          text NOT NULL,
+    year           integer NOT NULL,
+    outcome        text NOT NULL,
+    label          text NOT NULL,
+    enquiry_id     text NOT NULL,
+    number_key     text NOT NULL,                  -- the case number as one comparable string
+    haystack       text NOT NULL,                  -- parties, hospitals and advocates, lower case, for the search box
+    id_tokens      text NOT NULL,                  -- the words of the case number, each after a space
+    doc            json NOT NULL                   -- json, not jsonb: the order of its keys matters
+);
+CREATE INDEX IF NOT EXISTS view_cases_state ON view_cases (state, ord);
+CREATE INDEX IF NOT EXISTS view_cases_number ON view_cases (number_key);
+
+CREATE TABLE IF NOT EXISTS view_hearings (
+    state          text NOT NULL,
+    case_key       text NOT NULL,
+    n              integer NOT NULL,               -- the hearing's place in the case's own list, newest first
+    hearing_date   text NOT NULL,
+    doc            json NOT NULL                   -- without its long texts (read from the analysis when shown)
+);
+CREATE INDEX IF NOT EXISTS view_hearings_case ON view_hearings (case_key, n);
+CREATE INDEX IF NOT EXISTS view_hearings_date ON view_hearings (state, hearing_date);
+
+-- which cases name a hospital or an advocate (kind = 'hospital' / 'advocate')
+CREATE TABLE IF NOT EXISTS view_links (
+    state          text NOT NULL,
+    kind           text NOT NULL,
+    slug           text NOT NULL,
+    case_key       text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS view_links_slug ON view_links (state, kind, slug);
+CREATE INDEX IF NOT EXISTS view_links_case ON view_links (case_key);
+
+-- how a hospital's or advocate's name is shown, under each court selection
+CREATE TABLE IF NOT EXISTS view_names (
+    state          text NOT NULL,
+    sel            text NOT NULL,
+    kind           text NOT NULL,
+    slug           text NOT NULL,
+    name           text NOT NULL,
+    PRIMARY KEY (state, sel, kind, slug)
+);
+
+-- case numbers and party names, for the search box's suggestions
+CREATE TABLE IF NOT EXISTS view_terms (
+    state          text NOT NULL,
+    court          text NOT NULL,
+    label          text NOT NULL,
+    term           text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS view_terms_state ON view_terms (state);

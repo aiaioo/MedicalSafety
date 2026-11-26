@@ -71,16 +71,15 @@ from that header. `X-Forwarded-For`/`-Proto` pair with `TRUSTED_PROXY_HOPS=1`.
 
 ## Memory use
 
-The app logs the memory its process is using (`memlog.py`): a line after each request, one around each case tracker
-reload, and a sample whenever the total moves by 50 MB (and every 10 minutes).
+The app logs the memory its process is using (`memlog.py`): a line after each request, and a sample whenever the total moves by 50 MB (and every 10 minutes).
 
 ```bash
 journalctl -u case-manager | grep ' memory '
 ```
 
-Follow `total` (RAM plus swap, in MB); `change` is how much it moved during that request or reload.
+Follow `total` (RAM plus swap, in MB); `change` is how much it moved during that request.
 
-When a request or reload leaves the process 32 MB bigger than before, it also gives freed memory back to the system
+When a request leaves the process 32 MB bigger than before, it also gives freed memory back to the system
 (a `memory trim` line says how much).
 
 Report exports (PDF and Word) and the annexure PDF are written a piece at a time (`export_stream.py`; annexed pages
@@ -99,6 +98,11 @@ and, if `viewer.py` isn't there, just doesn't mount it. To use it on the droplet
   `/etc/case-manager/case-manager.env` (default `postgresql:///case_progress`; `DATABASE_URL` is this app's; see `case-manager.env.example`), after creating
   that database and role once by hand -- each deploy then creates its tables;
 - the Python dependencies (the crawler's modules need `requests`, `beautifulsoup4` and `pypdf`) are installed by the deploy.
+
+The web app holds no cases in memory: each page reads the rows it shows from the `view_*` tables, and the dashboards
+their stored figures. The crawl's last step, `dashboard_stats.py`, rebuilds both from the analysis, so run it after
+running an analysis by hand, or the pages go on showing the earlier one. A deploy builds the `view_*` tables when there
+are none, or when `viewer.VIEW_FORMAT` has changed.
 
 ## Outgoing email (Postmark)
 

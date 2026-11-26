@@ -10,15 +10,16 @@
   /advocates/        advocates named in the consumer cases (cause lists and case details), with case counts
   /advocate/<slug>   the cases one advocate appeared in, and for which side
   /hearings/         days of hearings, latest first, with a short summary of each
-                     case; ?year=YYYY filters
+                     case, a number of days to a page; ?year=YYYY filters
   /day/<date>        the cases heard on one day (YYYY-MM-DD), in full
   /pdf/<kind>/<file> a pre- or post-hearing PDF in a continuous page viewer, with a download link
                      (/pdf/<kind>/<file>/download, pages as /pdf/<kind>/<file>/page/<n>.png)
   /case/<case_key>   parties and a timeline of hearings, latest first, plus
                      user-added links (related cases, party identities, ...)
 
-The CSVs are re-read whenever their modification time changes, so re-running
-analysis.py is picked up without restarting.
+No cases are held in memory. dashboard_stats.py (the daily crawl's last step) builds every case and hearing from the
+analysis (build_state) and stores them ready to show (view_rows, the view_* tables), with the dashboards' figures;
+each page reads only the rows it shows. A new analysis appears once that step has run.
 
 Shows KMC cases (from analysis.py), CPA -- Consumer Protection Act -- cases from all the consumer courts
 (from analysis_consumer.py), or both together; choose with the links at the top of every page (remembered
@@ -37,7 +38,6 @@ under /case_tracker/ in its own process, behind its sign-in, by registering this
 import argparse
 import contextlib
 import datetime
-from collections import OrderedDict
 import re
 import statistics
 import sys
@@ -82,12 +82,10 @@ PDF_COURT = "kmc"  # only the KMC has original PDFs
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF"}
 PAGE_IMAGE_DPI = 150
-_cache = OrderedDict()  # state -> {"version", "data", "selections"}: the most recently used few; a state not asked for is not held
-MAX_CACHED = 6  # states
-_load_lock = threading.RLock()  # one load at a time: two at once would need twice the memory
-KEEP_TEXTS = False  # hold each hearing's long texts too (metrics.py works from them); otherwise a page reads them when shown
-load_observer = lambda label: contextlib.nullcontext()  # `with load_observer(label):` wraps each (re)load; the case manager sets it to log memory
-USE_STORED_METRICS = True  # load() takes each consumer case's outcome, gaps and adjournments from the stored metrics (metrics.py) when they are recent; metrics.py itself turns this off
+VIEW_FORMAT = 1  # of the rows view_rows() makes: raise it when they change, so the pages are built again at the next deploy
+HEARING_DATES_PER_PAGE = 20
+KEEP_TEXTS = False  # build_state() holds each hearing's long texts too (metrics.py works from them)
+USE_STORED_METRICS = True  # build_state() takes each consumer case's outcome, gaps and adjournments from the stored metrics (metrics.py) when they are recent; metrics.py itself turns this off
 # Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name. Keys are
 # slugs as hospital_tokens() leaves them (apostrophes dropped, "Medical College" before "Hospital" dropped).
 HOSPITAL_ALIASES = {
@@ -302,23 +300,14 @@ def in_period(c, p):
     return True
 
 
-_refresher_running = False
-_memo = {}  # (what, period, non_medical) -> (the data it was worked out from, result): the analytics pages' tables, ready to show
-
-
 def analytics_page(page, p):
     """The table of the hospitals or advocates page for this state, period and not_medical choice: the stored one (built by
-    dashboard_stats.py: one row read, no case data loaded), else worked out from the state's cases (kept until they are reloaded)."""
+    dashboard_stats.py: one row read, no case data loaded), else worked out from all the state's cases, read for this request."""
     st, nm = state(), show_non_medical()
     doc = storage.load_analytics_page(st, page, p, nm)
     if doc is not None:
         return doc
-    data = load("all", st)
-    key = (st, page, p, nm, datetime.date.today().year)
-    hit = _memo.get(key)
-    if hit is None or hit[0] is not data:
-        hit = _memo[key] = (data, build_analytics_page(page, p, nm, data))
-    return hit[1]
+    return build_analytics_page(page, p, nm, load("all", st))
 
 
 def build_analytics_page(page, p, non_medical, data):
@@ -428,6 +417,22 @@ def case_advocates(rows):
     return found
 
 
+def hospital_names():
+    """{slug: the name shown} of the hospitals of this state, over every court."""
+    held = _held_data(state())
+    if held is not None:
+        return {slug: h["name"] for slug, h in held["hospitals"].items()}
+    return storage.view_names(state(), "all", "hospital")
+
+
+def advocate_case_counts():
+    """{slug: number of cases} of the advocates of this state, over every court."""
+    held = _held_data(state())
+    if held is not None:
+        return {slug: len(a["cases"]) for slug, a in held["advocates"].items()}
+    return storage.view_link_counts(state(), "advocate")
+
+
 def analytics(cases, all_years=None):
     """Numbers for the front page's panel, from the cases shown: per court the count of each outcome, and the
     TOP_HOSPITALS hospitals named in most cases."""
@@ -484,12 +489,12 @@ def analytics(cases, all_years=None):
             out.append(row)
         per_court[court]["commissions"] = out if len(out) > 1 else []  # nothing to choose between when there is one
     hospitals = defaultdict(lambda: [0, ""])
-    best_names = load("all")["hospitals"]  # each hospital's best spelling, as the hospitals list shows it
+    best_names = hospital_names()  # each hospital's best spelling, as the hospitals list shows it
     for c in cases:
         for slug, n in c["hospitals"].items():
             if slug:
                 hospitals[slug][0] += 1
-                hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug, {}).get("name") or hospitals[slug][1] or n
+                hospitals[slug][1] = HOSPITAL_DISPLAY.get(slug) or best_names.get(slug) or hospitals[slug][1] or n
     top = sorted(((n, name, slug) for slug, (n, name) in hospitals.items()), key=lambda t: (-t[0], t[1].lower()))[:TOP_HOSPITALS]
     timing = case_timing(cases)
     sides = side_comparison(cases)
@@ -632,7 +637,7 @@ def side_comparison(cases):
     if hearings >= MIN_SIDE_HEARINGS and any(totals.values()):  # a court whose record never names a side (the KMC) has no rates, not 0.0
         out["rates"] = {kind: {w: {"n": totals[(w, kind)], "per100": round(100 * totals[(w, kind)] / hearings, 1)} for w in ("patient", "hospital")}
                         for kind in ("time", "absent")}
-    cases_of = {slug: len(a["cases"]) for slug, a in load("all")["advocates"].items()}
+    cases_of = advocate_case_counts()
     seen = defaultdict(list)
     for c in cases:
         for slug, a in c["advocate_info"].items():
@@ -666,48 +671,111 @@ def panel_stats(st, sel, year, non_medical):
     return {**compute_stats(sel, year or 0, non_medical, st), "as_of": datetime.date.today().isoformat()}
 
 
-def load(sel=None, st=None, refresh=False):
-    """The analysed data of a court selection of a state (default: this request's). A state's cases are read once, for all
-    its courts, and a narrower selection is drawn from them. The data is kept until the analysis changes, for the most
-    recently used MAX_CACHED states at most; once the background refresher is running (warm_cache) only it reloads, and a
-    visitor is given the data already loaded. refresh=True reloads it now if the analysis has changed."""
+_held = threading.local()  # a state's data held while dashboard_stats.py works through it (see holding)
+
+
+@contextlib.contextmanager
+def holding(st, data):
+    """`with holding(state, build_state(state)):` -- load() and the names and counts above come from that data, not from
+    the stored pages."""
+    _held.value = (st, data, {})
+    try:
+        yield
+    finally:
+        _held.value = None
+
+
+def _held_data(st, sel="all"):
+    held = getattr(_held, "value", None)
+    if held is None or held[0] != st:
+        return None
+    if sel == "all":
+        return held[1]
+    if sel not in held[2]:
+        held[2][sel] = _selected(held[1], sel, st)
+    return held[2][sel]
+
+
+def _selected(data, sel, st):
+    """The data of the courts a selection covers, drawn from that of all of a state's courts."""
+    ids = court_ids(sel, st)
+    return _indexed([c for c in data["ordered"] if c["court"] in ids])
+
+
+def load(sel=None, st=None):
+    """The cases of a court selection of a state (default: this request's), indexed (see _indexed), without their
+    hearings: read from the stored pages afresh each time, for what has to walk over all of them. A page that shows
+    only some cases reads just those (cases_by_key)."""
     st = st or state()
     sel = sel or selection()
-    entry = _cache.get(st)
-    if entry is None or refresh or not _refresher_running:
-        entry = _current(st)
-    else:
-        with contextlib.suppress(KeyError):  # dropped for a reload just now: `entry` still has the data
-            _cache.move_to_end(st)
-    if sel == "all":
-        return entry["data"]
-    data = entry["selections"].get(sel)
-    if data is None:  # the same case objects, indexed for these courts only
-        ids = court_ids(sel, st)
-        data = entry["selections"][sel] = _indexed([c for c in entry["data"]["ordered"] if c["court"] in ids])
-    return data
+    held = _held_data(st, sel)
+    if held is not None:
+        return held
+    data = _indexed([_case_from(doc) for doc in storage.view_case_docs(state=st)])
+    return data if sel == "all" else _selected(data, sel, st)
 
 
-def _current(st):
-    """The cache entry of state `st`, read (again) if it is not held or its analysis has changed."""
-    ids = courts_of(st)
-    entry = _cache.get(st)
-    if entry is not None and entry["version"] == storage.analysis_stamp(ids):
-        return entry
-    with _load_lock:
-        version = storage.analysis_stamp(ids)
-        entry = _cache.get(st)
-        if entry is None or entry["version"] != version:
-            _cache.pop(st, None)  # let go of the old data before reading the new: a visitor wanting it meanwhile waits
-            for key in [k for k in list(_memo) if k[0] == st]:  # the analytics tables worked out from it hold it too
-                _memo.pop(key, None)
-            entry = None
-            with load_observer(f"tracker load state={st} held={len(_cache)}"):
-                data = _read(st, ids)
-            entry = _cache[st] = {"version": version, "data": data, "selections": {}}
-            while len(_cache) > MAX_CACHED:
-                _cache.popitem(last=False)
-        return entry
+def build_state(st):
+    """Every case of a state, built from the analysis with its hearings, and indexed: what the stored pages
+    (view_rows), the dashboards and metrics.py are made from. This takes a good deal of memory, so only the daily crawl's
+    steps (and a deploy that changes VIEW_FORMAT) call it, never a request."""
+    return _read(st, courts_of(st))
+
+
+def cases_by_key(keys):
+    """The stored cases with these keys, in that order."""
+    return [_case_from(doc) for doc in storage.view_case_docs(keys)] if keys else []
+
+
+class CaseList:
+    """A list of cases known by their keys, of which only the ones asked for are read: what a paginated table needs."""
+
+    def __init__(self, keys):
+        self.keys = keys
+
+    def __len__(self):
+        return len(self.keys)
+
+    def __getitem__(self, index):
+        return cases_by_key(self.keys[index]) if isinstance(index, slice) else cases_by_key([self.keys[index]])[0]
+
+
+def _case_doc(c):
+    """A case as it is stored for the pages: without its hearings, and in what JSON can hold."""
+    doc = {k: v for k, v in c.items() if k != "hearings"}
+    doc["adjournments"] = [[who, kind, n] for (who, kind), n in c["adjournments"].items()]
+    doc["advocate_info"] = {slug: {"names": dict(a["names"]), "roles": sorted(a["roles"])} for slug, a in c["advocate_info"].items()}
+    return doc
+
+
+def _case_from(doc):
+    doc["seq"] = tuple(doc["seq"])
+    doc["adjournments"] = Counter({(who, kind): n for who, kind, n in doc["adjournments"]})
+    for a in doc["advocate_info"].values():
+        a["names"], a["roles"] = defaultdict(int, a["names"]), set(a["roles"])
+    return doc
+
+
+def view_rows(st, data):
+    """The rows that hold a state's pages (progress_storage.replace_views), from its built data."""
+    cases, hearings, links, terms = [], [], [], set()
+    for ord_, c in enumerate(data["ordered"]):
+        names = (c["complainants"] + c["respondents"] + list(c["hospitals"].values())
+                 + c["advocates"]["complainant"] + c["advocates"]["respondent"])
+        ids = "".join(f" {t}" for t in id_tokens(c["enquiry_id"]) + id_tokens(c["case_key"]))
+        label = c.get("label") or ""
+        cases.append((c["case_key"], ord_, c["court"], c["year"], c["outcome"], label, c["enquiry_id"],
+                      _number_key(c["enquiry_id"]), " ".join(names).lower(), ids, _case_doc(c)))
+        hearings += [(c["case_key"], n, h["hearing_date"], h) for n, h in enumerate(c["hearings"])]
+        links += [("hospital", slug, c["case_key"]) for slug in c["hospitals"] if slug]
+        links += [("advocate", slug, c["case_key"]) for slug in c["advocate_info"] if slug]
+        terms.update((c["court"], label, t) for t in [c["enquiry_id"], *c["complainants"], *c["respondents"]])
+    shown_names = []
+    for sel in selections(st):
+        of_sel = data if sel == "all" else _selected(data, sel, st)
+        for kind, key in (("hospital", "hospitals"), ("advocate", "advocates")):
+            shown_names += [(sel, kind, slug, x["name"]) for slug, x in of_sel[key].items()]
+    return cases, hearings, links, shown_names, sorted(terms)
 
 
 def _read(st, ids):
@@ -793,11 +861,7 @@ def _read(st, ids):
 
 
 def _indexed(ordered):
-    """The data of a set of cases, in list order: them by key, and by hearing date, hospital and advocate."""
-    by_date = defaultdict(list)  # hearing date -> [(case, hearing)], cases in list order
-    for c in ordered:
-        for h in c["hearings"]:
-            by_date[h["hearing_date"]].append((c, h))
+    """The data of a set of cases, in list order: them by key, and by hospital and advocate."""
     hospitals = defaultdict(lambda: {"names": defaultdict(int), "cases": []})
     for c in ordered:
         for slug, n in c["hospitals"].items():
@@ -816,46 +880,7 @@ def _indexed(ordered):
     advocates = {s: {"slug": s, "name": advocate_display(a["names"]), "cases": a["cases"], "sides": a["sides"]}
                  for s, a in advocates.items() if s}
     return {"cases": {c["case_key"]: c for c in ordered}, "hospitals": hospitals, "advocates": advocates, "ordered": ordered,
-            "by_date": by_date, "years": sorted({c["year"] for c in ordered if c["year"] >= MIN_YEAR}, reverse=True),
-            "hearing_years": sorted({d[:4] for d in by_date}, reverse=True)}
-
-
-REFRESH_EVERY = 60  # seconds between looks for newly analysed data
-SETTLE = 600  # seconds a new analysis must stand unchanged before it is read: the crawl replaces several in turn
-
-
-def warm_cache():
-    """Start the background refresher: it loads each state's data, the default state's first, then looks every minute at
-    the states held for a new analysis -- the daily crawl's, or one run by hand -- and reloads a state SETTLE seconds
-    after its analysis last changed, so once for a whole crawl. Changes to case documents alone reload nothing. The
-    analytics pages need none of this: their tables are stored (see dashboard_stats.py). Until the first load finishes a
-    request loads what it needs itself."""
-    def run():
-        global _refresher_running
-        started = False
-        changed = {}  # state -> (the new version of its analysis, when it was first seen)
-        while True:
-            try:
-                if not started:
-                    for st in sorted(states(), key=lambda s: s != default_state()):
-                        load("all", st, refresh=True)
-                    started = _refresher_running = True
-                for st, entry in list(_cache.items()):
-                    version = storage.analysis_stamp(courts_of(st))
-                    if version == entry["version"]:
-                        changed.pop(st, None)
-                    elif changed.get(st, (None,))[0] != version:
-                        changed[st] = version, time.monotonic()
-                    elif time.monotonic() - changed[st][1] >= SETTLE:
-                        changed.pop(st)
-                        load("all", st, refresh=True)
-            except Exception as e:  # a request will hit and report the same problem
-                print(f"case tracker: refreshing failed: {e!r}")
-            time.sleep(REFRESH_EVERY)
-    threading.Thread(target=run, daemon=True, name="case-tracker-refresh").start()
-
-
-bp.record_once(lambda state: warm_cache())  # when the blueprint is registered, here or in the case manager
+            "years": sorted({c["year"] for c in ordered if c["year"] >= MIN_YEAR}, reverse=True)}
 
 
 def can_manage_links():
@@ -884,9 +909,9 @@ def court_of(case_key):
 
 
 def case_data(case_key):
-    """The analysed case with this key (a case page knows its key only, so its state is looked up), or None."""
-    st = storage.state_of_case(case_key) or state()
-    return load("all", st)["cases"].get(case_key)
+    """The case with this key (without its hearings), or None."""
+    found = cases_by_key([case_key])
+    return found[0] if found else None
 
 
 def _cookie_path():
@@ -969,17 +994,6 @@ def select_court(sel):
     return resp
 
 
-def matches(c, q):
-    """Does a case match a search by party, case number or hospital?"""
-    words = q.lower().split()
-    haystack = " ".join(c["complainants"] + c["respondents"] + list(c["hospitals"].values())
-                        + c["advocates"]["complainant"] + c["advocates"]["respondent"]).lower()
-    if all(w in haystack for w in words):
-        return True
-    ids = id_tokens(c["enquiry_id"]) + id_tokens(c["case_key"])
-    return all(any(t.startswith(w) for t in ids) for w in id_tokens(q))
-
-
 PAGE_SIZE = 50
 
 
@@ -997,36 +1011,41 @@ def paginate(cases):
 
 @bp.route("/")
 def home():
-    data = load()
+    st, sel = state(), selection()
+    ids = court_ids(sel, st)
     year = request.args.get("year", type=int)
     q = request.args.get("q", "").strip()
-    in_scope = [c for c in data["ordered"] if visible(c) and (not q or matches(c, q))]
-    cases = [c for c in in_scope if year is None or c["year"] == year]
     outcome = request.args.get("outcome")
     if outcome not in {k for k, _ in OUTCOMES}:
         outcome = None
     p = period()  # the panel has its own years filter and always covers both courts
+    listed = {"medical_only": not show_non_medical(), **search(q)}
     if q:  # a search changes the cases, so it is worked out live
-        everything = [c for c in load("all")["ordered"] if visible(c) and matches(c, q)]
+        everything = cases_by_key(storage.view_case_keys(st, court_ids("all", st), **listed))
         stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
     else:
-        stats = panel_stats(state(), "all", period_code(next(x for x in period_specs() if x[0] == p)), show_non_medical())
-    if outcome:
-        cases = [c for c in cases if c["outcome"] == outcome]
+        stats = panel_stats(st, "all", period_code(next(x for x in period_specs() if x[0] == p)), show_non_medical())
+    keys = storage.view_case_keys(st, ids, year=year, outcome=outcome, **listed)
     judgement = request.args.get("judgement")
     if judgement != "all" and judgement not in dict(JUDGEMENT_CLASSES):
         judgement = None
     if judgement:  # only the cases with a judgement PDF (of the chosen class)
-        cases = [c for c in cases if (j := judgement_of(c["case_key"])) and judgement in ("all", j["class"])]
+        keys = [k for k in keys if (j := judgement_of(k)) and judgement in ("all", j["class"])]
     reason = request.args.get("reason")
     if reason in dict((k, l) for k, l, _ in DISMISSAL_REASONS):
-        cases = [c for c in cases if (j := judgement_of(c["case_key"])) and j["reason"] == reason]
+        keys = [k for k in keys if (j := judgement_of(k)) and j["reason"] == reason]
     else:
         reason = None
     judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
     reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
-    return render_template("case_tracker/home.html", cases=cases, outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=data["years"], year=year, plabel=next(x[1] for x in period_specs() if x[0] == p) if p != "all" else None, q=q, links=court_links(), stats=stats,
+    years = sorted((y for y in storage.view_years(st, ids) if y >= MIN_YEAR), reverse=True)
+    return render_template("case_tracker/home.html", cases=CaseList(keys), outcome=outcome, outcome_label=dict(OUTCOMES).get(outcome), years=years, year=year, plabel=next(x[1] for x in period_specs() if x[0] == p) if p != "all" else None, q=q, links=court_links(), stats=stats,
                            judgement=judgement, judgement_label=judgement_label, reason=reason, reason_label=reason_label)
+
+
+def search(q):
+    """The filter (progress_storage._view_filter) for a search by party, case number, hospital or advocate."""
+    return {"words": q.lower().split(), "tokens": id_tokens(q)} if q else {}
 
 
 def front_page_stats(period_key="all", st=None):
@@ -1043,11 +1062,6 @@ def _number_key(s):
     return "".join(id_tokens(s or ""))
 
 
-def _tracker_cases():
-    """Every case in the tracker (every state and court), the way the front page counts them: cases labelled not_medical are left out."""
-    return [c for st in states() for c in load("all", st)["ordered"] if c.get("label") != "not_medical"]
-
-
 def _parties_line(c):
     first = lambda names: (names[0] if names else "").strip()
     return " v. ".join(p for p in (first(c["complainants"]), first(c["respondents"])) if p)
@@ -1059,10 +1073,8 @@ def suggest_cases(q, limit=10):
     key = _number_key(q)
     if len(key) < 2:
         return []
-    hits = [(not _number_key(c["enquiry_id"]).startswith(key), len(c["enquiry_id"]), i, c)
-            for i, c in enumerate(_tracker_cases()) if key in _number_key(c["enquiry_id"])]
     return [{"case_number": c["enquiry_id"], "court": c["court_label"], "parties": _parties_line(c)}
-            for *_, c in sorted(hits, key=lambda h: h[:3])[:limit]]
+            for c in storage.view_cases_by_number(key, states(), limit=limit)]
 
 
 def stage_label(tags, text=""):
@@ -1082,9 +1094,11 @@ def case_prefill(number, with_court=True):
     tracker records of the day (outcome or order, then the next date). `with_court=False` skips finding the court's full
     name (a database read for a consumer case) when only the hearings are wanted."""
     key = _number_key(number)
-    c = next((c for c in _tracker_cases() if _number_key(c["enquiry_id"]) == key), None) if key else None
-    if c is None:
+    found = storage.view_cases_by_number(key, states(), limit=1, exact=True) if key else []
+    if not found:
         return None
+    c = _case_from(found[0])
+    c["hearings"] = storage.view_case_hearings(c["case_key"])
     court = ""
     if with_court:
         if c["court"] in COUNCIL_NAMES:
@@ -1156,24 +1170,8 @@ def suggest():
         pool = {x["name"] for x in analytics_page("advocates" if request.args["kind"] == "advocate" else "hospitals", "all")}
         hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
         return jsonify(hits[:12])
-    data = load()
-    shown = [c for c in data["ordered"] if visible(c)]
-    pool = {c["enquiry_id"] for c in shown}
-    pool |= {p for c in shown for p in c["complainants"] + c["respondents"]}
-    pool |= {h["name"] for h in visible_hospitals(data)}
-    pool |= {a["name"] for a in visible_advocates(data)}
-    hits = sorted((s for s in pool if q in s.lower()), key=lambda s: (not s.lower().startswith(q), len(s), s))
-    return jsonify(hits[:12])
-
-
-def visible_hospitals(data):
-    """The hospitals with their visible cases only (a hospital left with none is dropped)."""
-    out = []
-    for h in data["hospitals"].values():
-        cases = [c for c in h["cases"] if visible(c)]
-        if cases:
-            out.append({**h, "cases": cases})
-    return out
+    st, sel = state(), selection()
+    return jsonify(storage.view_suggestions(st, sel, court_ids(sel, st), q, not show_non_medical(), 12))
 
 
 MIN_CLOSED_FOR_RANKING = 3
@@ -1192,7 +1190,7 @@ def case_verdict(c):
 def hospital_ranking(cases):
     """Hospitals with at least MIN_CLOSED_FOR_RANKING closed cases among `cases` (as respondent, or as complainant
     or appellant), ranked by the share of those closed cases decided against them, highest first."""
-    best = load("all")["hospitals"]
+    best = hospital_names()
     closed = defaultdict(list)
     for c in cases:
         if c["outcome"] != "open":
@@ -1203,7 +1201,7 @@ def hospital_ranking(cases):
     for slug, cs in closed.items():
         if len(cs) >= MIN_CLOSED_FOR_RANKING:
             against = sum(case_verdict(c) == "against" for c in cs)
-            name = HOSPITAL_DISPLAY.get(slug) or best.get(slug, {}).get("name") or next(iter(cs[0]["provider_hospitals"].values()))
+            name = HOSPITAL_DISPLAY.get(slug) or best.get(slug) or next(iter(cs[0]["provider_hospitals"].values()))
             rows.append({"slug": slug, "name": name, "closed": len(cs), "against": against, "ratio": against / len(cs)})
     return sorted(rows, key=lambda r: (-r["ratio"], -r["closed"], r["name"].lower()))
 
@@ -1213,7 +1211,7 @@ def hospital_table(cases):
     cases, counted as hospital_ranking does, decided against it; None below MIN_CLOSED_FOR_RANKING closed), "years" and "hearings"
     (averages over its closed cases with a filing date / a hearing held), "adjourned" (% of its side's hearings where the record
     says it asked for time, None if unknown), "lawyers" (its side's most used: [(slug, name, cases)], up to 3)}."""
-    best = load("all")["hospitals"]
+    best = hospital_names()
     by = defaultdict(dict)
     for c in cases:
         for slug in {**c["hospitals"], **c["provider_hospitals"]}:
@@ -1236,7 +1234,7 @@ def hospital_table(cases):
             for aslug, name in c["advocate_links"][side]:
                 lawyers[aslug][0] += 1
                 lawyers[aslug][1] = name
-        name = HOSPITAL_DISPLAY.get(slug) or best.get(slug, {}).get("name") or next(iter({**cs[0]["hospitals"], **cs[0]["provider_hospitals"]}.values()))
+        name = HOSPITAL_DISPLAY.get(slug) or best.get(slug) or next(iter({**cs[0]["hospitals"], **cs[0]["provider_hospitals"]}.values()))
         rows.append({"slug": slug, "name": name, "cases": len(cs), "closed": len(prov), "n_closed": len(closed), "against": against,
                      "ratio": against / len(prov) if len(prov) >= MIN_CLOSED_FOR_RANKING else None,
                      "ratio_all": against / len(cs) if len(cs) >= MIN_CLOSED_FOR_RANKING else None,
@@ -1294,10 +1292,13 @@ def hospitals():
 
 @bp.route("/hospital/<slug>")
 def hospital(slug):
-    h = load()["hospitals"].get(slug)
-    if h is None:
+    st, sel = state(), selection()
+    ids = court_ids(sel, st)
+    name = storage.view_name(st, sel, "hospital", slug)
+    if name is None:
         abort(404)
-    return render_template("case_tracker/hospital.html", h={**h, "cases": [c for c in h["cases"] if visible(c)]}, links=court_links())
+    keys = storage.view_linked_keys(st, ids, "hospital", slug, medical_only=not show_non_medical())
+    return render_template("case_tracker/hospital.html", h={"slug": slug, "name": name, "cases": CaseList(keys)}, links=court_links())
 
 
 def represents(case, role):
@@ -1553,10 +1554,13 @@ def advocates():
 
 @bp.route("/advocate/<slug>")
 def advocate(slug):
-    a = load()["advocates"].get(slug)
-    if a is None:
+    st, sel = state(), selection()
+    name = storage.view_name(st, sel, "advocate", slug)
+    if name is None:
         abort(404)
-    cases = [c for c in a["cases"] if visible(c)]
+    theirs = cases_by_key(storage.view_linked_keys(st, court_ids(sel, st), "advocate", slug))
+    a = {"slug": slug, "name": name, "sides": {c["case_key"]: sorted(c["advocate_info"][slug]["roles"]) for c in theirs}}
+    cases = [c for c in theirs if visible(c)]
     return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(), m=advocate_metrics(cases, a["sides"]),
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
                            respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
@@ -1567,17 +1571,20 @@ def advocate(slug):
 
 @bp.route("/hearings/")
 def hearings():
-    data = load()
+    st, sel = state(), selection()
+    ids = court_ids(sel, st)
     year = request.args.get("year")
     q = request.args.get("q", "").strip()
-    days = []
-    for d in sorted(data["by_date"], reverse=True):
-        if year and not d.startswith(year):
-            continue
-        entries = [(c, h) for c, h in data["by_date"][d] if visible(c) and (not q or matches(c, q))]
-        if entries:
-            days.append((d, entries))
-    return render_template("case_tracker/hearings.html", days=days, years=data["hearing_years"], year=year, q=q)
+    listed = {"medical_only": not show_non_medical(), **search(q)}
+    dates = storage.view_hearing_dates(st, ids, year=year, **listed)
+    pages = max(1, -(-len(dates) // HEARING_DATES_PER_PAGE))
+    page = min(max(request.args.get("page", 1, type=int), 1), pages)
+    shown = [d for d, _ in dates[(page - 1) * HEARING_DATES_PER_PAGE:page * HEARING_DATES_PER_PAGE]]
+    entries = defaultdict(list)
+    for date, c, h in storage.view_hearings_on(st, ids, shown, **listed):
+        entries[date].append((c, h))
+    return render_template("case_tracker/hearings.html", days=[(d, entries[d]) for d in shown], total=len(dates), page=page, pages=pages,
+                           first=(page - 1) * HEARING_DATES_PER_PAGE + 1, years=sorted(storage.view_hearing_years(st, ids), reverse=True), year=year, q=q)
 
 
 @bp.route("/day/<date>")
@@ -1586,9 +1593,12 @@ def day(date):
         datetime.date.fromisoformat(date)
     except ValueError:
         abort(404)
-    entries = with_texts([(c, h) for c, h in load()["by_date"].get(date, []) if visible(c)])  # a future next date has no hearings yet
+    st, sel = state(), selection()
+    ids = court_ids(sel, st)
+    found = storage.view_hearings_on(st, ids, [date], medical_only=not show_non_medical())  # a future next date has no hearings yet
+    entries = with_texts([(c, h) for _, c, h in found])
     return render_template("case_tracker/day.html", date=date, entries=entries,
-                           pdfs=pdfs_for_date(date) if PDF_COURT in court_ids(selection()) else [])
+                           pdfs=pdfs_for_date(date) if PDF_COURT in ids else [])
 
 
 def pdfs_for_date(date):
@@ -1758,8 +1768,9 @@ def case(case_key):
     # The hearings (from the cause lists and the portal's history, see with_history) are the timeline. An order
     # dated on a day absent from both still gets an entry of its own (from_order).
     orders = orders_of(case_key)
-    known = {h["hearing_date"] for h in c["hearings"]}
-    hearings = [h for _, h in with_texts([(c, h) for h in c["hearings"]])]
+    stored = storage.view_case_hearings(case_key)
+    known = {h["hearing_date"] for h in stored}
+    hearings = [h for _, h in with_texts([(c, h) for h in stored])]
     hearings += [{**BLANK_HEARING, "hearing_date": d, "history": None, "record": "", "from_order": True}
                  for d in orders if d not in known]
     hearings.sort(key=lambda h: (h["hearing_date"], h["hearing_time"]), reverse=True)

@@ -269,7 +269,6 @@ def _mount_case_tracker() -> None:
 
     global case_tracker_viewer
     case_tracker_viewer = viewer
-    viewer.load_observer = memlog.measure  # log the memory each (re)load of its lists takes
     app.register_blueprint(viewer.bp, url_prefix="/case_tracker")
 
 
