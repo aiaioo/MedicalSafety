@@ -35,6 +35,7 @@ under /case_tracker/ in its own process, behind its sign-in, by registering this
 """
 
 import argparse
+import contextlib
 import datetime
 from collections import OrderedDict
 import re
@@ -82,6 +83,7 @@ PDF_KINDS = {"pre_hearing": "Pre-hearing PDF", "post_hearing": "Post-hearing PDF
 PAGE_IMAGE_DPI = 150
 _cache = OrderedDict()  # (state, selection) -> {"mtimes", "data"}: the most recently used few; a state not asked for is not held
 MAX_CACHED = 6
+load_observer = lambda label: contextlib.nullcontext()  # `with load_observer(label):` wraps each (re)load; the case manager sets it to log memory
 USE_STORED_METRICS = True  # load() takes each consumer case's outcome, gaps and adjournments from the stored metrics (metrics.py) when they are recent; metrics.py itself turns this off
 # Variants whose spelling is too far apart to normalise by rule, or that carry a stray person's name. Keys are
 # slugs as hospital_tokens() leaves them (apostrophes dropped, "Medical College" before "Hospital" dropped).
@@ -631,6 +633,12 @@ def load(sel=None, st=None, refresh=False):
         _cache.move_to_end(ckey)
         return _cache[ckey]["data"]
 
+    with load_observer(f"tracker load state={st} courts={sel} refresh={refresh} held={len(_cache)}"):
+        return _read(st, ids, ckey, mtimes)
+
+
+def _read(st, ids, ckey, mtimes):
+    """Build the data of the courts `ids` of state `st` (see load()) and hold it in the cache under `ckey`."""
     parties = defaultdict(list)
     advocate_rows = defaultdict(list)
     hearings = defaultdict(list)

@@ -1,5 +1,6 @@
 import base64
 import collections
+import functools
 import hashlib
 import io
 import json
@@ -25,14 +26,16 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 from PIL import Image, ImageOps, UnidentifiedImageError
-from flask import Flask, Request, Response, abort, g, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Request, Response, abort, current_app, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
+import export_stream
 import key_gate
 import key_manager
 import hearing_alerts
 import mailer
+import memlog
 import splitter
 import storage
 from pdf_stream import stream_pikepdf as _stream_pikepdf
@@ -198,9 +201,10 @@ def doc_number_label(dn, index):
     return f"{dn['name']} {dn['prefix']}{dn['first'] + index}".lstrip()
 
 
-def stamp_doc_numbers(doc, dn, pn, m, first_pages):
+def stamp_doc_numbers(doc, dn, pn, m, first_pages, first_doc=0):
     """Stamps each document's label in the top margin band of its first page
-    (`first_pages`: page indexes into `doc`, one per numbered document) --
+    (`first_pages`: page indexes into `doc`, one per numbered document, the
+    first of them being document number `first_doc`) --
     at the top right, or the top left when the page number is top right."""
     if not dn["enabled"] or m["header"] <= 0:
         return
@@ -215,7 +219,7 @@ def stamp_doc_numbers(doc, dn, pn, m, first_pages):
         mid = r.y0 + m["header"] / 2
         box = fitz.Rect(half[0], mid - box_h / 2, half[1], mid + box_h / 2)
         doc[i].insert_htmlbox(box + (0, PAGE_NUMBER_TEXT_DROP * fs, 0, PAGE_NUMBER_TEXT_DROP * fs),
-                              f'<p style="{css}">{html_escape(doc_number_label(dn, n))}</p>')
+                              f'<p style="{css}">{html_escape(doc_number_label(dn, first_doc + n))}</p>')
 
 
 class InMemoryUploadRequest(Request):
@@ -238,6 +242,7 @@ app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB, matches nginx cl
 _proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
 if _proxy_hops:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops, x_proto=_proxy_hops)
+memlog.init_app(app)  # memory use after each request, in the journal -- first, to see requests the gates turn away too
 # Keeps the site closed until the encryption key has been entered -- must be
 # registered before auth.bp, whose gate reads encrypted columns. See key_gate.py.
 app.register_blueprint(key_gate.bp)
@@ -264,6 +269,7 @@ def _mount_case_tracker() -> None:
 
     global case_tracker_viewer
     case_tracker_viewer = viewer
+    viewer.load_observer = memlog.measure  # log the memory each (re)load of its lists takes
     app.register_blueprint(viewer.bp, url_prefix="/case_tracker")
 
 
@@ -1694,11 +1700,15 @@ def render_page_image(doc_id, filename):
         f.close()
 
 
+def may_view_page_images(doc_id):
+    return has_role("source", doc_id, "viewer") or storage.document_annexed_in_viewable_report(g.user.id, doc_id)
+
+
 def read_media_snippet(doc_id, filename):
     """A stored snippet's bytes, or the rendered page for a page-image filename (only for someone who may see the
     document's pages: its viewer, or a viewer of a report that annexes it)."""
     if PAGE_IMAGE_RE.match(filename):
-        if not (has_role("source", doc_id, "viewer") or storage.document_annexed_in_viewable_report(g.user.id, doc_id)):
+        if not may_view_page_images(doc_id):
             return None
         return render_page_image(doc_id, filename)
     return storage.read_snippet_bytes(doc_id, filename)
@@ -1910,36 +1920,81 @@ def resolve_snippet_refs(node, refs, links=False, meta=None):
     return {**node, "content": content}
 
 
-def inline_doc_images(node):
+def inline_doc_images(node, images=None):
     """Replaces image nodes' `/media/snippets/...` (or `/media/report-images/...`)
     src with a base64 data URI read directly from storage, so the exported PDF/DOCX is self-contained --
     Story (PDF) has no network access, and python-docx needs raw bytes
-    either way. Returns a new tree; `node` itself is left untouched."""
+    either way. With `images` (an export_stream.PdfImages or DocxImages) the data URI is a small stand-in, and the
+    picture itself is loaded again when the file is written. Returns a new tree; `node` itself is left untouched."""
     if not isinstance(node, dict):
         return node
     if node.get("type") == "image":
         attrs = dict(node.get("attrs") or {})
-        src = attrs.get("src", "")
-        parsed = urlsplit(src)
-        parts = [p for p in parsed.path.split("/") if p]
-        if parsed.path.startswith("/media/snippets/") and len(parts) >= 2:
-            filename, url_doc_id = parts[-1], parts[-2]
-            if (DOC_ID_RE.match(url_doc_id) and "/" not in filename and "\\" not in filename
-                    and storage.can_view_snippet_images(g.user.id, url_doc_id)):
-                data = read_media_snippet(url_doc_id, filename)
-                if data is not None:
-                    b64 = base64.b64encode(data).decode("ascii")
-                    attrs["src"] = f"data:image/png;base64,{b64}"
-        elif parsed.path.startswith("/media/report-images/") and len(parts) >= 3:
-            url_report_id, image_id = parts[-2], parts[-1]
-            image = storage.get_report_image(image_id) if DOC_ID_RE.match(image_id) else None
-            if image is not None and image["report_id"] == url_report_id and has_role("report", url_report_id, "viewer"):
-                b64 = base64.b64encode(image["data"]).decode("ascii")
-                attrs["src"] = f"data:{image['content_type']};base64,{b64}"
+        found = _image_loader(attrs.get("src", ""))
+        if found is not None:
+            content_type, load = found
+            data = load()
+            if data is not None:
+                stand_in = None
+                if isinstance(images, export_stream.PdfImages):
+                    stand_in = images.stand_in(load, data)
+                    if stand_in is not None:
+                        content_type = "image/jpeg"
+                elif images is not None:
+                    stand_in = _docx_stand_in(images, load, data, attrs)
+                b64 = base64.b64encode(data if stand_in is None else stand_in).decode("ascii")
+                attrs["src"] = f"data:{content_type};base64,{b64}"
         return {**node, "attrs": attrs}
     if "content" in node:
-        return {**node, "content": [inline_doc_images(c) for c in node["content"]]}
+        return {**node, "content": [inline_doc_images(c, images) for c in node["content"]]}
     return node
+
+
+def _as_this_user(load):
+    """`load`, made able to run after the request is over (while an export is being streamed), still knowing who asked:
+    drawing annotations depends on that (a Share-link visitor's blackouts remove what is under them)."""
+    app_object, user = current_app._get_current_object(), g.user
+
+    def run(*args):
+        with app_object.app_context():
+            g.user = user
+            return load(*args)
+    return run
+
+
+def _image_loader(src):
+    """(content type, load) for a report image's `src`, if it is one of ours and this user may see it: load()
+    returns the picture's bytes (None if there is no such picture), in the request or after it."""
+    parsed = urlsplit(src)
+    parts = [p for p in parsed.path.split("/") if p]
+    if parsed.path.startswith("/media/snippets/") and len(parts) >= 2:
+        filename, doc_id = parts[-1], parts[-2]
+        if not (DOC_ID_RE.match(doc_id) and "/" not in filename and "\\" not in filename
+                and storage.can_view_snippet_images(g.user.id, doc_id)):
+            return None
+        if PAGE_IMAGE_RE.match(filename):
+            if not may_view_page_images(doc_id):
+                return None
+            return "image/png", _as_this_user(lambda: render_page_image(doc_id, filename))
+        return "image/png", lambda: storage.read_snippet_bytes(doc_id, filename)
+    if parsed.path.startswith("/media/report-images/") and len(parts) >= 3:
+        report_id, image_id = parts[-2], parts[-1]
+        image = storage.get_report_image(image_id) if DOC_ID_RE.match(image_id) else None
+        if image is not None and image["report_id"] == report_id and has_role("report", report_id, "viewer"):
+            return image["content_type"], lambda: storage.get_report_image(image_id)["data"]
+    return None
+
+
+def _docx_stand_in(images, load, data, attrs):
+    """A Word stand-in for the picture `data`, noting in `attrs` the picture's own size (python-docx would otherwise
+    take it from the stand-in); None for a picture that has to go in as it is."""
+    try:
+        picture = DocxImage.from_blob(data)
+        kind = {"image/png": "PNG", "image/jpeg": "JPEG"}[picture.content_type]
+        attrs["nativeSize"] = (int(picture.width), int(picture.height))
+    except Exception:  # not a picture python-docx knows: leave it to _docx_add_image, as before
+        return None
+    return images.stand_in(hashlib.sha256(data).digest(), load, kind)  # identical pictures are stored once
 
 
 PDF_BODY_INSET_PT = 11  # how far fitz.Story insets the body from each side of the page area it is given
@@ -2183,9 +2238,10 @@ def page_number_label(i, pn):
     return (i - lo) // 2 + pn["first"] if i >= lo and i % 2 == 0 else None
 
 
-def stamp_page_numbers(doc, pn, m):
+def stamp_page_numbers(doc, pn, m, offset=0):
     """Draws page numbers onto the already-built PDF `doc`, from page index
-    pn["skip"] on (numbered from 1), centred vertically in the header or
+    pn["skip"] on (numbered from 1; `doc`'s first page is page `offset` of the
+    run being numbered), centred vertically in the header or
     footer margin band `m` (a sanitize_margins dict) and against its
     left/centre/right edge, in the chosen font, size and colour, optionally
     inside a circle or rectangle. The number gets a box just wide enough for
@@ -2202,8 +2258,8 @@ def stamp_page_numbers(doc, pn, m):
     rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
     css = f"font-family: {pn['font']}, Helvetica, Arial, sans-serif; font-size: {fs}pt; color: {color}; margin: 0; text-align: center;"
     box_h = fs * 1.6
-    for i in range(pn["skip"], doc.page_count):
-        number = page_number_label(i, pn)
+    for i in range(max(pn["skip"] - offset, 0), doc.page_count):
+        number = page_number_label(offset + i, pn)
         if number is None:
             continue
         page = doc[i]
@@ -2356,11 +2412,14 @@ def _docx_add_image(attrs, paragraph, max_width_emu):
     stream = _docx_image_stream(attrs.get("src"))
     if stream is None:
         return
+    native = attrs.get("nativeSize")  # (width, height) of the picture a stand-in stands for
     if isinstance(attrs.get("width"), (int, float)) and attrs["width"] > 0:
         # Editor-resized (or snippet-computed) width, in the same CSS px
         # convention used everywhere else in this app -- reflects what the
         # user actually saw/set, unlike the image file's own native size.
         width = Emu(int(attrs["width"] * EMU_PER_CSS_PX))
+    elif native:
+        width = Emu(native[0])
     else:
         try:
             width = Emu(int(DocxImage.from_blob(stream.getvalue()).width))
@@ -2368,9 +2427,11 @@ def _docx_add_image(attrs, paragraph, max_width_emu):
             return
     if max_width_emu:
         width = Emu(min(int(width), max_width_emu))
+    # The height that keeps the picture's shape, worked out as python-docx does.
+    height = Emu(round(native[1] * (float(width) / float(native[0])))) if native else None
     stream.seek(0)
     run = paragraph.add_run()
-    run.add_picture(stream, width=width)
+    run.add_picture(stream, width=width, height=height)
 
 
 def _docx_run_format_from_marks(marks):
@@ -2765,9 +2826,12 @@ def _docx_set_tab_stops(doc):
     doc.settings.element.find(qn("w:defaultTabStop")).set(qn("w:val"), "600")
 
 
-def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pdf=None, list_of_documents=None):
+def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexure_pages=None, list_of_documents=None,
+                       images=None):
     """`list_of_documents`: (ctx, rows) as for list_of_documents_docx; added as editable text after the report, before
-    the annexure pages (which are images). Neither is page-numbered, as they carry their own numbers."""
+    the annexure pages (which are images). Neither is page-numbered, as they carry their own numbers.
+    `annexure_pages`: [(width, height in points, load)] as from _annexure_page_images, put in as stand-ins of `images`
+    (an export_stream.DocxImages), whose stream() then writes the finished file from the bytes returned here."""
     doc = DocxDocument()
     doc.styles["Normal"].font.name = "Arial"
     doc.styles["Normal"].font.size = Pt(11)
@@ -2792,11 +2856,11 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexur
         list_section = _docx_new_unnumbered_section(doc)
         list_width = _docx_set_list_of_documents_layout(list_section)
         _docx_add_list_of_documents(doc, *list_of_documents, list_width)
-    if annexure_pdf:
+    if annexure_pages:
         annex_section = _docx_new_unnumbered_section(doc)
         (annex_section.page_width, annex_section.page_height, annex_section.left_margin, annex_section.right_margin,
          annex_section.top_margin, annex_section.bottom_margin) = report_layout
-        _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, max_height_emu)
+        _docx_add_annexure_pages(doc, annexure_pages, images, max_width_emu, max_height_emu)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -2806,17 +2870,23 @@ def render_report_docx(title, doc_json, margins=None, page_numbers=None, annexur
 ANNEXURE_DOCX_DPI = 130
 
 
-def _docx_add_annexure_pages(doc, annexure_pdf, max_width_emu, max_height_emu):
-    """Appends each page of the annexure PDF as an image on a page of its own, scaled to fit the text area."""
-    with fitz.open(stream=annexure_pdf, filetype="pdf") as src:
-        for n, page in enumerate(src):
-            img = page.get_pixmap(dpi=ANNEXURE_DOCX_DPI).tobytes("jpeg", jpg_quality=85)
-            scale = min(max_width_emu / page.rect.width, max_height_emu / page.rect.height)
-            p = doc.add_paragraph()
-            p.paragraph_format.page_break_before = n > 0  # the first follows the new section's own page break
-            p.paragraph_format.space_after = Pt(0)
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.add_run().add_picture(io.BytesIO(img), width=Emu(int(page.rect.width * scale)), height=Emu(int(page.rect.height * scale)))
+def _docx_add_annexure_pages(doc, pages, images, max_width_emu, max_height_emu):
+    """Appends each annexure page as an image on a page of its own, scaled to fit the text area."""
+    for n, (width, height, load) in enumerate(pages):
+        scale = min(max_width_emu / width, max_height_emu / height)
+        p = doc.add_paragraph()
+        p.paragraph_format.page_break_before = n > 0  # the first follows the new section's own page break
+        p.paragraph_format.space_after = Pt(0)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(io.BytesIO(images.stand_in(("annexure", n), load, "JPEG")),
+                                width=Emu(int(width * scale)), height=Emu(int(height * scale)))
+
+
+def _page_jpeg(page):
+    """A PyMuPDF page as the picture the Word export shows it as."""
+    data = page.get_pixmap(dpi=ANNEXURE_DOCX_DPI).tobytes("jpeg", jpg_quality=85)
+    fitz.TOOLS.store_shrink(100)  # MuPDF would otherwise keep every page's decoded images
+    return data
 
 
 @app.context_processor
@@ -4032,17 +4102,31 @@ def _burn_annotations_into_page(src, index, annotations):
     new.close()
 
 
-class _PdfStream:
-    """A response body that streams a pikepdf document and, when the response ends for any reason (finished,
-    client gone, or never started), closes everything it was built from and releases `release`."""
+class _Turn:
+    """This request's turn at the heavy work (see _heavy_lock): taken on creation, given back by release(), which may
+    be called more than once."""
 
-    def __init__(self, pdf, to_close=(), release=None):
-        self.pdf, self._to_close, self._release = pdf, list(to_close), release
+    def __init__(self):
+        _heavy_lock.acquire()
+        self._held = True
+
+    def release(self):
+        if self._held:
+            self._held = False
+            _heavy_lock.release()
+
+
+class _Stream:
+    """A response body made of the chunks of the generator `chunks()` which, when the response ends for any reason
+    (finished, client gone, or never started), closes everything it was built from and calls `release`."""
+
+    def __init__(self, chunks, to_close=(), release=None):
+        self._chunks, self._to_close, self._release = chunks, list(to_close), release
         self._gen = None
         self._closed = False
 
     def __iter__(self):
-        self._gen = _stream_pikepdf(self.pdf)
+        self._gen = self._chunks()
         return self._gen
 
     def close(self):
@@ -4120,7 +4204,7 @@ def _annotated_pdf_response(doc_id, annotated_only):
         raise
 
     log_activity("download", "source", doc_id, "Annotated pages PDF" if annotated_only else "Annotated PDF")
-    resp = Response(_PdfStream(src, [src, f]), mimetype="application/pdf")
+    resp = Response(_Stream(lambda: _stream_pikepdf(src), [src, f]), mimetype="application/pdf")
     resp.headers.update(headers)
     return resp
 
@@ -4878,18 +4962,20 @@ def _add_goto_link(out, from_page, rect, to_page):
     page.obj.Annots.append(out.make_indirect(link))
 
 
-def _annexure_stream(payload, report_pdf=None, links=None, positions=None):
-    """A streamed response body (a _PdfStream) for the annexure -- appended after `report_pdf` (bytes) when
-    given, with `links` ((page index in the report, "<document id>:<page>", rect)) turned into jumps to the
-    annexed pages. Holds _heavy_lock until the body is closed, since the pages being copied are in memory
-    until the PDF has been sent. Raises _NeedWholeDocument (lock released) if qpdf can't read a source."""
+def _annexure_stream(payload, report=None, links=None, positions=None, turn=None, images=None):
+    """A streamed response body (a _Stream) for the annexure -- appended to `report` (the report's open pikepdf
+    document, which this closes) when given, with `links` ((page index in the report, "<document id>:<page>", rect))
+    turned into jumps to the annexed pages, and the report's pictures (`images`, an export_stream.PdfImages) put in
+    as it is written. Keeps the turn (`turn`, or one taken here) until the body is closed, since the pages being
+    copied are in memory until the PDF has been sent. Raises _NeedWholeDocument (turn given back) if qpdf can't read
+    a source."""
     import pikepdf
-    _heavy_lock.acquire()
+    turn = turn or _Turn()
     opened = []
     try:
-        out = pikepdf.open(io.BytesIO(report_pdf)) if report_pdf is not None else pikepdf.new()
+        out = report if report is not None else pikepdf.new()
         opened.append(out)
-        if report_pdf is not None and len(out.pages) % 2:
+        if report is not None and len(out.pages) % 2:
             # The annexure starts on the front of a sheet when printed double-sided.
             w, h = _displayed_size(out.pages[-1])
             out.add_blank_page(page_size=(w, h))
@@ -4909,23 +4995,118 @@ def _annexure_stream(payload, report_pdf=None, links=None, positions=None):
                 obj.close()
             except Exception:
                 pass
-        _heavy_lock.release()
+        turn.release()
         raise
-    return _PdfStream(out, opened, release=_heavy_lock.release)
+    chunks = (lambda: images.stream(out)) if images else (lambda: _stream_pikepdf(out))
+    return _Stream(chunks, opened, release=turn.release)
 
 
-def _annexure_pdf_bytes(payload):
-    """The annexure payload rendered as one PDF (bytes), for the Word export, which turns its pages into images."""
-    try:
-        stream = _annexure_stream(payload)
-    except _NeedWholeDocument:
-        return _annexure_pdf_bytes_whole(payload)
-    try:
+class _AnnexurePages:
+    """Draws the annexure's pages one at a time, as _append_annexure puts them together -- annotations burned in, page
+    and document numbers stamped, an empty page where one is due -- holding one page and one open source at a time.
+    `plan` is [(document id or None for an empty page, 1-based source page, annotations, (width, height),
+    document number if it is a document's first page, whether the page is one that gets numbers)]."""
+
+    def __init__(self, plan, payload):
+        self.plan, self.pn, self.dn = plan, payload["pageNumbers"], payload["docNumbers"]
+        self._open = None  # (document id, pikepdf document, file)
+
+    def _source(self, doc_id):
+        import pikepdf
+        if self._open is None or self._open[0] != doc_id:
+            self.close()
+            f = storage.open_document_pdf(doc_id)  # access was checked when the plan was made
+            self._open = (doc_id, pikepdf.open(f), f)
+        return self._open[1]
+
+    def jpeg(self, i):
+        import pikepdf
+        doc_id, page, annotations, size, first_of, numbered = self.plan[i]
+        if doc_id is not None and annotations:
+            one = _annotated_single_page(self._source(doc_id), page - 1, annotations)
+        else:
+            one = pikepdf.new()
+            if doc_id is None:
+                one.add_blank_page(page_size=size)
+            else:
+                one.pages.append(self._source(doc_id).pages[page - 1])
+        overlay = None
         buf = io.BytesIO()
-        stream.pdf.save(buf)
-        return buf.getvalue()
-    finally:
-        stream.close()
+        try:
+            pn, dn = self.pn, self.dn
+            number = numbered and pn["position"] != "none" and i >= pn["skip"] and page_number_label(i, pn) is not None
+            label = dn["enabled"] and first_of is not None
+            if number or label:
+                band = {"left": 36, "right": 36, "header": ANNEXURE_PAGE_NUMBER_BAND, "footer": ANNEXURE_PAGE_NUMBER_BAND}
+                width, height = _displayed_size(one.pages[0])
+                with fitz.open() as ov:
+                    ov.new_page(width=width, height=height)
+                    if number:
+                        stamp_page_numbers(ov, pn, band, offset=i)
+                    if label:
+                        stamp_doc_numbers(ov, dn, pn, band, [0], first_doc=first_of)
+                    overlay = pikepdf.open(io.BytesIO(ov.tobytes(garbage=4, deflate=True)))
+                one.pages[0].add_overlay(overlay.pages[0])
+            one.save(buf)
+        finally:
+            one.close()
+            if overlay is not None:
+                overlay.close()
+        with fitz.open(stream=buf.getvalue(), filetype="pdf") as d:
+            return _page_jpeg(d[0])
+
+    def close(self):
+        if self._open is not None:
+            _, doc, f = self._open
+            self._open = None
+            doc.close()
+            f.close()
+
+
+def _annexure_page_images(payload):
+    """([(width, height in points, load)], to_close) for the annexure's pages as pictures: load() draws a page when the
+    Word file reaches it. Raises _NeedWholeDocument if qpdf can't open a source."""
+    import pikepdf
+    mode = guest_annotation_mode(payload["annotations"])
+    plan = []
+    documents = 0
+    for d in payload["documents"]:
+        f, _ = _open_pdf(d["id"], d["type"])
+        try:
+            try:
+                src = pikepdf.open(f)
+            except Exception as exc:
+                raise _NeedWholeDocument() from exc
+            with src:
+                pages = annexure_selected_pages(d, len(src.pages))
+                if not pages:
+                    continue
+                drawn = {}
+                if mode != "none":
+                    for n, raw_anns in storage.get_all_annotations(d["id"]).items():
+                        if n.isdigit():
+                            drawn[int(n)] = annexure_annotations_to_draw(raw_anns, mode)
+                for k, p in enumerate(pages):
+                    size = _displayed_size(src.pages[p - 1])
+                    plan.append((d["id"], p, drawn.get(p), size, documents if k == 0 else None, True))
+                documents += 1
+                if annexure_doc_padding(len(pages), payload["pageNumbers"]):
+                    plan.append((None, 0, None, plan[-1][3], None, True))
+        finally:
+            f.close()
+    if len(plan) % 2:  # always an even total, as in the PDF; this last empty page is not numbered
+        plan.append((None, 0, None, plan[-1][3], None, False))
+    drawer = _AnnexurePages(plan, payload)
+    draw = _as_this_user(drawer.jpeg)
+    return [(*entry[3], functools.partial(draw, i)) for i, entry in enumerate(plan)], [drawer]
+
+
+def _annexure_page_images_whole(payload):
+    """As _annexure_page_images, for a source qpdf cannot open: from the annexure built whole in memory. The caller
+    must have its turn."""
+    doc = fitz.open(stream=_annexure_pdf_bytes_locked(payload), filetype="pdf")
+    return [(page.rect.width, page.rect.height, functools.partial(lambda n: _page_jpeg(doc[n]), page.number))
+            for page in doc], [doc]
 
 
 def _annexure_pdf_bytes_whole(payload):
@@ -5052,7 +5233,7 @@ def api_report_annexure_list_docx(report_id):
 def _report_with_annexure_whole(pdf_bytes, payload, links, positions, total):
     """The report PDF with the annexure merged in and its snippet links added, all in memory (the fallback
     for a source PDF that qpdf cannot open)."""
-    annex_bytes = _annexure_pdf_bytes_whole(payload)
+    annex_bytes = _annexure_pdf_bytes_locked(payload)  # the caller has its turn
     with fitz.open(stream=pdf_bytes, filetype="pdf") as merged, fitz.open(stream=annex_bytes, filetype="pdf") as annex:
         if merged.page_count % 2:
             last = merged[-1].rect  # the annexure starts on the front of a sheet when printed double-sided
@@ -5067,6 +5248,57 @@ def _report_with_annexure_whole(pdf_bytes, payload, links, positions, total):
                 merged[pno].insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": report_pages + front + target,
                                          "to": fitz.Point(0, 0)})
         return merged.tobytes(garbage=4, deflate=True)
+
+
+def _report_pdf(data, doc_json, title, refs, linked, images=None):
+    """The report alone as (PDF bytes, links): see render_report_pdf. Without an annexure to follow (`linked` false) it
+    is made an even number of pages, and links is None. Pictures go in as stand-ins of `images`, if given."""
+    texts, meta = refs
+    links = [] if linked else None
+    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, linked, meta), images),
+                                  data.get("margins"), data.get("pageNumbers"), links)
+    if not linked:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            if doc.page_count % 2:  # an even number of pages, so the report ends on the back of a sheet
+                last = doc[-1].rect
+                doc.new_page(-1, width=last.width, height=last.height)
+                pdf_bytes = doc.tobytes(garbage=4, deflate=True)
+    return pdf_bytes, links
+
+
+def _report_pdf_body(report_id, data, doc_json, title, turn):
+    """The body of the report's PDF export: streamed where it can be, with its pictures loaded as they are written.
+    The turn is given back when the body has been sent, or here if it is all built already."""
+    import pikepdf
+    texts, positions, total, meta = annexure_ref_data(report_id)
+    payload = None
+    if request.args.get("annexures") == "1":
+        payload = _annexure_payload(report_id, storage.get_annexure(report_id))
+    # Snippets link to their annexure page only when the annexure is part of the file.
+    linked = bool(payload and payload["documents"])
+    images = export_stream.PdfImages()
+    pdf_bytes, links = _report_pdf(data, doc_json, title, (texts, meta), linked, images)
+    report = pikepdf.open(io.BytesIO(pdf_bytes))
+    if images and not images.mark(report):
+        app.logger.warning("Report %s: not every picture's stand-in was found; building it with the pictures in memory", report_id)
+        report.close()
+        images = None
+        pdf_bytes, links = _report_pdf(data, doc_json, title, (texts, meta), linked)
+        report = pikepdf.open(io.BytesIO(pdf_bytes))
+    if not linked:
+        chunks = (lambda: images.stream(report)) if images else (lambda: _stream_pikepdf(report))
+        return _Stream(chunks, [report], release=turn.release)
+    try:
+        return _annexure_stream(payload, report=report, links=links, positions=positions, turn=turn, images=images)
+    except _NeedWholeDocument:
+        app.logger.warning("qpdf could not open a source of report %s's annexure; building it in memory", report_id, exc_info=True)
+    turn = _Turn()  # _annexure_stream gave it back
+    try:
+        if images:
+            pdf_bytes, links = _report_pdf(data, doc_json, title, (texts, meta), linked)
+        return _report_with_annexure_whole(pdf_bytes, payload, links, positions, total)
+    finally:
+        turn.release()
 
 
 @app.route("/api/report/<report_id>/export")
@@ -5084,30 +5316,13 @@ def api_report_export(report_id):
     if not doc_json.get("content"):
         raise DocumentError("Report is empty — add some content before exporting", 400)
 
-    texts, positions, total, meta = annexure_ref_data(report_id)
-    payload = None
-    if request.args.get("annexures") == "1":
-        payload = _annexure_payload(report_id, storage.get_annexure(report_id))
-    # Snippets link to their annexure page only when the annexure is part of the file.
-    links = [] if payload and payload["documents"] else None
-    pdf_bytes = render_report_pdf(title, inline_doc_images(resolve_snippet_refs(doc_json, texts, links is not None, meta)),
-                                  data.get("margins"), data.get("pageNumbers"), links)
-
-    body = pdf_bytes
-    if links is None:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-            if doc.page_count % 2:  # an even number of pages, so the report ends on the back of a sheet
-                last = doc[-1].rect
-                doc.new_page(-1, width=last.width, height=last.height)
-                body = doc.tobytes(garbage=4, deflate=True)
-    if links is not None:
-        try:
-            body = _annexure_stream(payload, report_pdf=pdf_bytes, links=links, positions=positions)
-        except _NeedWholeDocument:
-            app.logger.warning("qpdf could not open a source of report %s's annexure; building it in memory", report_id, exc_info=True)
-            body = _report_with_annexure_whole(pdf_bytes, payload, links, positions, total)
-
-    log_activity("download", "report", report_id, "PDF" + (" with annexures" if payload else ""))
+    turn = _Turn()  # one export at a time: each needs a good part of this server's memory
+    try:
+        body = _report_pdf_body(report_id, data, doc_json, title, turn)
+    except BaseException:
+        turn.release()
+        raise
+    log_activity("download", "report", report_id, "PDF" + (" with annexures" if request.args.get("annexures") == "1" else ""))
     resp = Response(body, mimetype="application/pdf")
     resp.headers["Cache-Control"] = "no-store"
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-") or report_id
@@ -5137,13 +5352,29 @@ def api_report_export_docx(report_id):
     if payload["documents"] and payload["listOfDocuments"]["enabled"]:
         list_of_documents = (annexure_list_context(data, include_doc=True), _annexure_list_rows(payload))
         payload["listOfDocuments"]["enabled"] = False
-    annexure_pdf = _annexure_pdf_bytes(payload) if payload["documents"] else None
-    docx_bytes = render_report_docx(title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id))),
-                                    data.get("margins"), data.get("pageNumbers"), annexure_pdf, list_of_documents)
+    images = export_stream.DocxImages()
+    turn = _Turn()  # one export at a time
+    to_close = []
+    try:
+        pages = None
+        if payload["documents"]:
+            try:
+                pages, to_close = _annexure_page_images(payload)
+            except _NeedWholeDocument:
+                app.logger.warning("qpdf could not open a source of report %s's annexure; building it in memory", report_id, exc_info=True)
+                pages, to_close = _annexure_page_images_whole(payload)
+        skeleton = render_report_docx(
+            title, inline_doc_images(resolve_snippet_refs(doc_json, *annexure_ref_texts_meta(report_id)), images),
+            data.get("margins"), data.get("pageNumbers"), pages, list_of_documents, images)
+    except BaseException:
+        for obj in to_close:
+            obj.close()
+        turn.release()
+        raise
 
     log_activity("download", "report", report_id, "Word")
     resp = Response(
-        docx_bytes,
+        _Stream(lambda: images.stream(skeleton), to_close, release=turn.release),
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
     resp.headers["Cache-Control"] = "no-store"

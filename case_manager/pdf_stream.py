@@ -7,7 +7,7 @@ import queue
 import threading
 
 
-def stream_pikepdf(pdf):
+def stream_pikepdf(pdf, **save_options):
     """Yields the bytes of saving `pdf` as it is written, so a big PDF is never assembled in memory. qpdf
     pulls page data out of its sources as it writes; saving runs in a worker thread feeding a small
     bounded queue, which also gives backpressure when the client is slow."""
@@ -48,7 +48,7 @@ def stream_pikepdf(pdf):
     def work():
         try:
             w = Writer()
-            pdf.save(w)
+            pdf.save(w, **save_options)
             w.flush_all()
             q.put(finished)
         except BaseException as exc:  # reaches the consumer below; a stopped stream just ends

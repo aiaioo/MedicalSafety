@@ -69,6 +69,23 @@ Certbot wrote; it is a record, not applied by deploy.sh). It must keep
 Case Plan) and the email sender from the domain the visitor used, and gets it
 from that header. `X-Forwarded-For`/`-Proto` pair with `TRUSTED_PROXY_HOPS=1`.
 
+## Memory use
+
+The app logs the memory its process is using (`memlog.py`): a line after each request, one around each case tracker
+reload, and a sample whenever the total moves by 50 MB (and every 10 minutes).
+
+```bash
+journalctl -u case-manager | grep ' memory '
+```
+
+Follow `total` (RAM plus swap, in MB); `change` is how much it moved during that request or reload.
+
+When a request or reload leaves the process 32 MB bigger than before, it also gives freed memory back to the system
+(a `memory trim` line says how much).
+
+Report exports (PDF and Word) are written a piece at a time (`export_stream.py`) and run one at a time, along with
+the annexure PDF.
+
 ## Case tracker
 
 `app.py` mounts the case progress crawler's viewer (`../case_progress_crawler/viewer.py`) at `/case_tracker/`, in the
