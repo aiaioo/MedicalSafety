@@ -1,5 +1,4 @@
 {% extends "case_tracker/base.html" %}
-{% from "case_tracker/_pager.html" import pager as page_nav %}
 {% block title %}Hearings{% endblock %}
 {% block top %}{% include "case_tracker/_search.html" %}{% endblock %}
 {% block body %}
@@ -16,25 +15,5 @@
   <noscript><button>Filter</button></noscript>
   <span class="muted">{{ total }} hearing dates</span>
 </form>
-{% macro dates_pager() %}{{ page_nav('case_tracker.hearings', page, pages, first, first + days|length - 1, total, 'hearing dates', {'q': q or None, 'year': year or None, 'state': state}) }}{% endmacro %}
-{{ dates_pager() }}
-{% for date, entries in days %}
-<h2 id="{{ date }}"><a href="{{ url_for('case_tracker.day', date=date) }}">{{ date }}</a> <span class="muted">· {{ entries|length }} case{{ 's' if entries|length != 1 }}</span></h2>
-<table>
-  <tr><th>Case</th><th>Stage</th><th>Outcome</th><th>Next date</th></tr>
-  {% for c, h in entries %}
-  <tr class="{{ 'notheld' if h.held == 'no' }}">
-    <td><a href="{{ url_for('case_tracker.case', case_key=c.case_key) }}">{{ c.enquiry_id }}</a>{% if selected == 'all' %} <span class="tag">{{ c.court_label }}</span>{% endif %}</td>
-    <td class="muted">{{ h.purpose_tags.replace('_', ' ') }}</td>
-    <td>{% if h.held == 'no' %}<span class="muted">not held</span>
-      {% elif h.outcome_text %}{{ h.outcome_text|truncate(100) }}
-      {% elif h.record_excerpt %}{{ h.record_excerpt|truncate(100) }}
-      {% else %}<span class="muted">—</span>{% endif %}</td>
-    <td>{% set nd = h.next_date or (h.history.next if h.history) or h.next_sitting %}{% if nd %}<a href="{{ url_for('case_tracker.day', date=nd) }}">{{ nd }}</a>{% endif %}</td>
-  </tr>
-  {% endfor %}
-</table>
-<p class="muted"><a href="{{ url_for('case_tracker.day', date=date) }}">Full details for {{ date }} &rarr;</a></p>
-{% endfor %}
-{{ dates_pager() }}
+{% include "case_tracker/_hearing_dates.html" %}
 {% endblock %}

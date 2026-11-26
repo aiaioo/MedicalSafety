@@ -53,6 +53,7 @@
     const bar = document.getElementById('loadbar');
     const start = () => { bar.classList.remove('on'); void bar.offsetWidth; bar.classList.add('on'); };
     const stop = () => { bar.classList.remove('on'); };
+    window.loadingBar = {start, stop};
     document.addEventListener('click', e => {
       const a = e.target.closest && e.target.closest('a[href]');
       if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === '_blank' || a.hasAttribute('download')) return;
@@ -69,5 +70,6 @@
 <header><a href="{{ '/' if tracker_home != '/' else tracker_home }}" title="Home" aria-label="Home"><svg class="home" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg> Case progress</a></header>
 <nav class="courts" aria-label="Courts"><label class="state">State <select name="state" aria-label="State" onchange="location.href=this.value">{% for st in states %}<option value="{{ state_url(st) }}"{% if st == state %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>{% if court_choice and selections|length > 1 %}{% for id, label in selections.items() %}<a href="{{ url_for('case_tracker.select_court', sel=id) }}"{% if id == selected %} class="on" aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}{% endif %}{% if non_medical_count %}<a href="{{ url_for('case_tracker.non_medical', choice='hide' if show_non_medical else 'show') }}" title="Cases the keyword rules labelled not medical negligence">{{ 'Hide' if show_non_medical else 'Show' }} {{ non_medical_count }} non-medical</a>{% endif %}</nav>
 {% block body %}{% endblock %}
+{% include "case_tracker/_list_ajax.html" %}
 </body>
 </html>

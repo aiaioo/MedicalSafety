@@ -1,4 +1,5 @@
 {% from 'case_tracker/_macros.html' import label_badge %}
+<div id="case-list" data-list>
 {% set pg = paginate(cases) %}
 {% macro pager() %}{% if pg.pages > 1 %}<p class="pager muted">{{ pg.first }}–{{ pg.last }} of {{ pg.total }} ·
   {% if pg.prev %}<a href="{{ pg.prev }}">&larr; Previous</a>{% endif %}
@@ -30,3 +31,4 @@
   {% endfor %}
 </table>
 {{ pager() }}
+</div>

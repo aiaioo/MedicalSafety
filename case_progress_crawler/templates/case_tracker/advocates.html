@@ -1,7 +1,5 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}Advocates{% endblock %}
-{% from "case_tracker/_advocate_pct.html" import pct_cell, num_cell %}
-{% from "case_tracker/_pager.html" import pager as page_nav %}
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home', court='all', state=state) }}">&larr; All cases</a></p>{% endif %}
 <h1>Advocates</h1>
@@ -64,72 +62,5 @@
   </div>
   {% endfor %}
 </div>
-<div id="ranking">
-<form class="rank" method="get" action="{{ url_for('case_tracker.advocates') }}" style="margin:.2rem 0 1rem">
-  {% if period != 'all' %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
-  <input type="hidden" name="q" value="{{ q }}">
-  <label>Full table ranked by <select name="sort" data-ajax>{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
-  <input type="hidden" name="min" value="{{ min_cases }}">{% if sort_kind == 'share' %} <span class="muted">(lawyers with at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }})</span>{% endif %}
-  <noscript><button type="submit">Rank</button></noscript>
-  {% if sort == 'win_done' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Win rate: the share of a lawyer's completed cases (those that have ended, however they ended) that they won for their client, whichever side that was: the complaint allowed for a patient's lawyer, dismissed for a hospital's. Settled, withdrawn and returned cases count as completed but not as wins. Treat small numbers with care.</p>{% endif %}
-  {% if sort == 'won_years' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Won fastest: the median time from filing to the last hearing in the cases the lawyer won (for either side), shortest first, among lawyers with at least {{ min_cases }} won case{{ 's' if min_cases != 1 }} that have a filing date. Only consumer cases have one, so the KMC is not covered. The last hearing stands in for the decision date. <strong>These count complaints only, not appeals or other applications, and leave out dismissals for non-appearance, at admission or at the first hearing. Caution: they still rest on very few won cases per lawyer, and how long a case takes depends on when it was filed and how contested it was, so speed may reflect the cases a lawyer happened to have, not their skill.</strong></p>{% endif %}
-  {% if sort == 'won_hearings' %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Won in fewest hearings: the median number of hearings held in the cases the lawyer won (for either side), fewest first, among lawyers with at least {{ min_cases }} won case{{ 's' if min_cases != 1 }}. Fewer hearings means the case was decided in fewer sittings; it says nothing about how many years it took. <strong>These count complaints only, not appeals or other applications, and leave out dismissals for non-appearance, at admission or at the first hearing. Caution: they still rest on very few won cases per lawyer, and how long a case takes depends on when it was filed and how contested it was, so speed may reflect the cases a lawyer happened to have, not their skill.</strong></p>{% endif %}
-  {% if sort in ('patient', 'patient_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for patients: the share of a lawyer's {{ 'completed' if sort == 'patient_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'patient_done' }} that they won for a patient (the court allowed the complaint against the hospital). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'patient_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
-  {% if sort in ('hospital', 'hospital_done') %}<p class="muted" style="font-size:.9em;margin:.3rem 0">Best for hospitals: the share of a lawyer's {{ 'completed' if sort == 'hospital_done' else 'cases (open ones included)' }}{{ ' cases' if sort == 'hospital_done' }} that they won for a hospital or doctor (the court dismissed the complaint, including for non-prosecution). {{ 'Completed cases are those that have ended, however they ended.' if sort == 'hospital_done' else 'Every case counts in the total, including open ones, so a lawyer with many cases still running ranks lower.' }} Treat small numbers with care.</p>{% endif %}
-</form>
-{% macro pager() %}{{ page_nav('case_tracker.advocates', page, pages, first_rank, first_rank + advocates|length + below|length - 1, total, 'lawyers', {'q': q or None, 'sort': sort, 'min': min_cases, 'period': None if period == 'all' else period, 'state': state}) }}{% endmacro %}
-{% macro adv_row(a, rank) %}
-  <tr><td class="muted">{{ rank }}</td><td>{{ ct_link('advocate', a.slug, a.name) }}</td><td>{{ a.n }}</td><td>{{ a.patient }}</td><td>{{ a.hospital }}</td><td>{{ a.other_org }}</td>
-    {% set m = a.metrics %}<td>{{ pct_cell(m.closed_pct, m.closed, m.cases) }}</td><td>{{ pct_cell(m.won_pct, m.won, m.decided) }}</td><td>{{ pct_cell(m.closed_patient_pct|default(none), m.closed_patient|default(0), m.patient_cases|default(0)) }}</td><td>{{ pct_cell(m.won_patient_pct, m.won_patient, m.cases) }}</td><td>{{ pct_cell(m.won_patient_done_pct, m.won_patient, m.closed) }}</td><td>{{ pct_cell(m.closed_hospital_pct|default(none), m.closed_hospital|default(0), m.hospital_cases|default(0)) }}</td><td>{{ pct_cell(m.won_hospital_pct, m.won_hospital, m.cases) }}</td><td>{{ pct_cell(m.won_hospital_done_pct, m.won_hospital, m.closed) }}</td><td>{{ pct_cell(m.win_done_pct, m.won, m.closed) }}</td><td>{{ num_cell(m.won_years, m.n_won_time) }}</td><td>{{ num_cell(m.won_hearings, m.n_won_held) }}</td><td>{{ pct_cell(m.time_pct, m.time_n, m.time_of, 50) }}</td><td>{{ pct_cell(m.absent_pct, m.absent_n, m.absent_of, 50) }}</td>
-    <td>{{ num_cell(m.hearings_closed, m.n_hearings_closed) }}</td><td>{{ num_cell(m.hearings_open, m.n_hearings_open) }}</td><td>{{ num_cell(m.gap_days, m.n_gaps, 20) }}</td></tr>
-{% endmacro %}
-{{ pager() }}
-<table>
-  <tr><th>#</th><th>Advocate</th><th>Cases</th><th>For patient</th><th>For hospital</th><th>For other</th>
-    <th title="Share of their cases that are closed">% closed</th>
-    <th title="Of the cases the court decided (allowed or dismissed), the share their client won: a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed">% won</th>
-    <th title="Closed cases as a share of all the cases they act for patients in"{{ ' class=on' if sort == 'patient_close' }}>Close rate: patients</th>
-    <th title="Cases won for patients (complaint allowed against the hospital), as a share of all their cases"{{ ' class=on' if sort == 'patient' }}>Won for patients ÷ all cases</th>
-    <th title="Cases won for patients, as a share of their completed cases"{{ ' class=on' if sort == 'patient_done' }}>Won for patients ÷ completed</th>
-    <th title="Closed cases as a share of all the cases they act for hospitals in"{{ ' class=on' if sort == 'hospital_close' }}>Close rate: hospitals</th>
-    <th title="Cases won for hospitals (complaint dismissed), as a share of all their cases"{{ ' class=on' if sort == 'hospital' }}>Won for hospitals ÷ all cases</th>
-    <th title="Cases won for hospitals, as a share of their completed cases"{{ ' class=on' if sort == 'hospital_done' }}>Won for hospitals ÷ completed</th>
-    <th title="Cases won for either side, as a share of their completed cases"{{ ' class=on' if sort == 'win_done' }}>Win rate ÷ completed</th>
-    <th title="Median years from filing to the last hearing in the cases they won (either side; consumer cases only; complaints only, not appeals or other applications, and leaving out dismissals for non-appearance, at admission or at the first hearing)"{{ ' class=on' if sort == 'won_years' }}>Years per case won</th>
-    <th title="Median hearings held in the cases they won (either side; complaints only, not appeals or other applications, and leaving out dismissals for non-appearance, at admission or at the first hearing)"{{ ' class=on' if sort == 'won_hearings' }}>Hearings per case won</th>
-    <th title="Share of hearings in their cases where the record says their side asked for time">% adjourned</th>
-    <th title="Share of hearings in their cases where the record says their side was absent">% absent</th>
-    <th title="Median hearings held in their closed cases">Hearings per closed case</th>
-    <th title="Median hearings held so far in their open cases">Hearings per open case</th>
-    <th title="Median days between one hearing day and the next, across their cases">Median gap (days)</th></tr>
-  {% for a in advocates %}{{ adv_row(a, first_rank + loop.index0) }}
-  {% else %}{% if page > 1 %}{% elif not below %}<tr><td colspan="20">No advocates.</td></tr>{% else %}<tr><td colspan="20">No lawyer has at least {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }}.</td></tr>{% endif %}
-  {% endfor %}
-  {% if below %}
-  <tr class="divider"><td colspan="20">Below the minimum of {{ min_cases }} {{ min_unit if min_cases != 1 else min_unit[:-1] }} for ranking: {{ below_total }} lawyer{{ 's' if below_total != 1 }}, in the same order, not ranked</td></tr>
-  {% for a in below %}{{ adv_row(a, '') }}
-  {% endfor %}
-  {% endif %}
-</table>
-{{ pager() }}
-<p class="muted" style="font-size:.9em">% closed is of the advocate's cases in the tracker. % won is of the cases the court decided (allowed or dismissed): a patient's lawyer wins when the complaint is allowed, a hospital's lawyer when it is dismissed (including for non-prosecution); settled, withdrawn, returned and open cases are not counted. % adjourned and % absent are shares of the hearings in their cases (where the hospital's side is known) in which the court's record says their side asked for time or was absent. The record names the side, not the lawyer, and names a side only some of the time, so these are minimums. Hearings per case is the median number of hearings held, separately for their closed and their open cases (open cases are still going, so that number keeps rising); the median gap is the days between one hearing day and the next across all their cases. Figures in grey rest on very few cases, hearings or gaps. The tracker holds only the cases the crawler has found, and the KMC records name no lawyers, so these are not a lawyer's full record.</p>
-</div>
-<script>
-  // Changing "Full table ranked by" replaces just the ranking section, not the whole page.
-  document.addEventListener('change', async e => {
-    const sel = e.target;
-    if (!sel.matches('#ranking select[data-ajax]')) return;
-    const url = new URL(sel.form.action, location.href);
-    new URLSearchParams(new FormData(sel.form)).forEach((v, k) => url.searchParams.set(k, v));
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(r.status);
-      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-      document.getElementById('ranking').replaceWith(doc.getElementById('ranking'));
-      const top = document.querySelector('form.rank input[name=sort]');
-      if (top) top.value = url.searchParams.get('sort');
-      history.replaceState(null, '', url);
-    } catch (err) { location.href = url; }
-  });
-</script>
+{% include "case_tracker/_advocate_ranking.html" %}
 {% endblock %}

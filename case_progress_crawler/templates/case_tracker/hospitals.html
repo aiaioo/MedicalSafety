@@ -1,15 +1,5 @@
 {% extends "case_tracker/base.html" %}
 {% block title %}Hospitals{% endblock %}
-{% macro hosp_row(r, rank) %}
-  <tr><td class="muted">{{ rank }}</td><td>{{ ct_link('hospital', r.slug, r.name) }}</td><td>{{ r.cases }}</td>
-    <td>{% if r.ratio is not none %}{{ (100 * r.ratio)|round|int }}%{% else %}<span class="muted">&ndash;</span>{% endif %}</td>
-    <td>{% if r.ratio_all is not none %}{{ (100 * r.ratio_all)|round|int }}%{% else %}<span class="muted">&ndash;</span>{% endif %}</td>
-    <td>{{ r.closed }}{% if r.closed %} <span class="muted">({{ r.against }} against)</span>{% endif %}</td>
-    <td>{{ r.years if r.years is not none else '–' }}</td><td>{{ r.hearings if r.hearings is not none else '–' }}</td>
-    <td>{{ r.adjourned ~ '%' if r.adjourned is not none else '–' }}</td>
-    <td>{% for a, n, k in r.lawyers %}{{ ct_link('advocate', a, n) }} <span class="muted">{{ k }}</span>{{ '; ' if not loop.last }}{% else %}<span class="muted">&ndash;</span>{% endfor %}</td></tr>
-{% endmacro %}
-{% from "case_tracker/_pager.html" import pager as page_nav %}
 {% block body %}
 {% if not public %}<p><a href="{{ url_for('case_tracker.home', court='all', state=state) }}">&larr; All cases</a></p>{% endif %}
 <h1>Hospitals</h1>
@@ -56,48 +46,5 @@
   {% endfor %}
 </div>
 {% endfor %}
-<div id="ranking">
-<form class="rank" method="get" action="{{ url_for('case_tracker.hospitals') }}" style="margin:.2rem 0 1rem">
-  {% if period != 'all' %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
-  <input type="hidden" name="q" value="{{ q }}">
-  <label>Full table ranked by <select name="sort" data-ajax>{% for k, label in sorts %}<option value="{{ k }}"{{ ' selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
-  <noscript><button type="submit">Rank</button></noscript>
-</form>
-{{ page_nav('case_tracker.hospitals', page, pages, first_rank, first_rank + hospitals|length + below|length - 1, found_total, 'hospitals', {'q': q or None, 'sort': sort, 'period': None if period == 'all' else period, 'state': state}) }}
-<table>
-  <tr><th>#</th><th>Hospital</th><th{{ ' class=on' if sort == 'cases' }}>Cases</th>
-    <th title="Share of its closed cases decided against it"{{ ' class=on' if sort == 'against' }}>% against</th>
-    <th title="Cases decided against it, as a share of all its cases, open ones included"{{ ' class=on' if sort == 'against_all' }}>Against ÷ all cases</th><th>Closed cases</th>
-    <th title="Average years from filing to the last hearing in its closed cases (consumer cases only)"{{ ' class=on' if sort == 'years' }}>Avg years</th>
-    <th title="Average hearings held in its closed cases"{{ ' class=on' if sort == 'hearings' }}>Avg hearings</th>
-    <th title="Share of hearings where the record says its side asked for time"{{ ' class=on' if sort == 'adjourned' }}>% adjourned</th>
-    <th>Most used lawyers</th></tr>
-  {% for r in hospitals %}{{ hosp_row(r, first_rank + loop.index0) }}
-  {% else %}{% if page > 1 %}{% else %}<tr><td colspan="10">No hospital {{ 'matches.' if q else 'has the figures to rank by.' }}</td></tr>{% endif %}
-  {% endfor %}
-  {% if below %}
-  <tr class="divider"><td colspan="10">Without the figure to rank by (fewer than {{ min_closed }} closed cases, or no data): {{ below_total }} hospital{{ 's' if below_total != 1 }}, by cases, not ranked</td></tr>
-  {% for r in below %}{{ hosp_row(r, '') }}
-  {% endfor %}
-  {% endif %}
-</table>
-{{ page_nav('case_tracker.hospitals', page, pages, first_rank, first_rank + hospitals|length + below|length - 1, found_total, 'hospitals', {'q': q or None, 'sort': sort, 'period': None if period == 'all' else period, 'state': state}) }}
-<p class="muted" style="font-size:.9em">% against is of the hospital's closed cases, as in the analytics dashboard; it is shown only for hospitals with at least {{ min_closed }} closed cases. Against ÷ all cases divides the cases decided against the hospital by all its cases, open ones included, so a hospital with many cases still running ranks lower; it needs at least {{ min_closed }} cases. Open cases, and cases withdrawn, settled, returned or disposed without a stated result, are not counted as against. Averages are over closed cases; years need a filing date, so the KMC cases are not covered. % adjourned is a minimum: the record names the side that asked for time only some of the time. Most used lawyers are those on the hospital's side, with the number of its cases they appear in. The tracker holds only the cases the crawler has found.</p>
-</div>
-<script>
-  // Changing "Full table ranked by" replaces just the ranking section, not the whole page.
-  document.addEventListener('change', async e => {
-    const sel = e.target;
-    if (!sel.matches('#ranking select[data-ajax]')) return;
-    const url = new URL(sel.form.action, location.href);
-    new URLSearchParams(new FormData(sel.form)).forEach((v, k) => url.searchParams.set(k, v));
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(r.status);
-      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-      document.getElementById('ranking').replaceWith(doc.getElementById('ranking'));
-      history.replaceState(null, '', url);
-    } catch (err) { location.href = url; }
-  });
-</script>
+{% include "case_tracker/_hospital_ranking.html" %}
 {% endblock %}

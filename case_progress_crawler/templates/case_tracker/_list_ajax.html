@@ -1,0 +1,60 @@
+<script>
+  // A list split into pages (an element with data-list) changes in place: choosing another page, or what the full
+  // table is ranked by, asks for just that element (header X-List) and puts it where the old one was. Anything that
+  // goes wrong, such as a sign-in page coming back instead, falls back to loading the whole page.
+  (() => {
+    window.listShows = new URL(location.href);  // the address whose content is on screen
+    let latest = 0, loading = false;
+    async function show(url, how) {  // how: 'push' a history entry, 'replace' this one, or 'pop' (history moved already)
+      const box = document.querySelector('[data-list]'), turn = ++latest;
+      box.style.opacity = .5;
+      loading = true;
+      window.loadingBar.start();
+      try {
+        const r = await fetch(url, {headers: {'X-List': '1'}});
+        if (!r.ok) throw new Error(r.status);
+        const fresh = new DOMParser().parseFromString(await r.text(), 'text/html').getElementById(box.id);
+        if (turn !== latest) return;  // a later choice has taken over
+        if (!fresh) throw new Error('no list in the reply');
+        box.replaceWith(fresh);
+        loading = false;
+        if (how === 'push') history.pushState(null, '', url);
+        if (how === 'replace') history.replaceState(null, '', url);
+        window.listShows = new URL(url);
+        const ranked = fresh.querySelector('select[name=sort]');  // the page's other ranking form keeps the same choice
+        if (ranked) document.querySelectorAll('form.rank input[name=sort]').forEach(i => i.value = ranked.value);
+        if (how === 'push' && fresh.getBoundingClientRect().top < 0) fresh.scrollIntoView();
+        window.loadingBar.stop();
+      } catch (err) {
+        if (turn !== latest) return;
+        if (how === 'pop') location.reload(); else location.href = url;
+      }
+    }
+    // Listens before the loading bar's own listener (capture), which leaves clicks already dealt with alone.
+    document.addEventListener('click', e => {
+      const a = e.target.closest && e.target.closest('[data-list] .pager a[href]');
+      if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      const url = new URL(a.href), period = new URL(location.href).searchParams.get('period');
+      // The years chosen for the dashboard may have changed since the list was drawn: keep the present choice.
+      if (period) url.searchParams.set('period', period); else url.searchParams.delete('period');
+      show(url, 'push');
+    }, true);
+    document.addEventListener('change', e => {
+      const sel = e.target;
+      if (!sel.matches('[data-list] select[data-ajax]')) return;
+      const url = new URL(sel.form.action, location.href);
+      new URLSearchParams(new FormData(sel.form)).forEach((v, k) => url.searchParams.set(k, v));
+      show(url, 'replace');
+    });
+    // Back and Forward between pages of a list.
+    window.addEventListener('popstate', () => {
+      if (!document.querySelector('[data-list]')) return;
+      const url = new URL(location.href), was = window.listShows;
+      if (!loading && url.pathname === was.pathname && url.search === was.search) return;  // only the #anchor changed
+      // The years chosen also change the rest of the page: for those, load it afresh.
+      if (url.pathname !== was.pathname || url.searchParams.get('period') !== was.searchParams.get('period')) location.reload();
+      else show(url, 'pop');
+    });
+  })();
+</script>

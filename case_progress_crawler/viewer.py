@@ -49,7 +49,7 @@ from collections import Counter, defaultdict
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import fitz  # PyMuPDF
-from flask import Blueprint, Flask, Response, g, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import Blueprint, Flask, Response, g, abort, jsonify, make_response, redirect, render_template, request, send_from_directory, url_for
 from markupsafe import Markup, escape
 
 import progress_storage as storage
@@ -994,6 +994,19 @@ def select_court(sel):
     return resp
 
 
+def wants_list():
+    """True when the page's script asks for only its list, to put in place of the one shown (templates/case_tracker/_list_ajax.html)."""
+    return request.headers.get("X-List") == "1"
+
+
+def list_only(template, **context):
+    """Just the list's part of a page, kept out of caches: the same address also serves the whole page."""
+    resp = make_response(render_template(template, **context))
+    resp.headers["Cache-Control"] = "no-store"
+    resp.vary.add("X-List")
+    return resp
+
+
 PAGE_SIZE = 50
 
 
@@ -1018,13 +1031,7 @@ def home():
     outcome = request.args.get("outcome")
     if outcome not in {k for k, _ in OUTCOMES}:
         outcome = None
-    p = period()  # the panel has its own years filter and always covers both courts
     listed = {"medical_only": not show_non_medical(), **search(q)}
-    if q:  # a search changes the cases, so it is worked out live
-        everything = cases_by_key(storage.view_case_keys(st, court_ids("all", st), **listed))
-        stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
-    else:
-        stats = panel_stats(st, "all", period_code(next(x for x in period_specs() if x[0] == p)), show_non_medical())
     keys = storage.view_case_keys(st, ids, year=year, outcome=outcome, **listed)
     judgement = request.args.get("judgement")
     if judgement != "all" and judgement not in dict(JUDGEMENT_CLASSES):
@@ -1036,6 +1043,14 @@ def home():
         keys = [k for k in keys if (j := judgement_of(k)) and j["reason"] == reason]
     else:
         reason = None
+    if wants_list():
+        return list_only("case_tracker/_cases_table.html", cases=CaseList(keys), links=court_links())
+    p = period()  # the panel has its own years filter and always covers both courts
+    if q:  # a search changes the cases, so it is worked out live
+        everything = cases_by_key(storage.view_case_keys(st, court_ids("all", st), **listed))
+        stats = {**analytics([c for c in everything if in_period(c, p)], everything), "as_of": datetime.date.today().isoformat()}
+    else:
+        stats = panel_stats(st, "all", period_code(next(x for x in period_specs() if x[0] == p)), show_non_medical())
     judgement_label = "All judgements" if judgement == "all" else dict(JUDGEMENT_CLASSES).get(judgement)
     reason_label = {k: l for k, l, _ in DISMISSAL_REASONS}.get(reason)
     years = sorted((y for y in storage.view_years(st, ids) if y >= MIN_YEAR), reverse=True)
@@ -1277,7 +1292,6 @@ def hospitals():
     sort = sort if sort in HOSPITAL_RANKS else "cases"
     rows = analytics_page("hospitals", period())
     found = [r for r in rows if not q or q in r["name"].lower()]
-    boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
     ranked, below = rank_hospitals(found, sort)
     ranked_total, below_total = len(ranked), len(below)
     found_total = ranked_total + below_total
@@ -1285,9 +1299,12 @@ def hospitals():
     page = min(max(request.args.get("page", 1, type=int), 1), pages)
     lo, hi = (page - 1) * TABLE_PAGE_SIZE, page * TABLE_PAGE_SIZE
     ranked, below = ranked[lo:hi], below[max(0, lo - ranked_total):max(0, hi - ranked_total)]
-    return render_template("case_tracker/hospitals.html", hospitals=ranked, below=below, below_total=below_total, boards=boards, total=len(rows), q=q, sort=sort,
-                           page=page, pages=pages, first_rank=lo + 1, found_total=found_total,
-                           sorts=HOSPITAL_SORTS, min_closed=MIN_CLOSED_FOR_RANKING)
+    table = dict(hospitals=ranked, below=below, below_total=below_total, q=q, sort=sort, sorts=HOSPITAL_SORTS,
+                 page=page, pages=pages, first_rank=lo + 1, found_total=found_total, min_closed=MIN_CLOSED_FOR_RANKING)
+    if wants_list():
+        return list_only("case_tracker/_hospital_ranking.html", **table)
+    boards = [{"group": g, "title": t, "rows": [{**r, "text": HOSPITAL_RANKS[k][2](r)} for r in rank_hospitals(found, k)[0][:10]]} for g, t, k in HOSPITAL_BOARDS]
+    return render_template("case_tracker/hospitals.html", boards=boards, total=len(rows), **table)
 
 
 @bp.route("/hospital/<slug>")
@@ -1298,6 +1315,8 @@ def hospital(slug):
     if name is None:
         abort(404)
     keys = storage.view_linked_keys(st, ids, "hospital", slug, medical_only=not show_non_medical())
+    if wants_list():
+        return list_only("case_tracker/_cases_table.html", cases=CaseList(keys), links=court_links())
     return render_template("case_tracker/hospital.html", h={"slug": slug, "name": name, "cases": CaseList(keys)}, links=court_links())
 
 
@@ -1539,7 +1558,6 @@ def advocates():
     min_cases = request.args.get("min", type=int)
     min_cases = min_cases if min_cases in ADVOCATE_MIN_CASES else DEFAULT_MIN_CASES
     found = [a for a in analytics_page("advocates", period()) if not q or q in a["name"].lower()]
-    boards = advocate_boards(found, min_cases)
     advs, below = rank_advocates(found, sort, min_cases)
     ranked_total, below_total = len(advs), len(below)
     total = ranked_total + below_total
@@ -1547,9 +1565,12 @@ def advocates():
     page = min(max(request.args.get("page", 1, type=int), 1), pages)
     lo, hi = (page - 1) * TABLE_PAGE_SIZE, page * TABLE_PAGE_SIZE
     advs, below, first_rank = advs[lo:hi], below[max(0, lo - ranked_total):max(0, hi - ranked_total)], lo + 1
-    return render_template("case_tracker/advocates.html", advocates=advs, below=below, total=total, below_total=below_total, page=page, pages=pages, first_rank=first_rank, page_size=TABLE_PAGE_SIZE, q=q, sort=sort, sorts=ADVOCATE_SORTS, boards=boards,
-                           sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "won cases" if RANKINGS[sort]["kind"] == "speed" else "cases",
-                           min_cases=min_cases, min_options=ADVOCATE_MIN_CASES)
+    table = dict(advocates=advs, below=below, total=total, below_total=below_total, page=page, pages=pages, first_rank=first_rank, page_size=TABLE_PAGE_SIZE, q=q, sort=sort, sorts=ADVOCATE_SORTS,
+                 sort_kind=RANKINGS[sort]["kind"], min_unit="completed cases" if RANKINGS[sort].get("of") == "closed" else "won cases" if RANKINGS[sort]["kind"] == "speed" else "cases",
+                 min_cases=min_cases)
+    if wants_list():
+        return list_only("case_tracker/_advocate_ranking.html", **table)
+    return render_template("case_tracker/advocates.html", boards=advocate_boards(found, min_cases), min_options=ADVOCATE_MIN_CASES, **table)
 
 
 @bp.route("/advocate/<slug>")
@@ -1561,6 +1582,8 @@ def advocate(slug):
     theirs = cases_by_key(storage.view_linked_keys(st, court_ids(sel, st), "advocate", slug))
     a = {"slug": slug, "name": name, "sides": {c["case_key"]: sorted(c["advocate_info"][slug]["roles"]) for c in theirs}}
     cases = [c for c in theirs if visible(c)]
+    if wants_list():
+        return list_only("case_tracker/_cases_table.html", cases=cases, sides=a["sides"], links=court_links())
     return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(), m=advocate_metrics(cases, a["sides"]),
                            complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
                            respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
@@ -1583,8 +1606,11 @@ def hearings():
     entries = defaultdict(list)
     for date, c, h in storage.view_hearings_on(st, ids, shown, **listed):
         entries[date].append((c, h))
-    return render_template("case_tracker/hearings.html", days=[(d, entries[d]) for d in shown], total=len(dates), page=page, pages=pages,
-                           first=(page - 1) * HEARING_DATES_PER_PAGE + 1, years=sorted(storage.view_hearing_years(st, ids), reverse=True), year=year, q=q)
+    listing = dict(days=[(d, entries[d]) for d in shown], total=len(dates), page=page, pages=pages,
+                   first=(page - 1) * HEARING_DATES_PER_PAGE + 1, year=year, q=q)
+    if wants_list():
+        return list_only("case_tracker/_hearing_dates.html", **listing)
+    return render_template("case_tracker/hearings.html", years=sorted(storage.view_hearing_years(st, ids), reverse=True), **listing)
 
 
 @bp.route("/day/<date>")

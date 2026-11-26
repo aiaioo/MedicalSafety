@@ -9,14 +9,17 @@
       if (!a || !box || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
       e.preventDefault();
       box.style.opacity = .5;
+      const url = new URL(a.href), page = new URL(location.href).searchParams.get('page');  // the list stays on its page
+      if (page) url.searchParams.set('page', page); else url.searchParams.delete('page');
       try {
-        const r = await fetch(a.href);
+        const r = await fetch(url);
         if (!r.ok) throw new Error(r.status);
         const fresh = new DOMParser().parseFromString(await r.text(), 'text/html').getElementById('analytics');
         if (!fresh) throw new Error('no analytics in the reply');
         box.replaceWith(fresh);
-        history.replaceState(null, '', a.href);
-      } catch (err) { location.href = a.href; }
+        history.replaceState(null, '', url);
+        window.listShows = url;
+      } catch (err) { location.href = url; }
     });
   }
 </script>
