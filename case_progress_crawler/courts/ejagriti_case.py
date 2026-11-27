@@ -121,7 +121,7 @@ class CaseDetailsPersister(ABC):
 class StoragePersister(CaseDetailsPersister):
     """Keeps a case's details with progress_storage.py: the JSON documents (status.json, history.json, meta.json,
     classification.json, no_orders.json) and their earlier versions (versions/<stem>_<stamp>.json) in the
-    database, the orders (orders/<date>_<kind>[_vN].pdf|html) as files."""
+    database, the orders (orders/<date>_<kind>[_vN].pdf|html) as files in the shared order store."""
 
     def _key(self, case_number):
         from analysis_consumer import case_key  # the same key the analysis and the viewer use

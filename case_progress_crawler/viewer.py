@@ -49,7 +49,7 @@ from collections import Counter, defaultdict
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import fitz  # PyMuPDF
-from flask import Blueprint, Flask, Response, g, abort, jsonify, make_response, redirect, render_template, request, send_from_directory, url_for
+from flask import Blueprint, Flask, Response, g, abort, jsonify, make_response, redirect, render_template, request, send_file, send_from_directory, url_for
 from markupsafe import Markup, escape
 
 import progress_storage as storage
@@ -1168,10 +1168,10 @@ def hearing_files(case_key, court_id, date):
             if kind == "post_hearing":
                 found += [(PDF_DIR / PDF_COURT / kind / n, n) for n in names]
     elif court_id and kind_of(court_id) == "consumer":
-        for p in storage.order_files(case_key):
-            m = ORDER_RE.fullmatch(p.name)
+        for o in storage.order_files(case_key):
+            m = ORDER_RE.fullmatch(o.name)
             if m and _iso_date(m["date"]) == date:
-                found.append((p, p.name))
+                found.append((o.path, o.name))
     return found
 
 
@@ -1698,15 +1698,15 @@ def orders_of(case_key):
     """{hearing date: [order]} for a case's saved orders, oldest version first; an order is
     {"date", "name", "label", "ext", "text"}."""
     found = defaultdict(list)
-    for p in storage.order_files(case_key):
-        m = ORDER_RE.fullmatch(p.name)
+    for o in storage.order_files(case_key):
+        m = ORDER_RE.fullmatch(o.name)
         if m:
             label = ORDER_KINDS[m["kind"]] + (f" (version {m['v']})" if m["v"] else "")
             try:
-                text = order_text(p)
+                text = order_text(o.path)
             except Exception:  # an unreadable file still gets its link
                 text = ""
-            found[_iso_date(m["date"])].append({"date": _iso_date(m["date"]), "name": p.name, "label": label, "ext": m["ext"], "text": text})
+            found[_iso_date(m["date"])].append({"date": _iso_date(m["date"]), "name": o.name, "label": label, "ext": m["ext"], "text": text})
     for lst in found.values():
         lst.sort(key=lambda o: (o["label"].split()[0], int(re.search(r"\d+", o["label"]).group()) if "version" in o["label"] else 1))
     return found
@@ -1754,8 +1754,8 @@ def council_order(court, name):
 
 @bp.app_template_global()
 def judgement_href(c, name):
-    """(link, kind shown on it) of a case's judgement file: the consumer courts' PDFs are served from the case's folder, a medical
-    council's order from its own."""
+    """(link, kind shown on it) of a case's judgement file: a consumer court's PDF is one of the case's orders, a medical
+    council's order is in the council's folder."""
     if c["court"] in COUNCIL_ORDER_DIRS:
         return url_for("case_tracker.council_order", court=c["court"], name=name), name.rsplit(".", 1)[-1].upper()
     return url_for("case_tracker.order_file", case_key=c["case_key"], name=name), "PDF"
@@ -1766,7 +1766,10 @@ def order_file(case_key, name):
     """A saved order; HTML orders come from the court's portal, so they are sandboxed (no scripts)."""
     if not ORDER_RE.fullmatch(name) or not re.fullmatch(r"[\w-]+", case_key):
         abort(404)
-    resp = send_from_directory(storage.order_dir(case_key), name)
+    order = storage.find_order_file(case_key, name)
+    if order is None or not order.path.is_file():
+        abort(404)
+    resp = send_file(order.path, download_name=name)  # the stored file is named by its content: send the order's name
     if name.endswith(".html"):  # not on PDFs: a sandbox stops the browser's PDF viewer
         resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
     return resp

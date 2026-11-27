@@ -65,15 +65,15 @@ def dismissal_reason(text):
     return next((k for k, _, rx in DISMISSAL_REASONS if rx and re.search(rx, tail, re.I)), "other")
 
 
-def judgement_file(case_key):
-    """The case's judgement PDF (latest date, then latest version) as a Path, or None."""
+def latest_judgement(orders):
+    """The judgement PDF (latest date, then latest version) among a case's orders (storage.OrderFile), or None."""
     best = None
-    for p in storage.order_files(case_key):
-        m = ORDER_RE.fullmatch(p.name)
+    for o in orders:
+        m = ORDER_RE.fullmatch(o.name)
         if m and m["kind"] == "judgement" and m["ext"] == "pdf":
             k = (_iso_date(m["date"]), int(m["v"] or 1))
             if best is None or k > best[0]:
-                best = (k, p)
+                best = (k, o)
     return best[1] if best else None
 
 
@@ -104,40 +104,46 @@ def _result(row):
 
 def is_council_row(row):
     """Is this stored row of a medical council's final order (analysis_dmc.py writes those; their file is not named like a consumer
-    court's order)? Such a case has no folder of order files here, so its row is the whole record."""
+    court's order)? Such a case has no orders in case_orders, so its row is the whole record."""
     return bool(row) and not ORDER_RE.fullmatch(row["file"])
 
 
-def _current(row, path):
-    return bool(row) and row["file"] == path.name and row["size"] == path.stat().st_size and row["version"] == CLASSIFIER_VERSION
+def _current(row, order):
+    return bool(row) and row["file"] == order.name and row["size"] == order.size and row["version"] == CLASSIFIER_VERSION
 
 
-_rows, _rows_at, _lock = {}, 0.0, threading.Lock()
-RELOAD_AFTER = 60  # seconds: how long the viewer trusts its copy of the table (the daily run writes it)
+_copies, _lock = {}, threading.Lock()  # what was read: (when, the rows)
+RELOAD_AFTER = 60  # seconds: how long the viewer trusts its copy of a table (the daily crawl writes them)
+
+
+def _recent(read):
+    """read()'s answer, at most RELOAD_AFTER old: the analytics ask about every case, far too often to query each time."""
+    with _lock:
+        at, rows = _copies.get(read.__name__, (0.0, None))
+        if time.time() - at > RELOAD_AFTER:
+            at, rows = time.time(), read()
+            _copies[read.__name__] = (at, rows)
+        return rows
 
 
 def _stored():
-    global _rows, _rows_at
-    with _lock:
-        if time.time() - _rows_at > RELOAD_AFTER:
-            _rows, _rows_at = storage.load_judgements(), time.time()
-        return _rows
+    return _recent(storage.load_judgements)
 
 
 def judgement_of(case_key):
     """{"name", "class", "label", "reason"} for a case's judgement PDF, or None if it has none. Uses the stored
     classification; classifies and stores it when there is none (or it is out of date)."""
-    path = judgement_file(case_key)
-    if path is None:
+    order = latest_judgement(_recent(storage.load_judgement_orders).get(case_key, []))
+    if order is None:
         row = _stored().get(case_key)
         return _result(row) if is_council_row(row) else None
     row = _stored().get(case_key)
-    if not _current(row, path):
+    if not _current(row, order):
         try:
-            cls, reason = classify_file(path)
+            cls, reason = classify_file(order.path)
         except Exception:
-            return {"name": path.name, "class": "scanned", "label": dict(JUDGEMENT_CLASSES)["scanned"], "reason": None}  # unreadable: not stored, so tried again
-        row = {"file": path.name, "size": path.stat().st_size, "class": cls, "reason": reason, "version": CLASSIFIER_VERSION}
+            return {"name": order.name, "class": "scanned", "label": dict(JUDGEMENT_CLASSES)["scanned"], "reason": None}  # unreadable: not stored, so tried again
+        row = {"file": order.name, "size": order.size, "class": cls, "reason": reason, "version": CLASSIFIER_VERSION}
         try:
             storage.save_judgement(case_key, **row)
         except Exception:
@@ -150,22 +156,21 @@ def main():
     stored = storage.load_judgements()
     done = skipped = failed = 0
     seen = set()
-    for folder in sorted(storage.CASE_DETAILS_DIR.glob("*")):
-        case_key = folder.name
-        path = judgement_file(case_key)
-        if path is None:
+    for case_key, orders in sorted(storage.load_judgement_orders().items()):
+        order = latest_judgement(orders)
+        if order is None:
             continue
         seen.add(case_key)
-        if _current(stored.get(case_key), path):
+        if _current(stored.get(case_key), order):
             skipped += 1
             continue
         try:
-            cls, reason = classify_file(path)
+            cls, reason = classify_file(order.path)
         except Exception as e:
             print(f"!! {case_key}: {e}")
             failed += 1
             continue
-        storage.save_judgement(case_key, file=path.name, size=path.stat().st_size, **{"class": cls}, reason=reason, version=CLASSIFIER_VERSION)
+        storage.save_judgement(case_key, file=order.name, size=order.size, **{"class": cls}, reason=reason, version=CLASSIFIER_VERSION)
         done += 1
     seen |= {k for k, row in stored.items() if is_council_row(row)}  # a council's rows are kept up to date by its own analysis
     gone = storage.delete_judgements_except(seen) if seen else 0

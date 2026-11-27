@@ -12,20 +12,23 @@ In the database (by court id, e.g. "kmc", "consumer", where a function takes one
   case_links        viewer.py:           hand-entered links per case                     load_links / save_case_links
   cause_lists       courts/consumer.py:  the e-Jagriti cause lists, every revision       save_cause_list / latest_cause_lists
   case_documents    courts/ejagriti_case: a case's status, history, meta, classification  load_case_document / save_case_document ...
+  case_orders       courts/ejagriti_case: which stored file each order of a case is       order_files / save_order_file ...
   analysis_*        analysis*.py:        status, parties, advocates, timeline, enquiries replace_analysis / load_analysis
   view_*            dashboard_stats.py:  the cases and hearings as the pages show them     replace_views / view_*
 
-On disk (files, not data): the order PDFs and HTML pages in case_details/consumer/<case key>/orders/ (order_path,
-order_files, save_order_file ...), and the KMC's PDFs in pdfs/, which the court crawlers and the viewer handle as
-paths. Every read here is of the whole current state; every write is one transaction.
+On disk (files, not data): the order PDFs and HTML pages in case_details/store/, one file for each distinct content
+however many orders are that file (case_orders says which), and the KMC's PDFs in pdfs/, which the court crawlers and
+the viewer handle as paths. Every read here is of the whole current state; every write is one transaction.
 """
 
+import hashlib
 import json
 import os
 import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 import psycopg2
 import psycopg2.extras
@@ -33,7 +36,8 @@ from psycopg2.pool import ThreadedConnectionPool
 
 BASE_DIR = Path(__file__).parent
 SCHEMA_FILE = BASE_DIR / "db" / "schema.sql"
-CASE_DETAILS_DIR = BASE_DIR / "case_details" / "consumer"  # <case key>/orders/<date>_<kind>[_vN].pdf|html
+ORDER_STORE_DIR = BASE_DIR / "case_details" / "store"  # <first 2 of the SHA-256>/<SHA-256>.pdf|html
+CASE_DETAILS_DIR = BASE_DIR / "case_details" / "consumer"  # where orders were before the store (migrate_orders_to_store.py)
 DEFAULT_DSN = "postgresql:///case_progress"
 
 _pool = None
@@ -255,41 +259,98 @@ def case_documents_version(*names):
         return (row["n"], row["latest"])
 
 
-def order_dir(case_key):
-    return CASE_DETAILS_DIR / case_key / "orders"
+# ---------------------------------------------------------------------------------------------
+# Order files: each distinct file is kept once in ORDER_STORE_DIR, named by its SHA-256, and case_orders
+# says which file each order of a case is. Courts give connected cases one order, so many orders share a file.
+
+class OrderFile(NamedTuple):
+    name: str   # the order's name within its case: <date>_<kind>[_vN].pdf|html
+    path: Path  # the stored file, which other orders may share: never change it in place
+    size: int
 
 
-def order_path(case_key, name):
-    """Where an order file (<date>_<kind>[_vN].pdf|html) is, or would be."""
-    return order_dir(case_key) / name
+def stored_order_path(sha256, name):
+    """Where the file with this content is, or would be (`name` gives the extension)."""
+    return ORDER_STORE_DIR / sha256[:2] / f"{sha256}{Path(name).suffix}"
+
+
+def _order_file(row):
+    return OrderFile(row["name"], stored_order_path(row["sha256"], row["name"]), row["size"])
 
 
 def order_files(case_key):
-    """The saved order files of a case, sorted by name."""
-    folder = order_dir(case_key)
-    return sorted(folder.glob("*")) if folder.is_dir() else []
+    """The saved orders of a case (OrderFile), sorted by name."""
+    with _db() as cur:
+        cur.execute("SELECT name, sha256, size FROM case_orders WHERE case_key = %s", (case_key,))
+        return sorted(_order_file(r) for r in cur.fetchall())
+
+
+def find_order_file(case_key, name):
+    """One saved order of a case (OrderFile), or None."""
+    with _db() as cur:
+        cur.execute("SELECT name, sha256, size FROM case_orders WHERE case_key = %s AND name = %s", (case_key, name))
+        row = cur.fetchone()
+        return _order_file(row) if row else None
+
+
+def load_judgement_orders():
+    """{case key: [OrderFile]} of every case's judgement PDFs (all dates and versions)."""
+    out = {}
+    with _db() as cur:
+        cur.execute(r"SELECT case_key, name, sha256, size FROM case_orders WHERE name ~ '_judgement(_v[0-9]+)?[.]pdf$'")
+        for r in cur.fetchall():
+            out.setdefault(r["case_key"], []).append(_order_file(r))
+    return out
 
 
 def order_exists(case_key, name):
-    return order_path(case_key, name).exists()
+    """Is this order saved, with its file there?"""
+    order = find_order_file(case_key, name)
+    return order is not None and order.path.is_file()
 
 
 def read_order_file(case_key, name):
     """The bytes of a saved order, or None."""
+    order = find_order_file(case_key, name)
+    if order is None:
+        return None
     try:
-        return order_path(case_key, name).read_bytes()
+        return order.path.read_bytes()
     except FileNotFoundError:
         return None
 
 
 def save_order_file(case_key, name, content):
-    """Save the bytes of an order (written atomically); returns its path."""
-    dest = order_path(case_key, name)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
-    tmp.write_bytes(content)
-    os.replace(tmp, dest)
+    """Save the bytes of an order; returns the path of the stored file. The file is written (atomically) only if no
+    order saved before has the same content, and before the reference to it, so a reference never lacks its file."""
+    sha256 = hashlib.sha256(content).hexdigest()
+    dest = stored_order_path(sha256, name)
+    if not (dest.is_file() and dest.stat().st_size == len(content)):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.part")
+        tmp.write_bytes(content)
+        os.replace(tmp, dest)
+    with _db() as cur:
+        cur.execute("INSERT INTO case_orders (case_key, name, sha256, size) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (case_key, name) DO UPDATE SET sha256 = EXCLUDED.sha256, size = EXCLUDED.size, saved_at = now()",
+                    (case_key, name, sha256, len(content)))
     return dest
+
+
+def load_order_refs():
+    """{(case key, order name): (SHA-256, size)} of every saved order."""
+    with _db() as cur:
+        cur.execute("SELECT case_key, name, sha256, size FROM case_orders")
+        return {(r["case_key"], r["name"]): (r["sha256"], r["size"]) for r in cur.fetchall()}
+
+
+def add_order_refs(rows):
+    """Record references (case key, order name, SHA-256, size) to files already in the store; an order that has a
+    reference keeps it."""
+    with _db() as cur:
+        psycopg2.extras.execute_values(
+            cur, "INSERT INTO case_orders (case_key, name, sha256, size) VALUES %s ON CONFLICT (case_key, name) DO NOTHING",
+            rows, page_size=1000)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -695,7 +756,7 @@ def load_enquiries(court):
 
 # ---------------------------------------------------------------------------------------------
 
-TABLES = ["courts", "crawl_state", "case_links", "cause_lists", "case_documents", "case_document_versions",
+TABLES = ["courts", "crawl_state", "case_links", "cause_lists", "case_documents", "case_document_versions", "case_orders",
           "analysis_status", "analysis_parties", "analysis_advocates", "analysis_timeline", "analysis_enquiries",
           "case_metrics", "hearing_metrics", "case_judgements"]
 

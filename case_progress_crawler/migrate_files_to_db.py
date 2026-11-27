@@ -3,7 +3,7 @@
 
 Reads storage/ (courts.json, <court>/state.json, links.json, the analysis CSVs and enquiries.json), causelists/consumer/
 and the JSON documents of case_details/consumer/<case key>/ (status, history, meta, classification, no_orders and
-versions/). The order PDFs and HTML pages stay where they are. Safe to run again: it overwrites what it wrote.
+versions/). The order PDFs and HTML pages are migrate_orders_to_store.py's job. Safe to run again: it overwrites what it wrote.
 
 Usage:  python migrate_files_to_db.py [--dry-run]
 """

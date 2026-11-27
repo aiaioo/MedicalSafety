@@ -13,6 +13,12 @@ what the case manager's `deploy/README.md` ("Case tracker") already asks for.
 - **Where it writes:** the `case_progress` database (`CASE_PROGRESS_DATABASE_URL`), and `pdfs/` and
   `case_details/` under `/opt/case_progress_crawler` -- the same folders the viewer at `/case_tracker/`
   reads. The viewer notices new data without a restart.
+- **Order files:** each distinct order PDF or HTML page is kept once, in `case_details/store/`, and the `case_orders`
+  table says which file each case's orders are. The files are named by their content, so without that table (back up the
+  database along with them) nothing says which case a file belongs to. The deploy moves files saved the old way
+  (`case_details/consumer/<case>/orders/`) into the store but keeps the old ones; once the deployed tracker shows
+  its orders, delete them to free the space (not while a crawl is running):
+  `sudo bash -c 'cd /opt/case_progress_crawler; set -a; . /etc/case-manager/case-manager.env; set +a; runuser -u case-manager -- /opt/case_manager/.venv/bin/python migrate_orders_to_store.py --remove-originals'`
 - **Run it now:** `sudo systemctl start --no-block case-progress-crawl`
 - **See what happened:** `systemctl list-timers case-progress-crawl.timer`,
   `systemctl status case-progress-crawl`, `journalctl -u case-progress-crawl -e`

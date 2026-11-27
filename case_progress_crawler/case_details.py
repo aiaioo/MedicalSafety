@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download the status, hearing history and order PDFs of consumer cases from e-Jagriti.
 
-The status, history and other documents go to the database, the orders to case_details/consumer/<case key>/orders/
+The status, history and other documents go to the database, the orders to the shared order store, case_details/store/
 (<date>_daily_order.pdf or _judgement.pdf, or .html for older orders), all through progress_storage.py; orders already saved are not fetched again, and a re-issued order is
 saved as a new version (_v2) beside the old one. The daily cron run (downloader.py) does this for every tracked case.
 

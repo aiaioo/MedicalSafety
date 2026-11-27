@@ -1,5 +1,5 @@
 -- The crawler's structured data (case_progress database). Only storage.py touches it.
--- Order PDFs/HTML and the KMC PDFs stay on disk (pdfs/, case_details/).
+-- Order PDFs/HTML and the KMC PDFs stay on disk (case_details/store/, pdfs/).
 -- Re-runnable: storage.init_db() applies this file at start-up.
 
 -- ---- crawl bookkeeping ------------------------------------------------------------------------
@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS case_document_versions (
     stamp       text NOT NULL,
     doc         jsonb NOT NULL,
     PRIMARY KEY (case_key, name, stamp)
+);
+
+-- Which file each order of a case is: case_details/store/<first 2 of sha256>/<sha256>.<extension of name>.
+-- Orders with the same content (one order for connected cases, say) share one file.
+CREATE TABLE IF NOT EXISTS case_orders (
+    case_key    text NOT NULL,
+    name        text NOT NULL,                  -- <date>_<kind>[_vN].pdf|html
+    sha256      text NOT NULL,
+    size        bigint NOT NULL,
+    saved_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (case_key, name)
 );
 
 -- ---- the analysis (rebuilt wholesale by analysis.py / analysis_consumer.py, one court at a time) ---
