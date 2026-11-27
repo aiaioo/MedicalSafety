@@ -65,7 +65,7 @@ from courts.ejagriti_case import history_hearing_dates
 bp = Blueprint("case_tracker", __name__, template_folder="templates", static_folder="static")
 COURT_LABELS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA"}  # kind of court -> short label; an analysed court "consumer-<state>" is of kind "consumer"
 CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case (filedInComissionName) -> its full name, for the ones that are not district commissions
-    "": "Karnataka State Consumer Disputes Redressal Commission", "KARNATAKA": "Karnataka State Consumer Disputes Redressal Commission",
+    "KARNATAKA": "Karnataka State Consumer Disputes Redressal Commission",
     "DELHI": "Delhi State Consumer Disputes Redressal Commission", "KERALA": "Kerala State Consumer Disputes Redressal Commission",
     "NCDRC": "National Consumer Disputes Redressal Commission"}
 COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
@@ -188,9 +188,20 @@ def _split_key(key):
     return kind, (int(num), suffix), int(year)
 
 
+def listed_commission(name):
+    """A commission as a cause list names it (courts/ejagriti.py), put as the portal puts it in a case's details:
+    "Kerala State Commission" -> "Kerala", the National Commission -> "NCDRC", a district commission unchanged."""
+    if name.endswith("(NCDRC)"):
+        return "NCDRC"
+    return name.removesuffix(" State Commission")
+
+
 def commission_label(commission):
     """The short name of a consumer commission as the portal gives it (filedInComissionName): the state or national
-    commission by its full name, a district commission as "<District> District"."""
+    commission by its full name, a district commission as "<District> District"; "" if not known."""
+    commission = " ".join(commission.split())  # the portal doubles a space in some ("West  Delhi")
+    if not commission:
+        return ""
     name = CONSUMER_COMMISSION_NAMES.get(commission.upper())
     if name:
         return name.replace(" Consumer Disputes Redressal Commission", "")
@@ -810,7 +821,10 @@ def _read(st, ids):
     status_rows = []  # case keys are distinct across courts
     histories, statuses = storage.load_case_documents("history.json", ids), storage.load_status_summaries(ids)
     stored = {c: storage.stored_case_metrics(c) for c in ids if kind_of(c) == "consumer"} if USE_STORED_METRICS else {}  # the medical councils are small, and their outcome rests on later steps
+    listed = {}  # (court, enquiry id) -> the commission whose cause list named the case
     for c in ids:
+        if kind_of(c) == "consumer":
+            listed.update({(c, eid): name for eid, name in storage.load_listed_commissions(c).items()})
         analysis = storage.load_analysis(c, texts=KEEP_TEXTS)
         for r in analysis["parties"]:
             parties[r["case_key"]].append(r)
@@ -858,6 +872,8 @@ def _read(st, ids):
             filing_date = dates[0] if dates else ""
             end_date = r.get("status_since") or (dates[-1] if len(dates) > 1 else "")
         commission = ((statuses.get(key) or {}).get("filedInComissionName") or "").strip() if kind_of(r["court"]) == "consumer" else ""
+        if not commission:  # no details downloaded yet: the commission that listed the case
+            commission = listed_commission(listed.get((r["court"], r["enquiry_id"]), ""))
         dismissal_text = dismissal_reason_from(hs) if outcome == "dismissed" else None  # while the texts are at hand
         if not KEEP_TEXTS:
             hs = [compact_hearing(h) for h in hs]
@@ -1144,8 +1160,11 @@ def case_prefill(number, with_court=True):
             court = COUNCIL_NAMES[c["court"]]
         else:
             commission = ((storage.load_case_document(c["case_key"], "status.json") or {}).get("filedInComissionName") or "").strip()
-            court = (CONSUMER_COMMISSION_NAMES.get(commission.upper())
-                     or f"{commission} District Consumer Disputes Redressal Commission")
+            if commission:
+                court = (CONSUMER_COMMISSION_NAMES.get(commission.upper())
+                         or f"{commission} District Consumer Disputes Redressal Commission")
+            elif c["commission"]:  # no details yet: as the stored page names it, from the cause list
+                court = f"{c['commission']} Consumer Disputes Redressal Commission"
     days = {}  # a day can have more than one list entry: they become one hearing
     read = [h for _, h in with_texts([(c, h) for h in c["hearings"]])]
     for h in sorted(read, key=lambda h: (h["hearing_date"], h["hearing_time"])):

@@ -747,6 +747,13 @@ def timeline_texts(case_keys):
         return list(cur.fetchall())
 
 
+def load_listed_commissions(court):
+    """{enquiry id: the commission whose cause list named the case} for a consumer court's analysis."""
+    with _db() as cur:
+        cur.execute("SELECT enquiry_id, doc->>'commission' AS commission FROM analysis_enquiries WHERE court = %s", (court,))
+        return {r["enquiry_id"]: r["commission"] or "" for r in cur.fetchall()}
+
+
 def load_enquiries(court):
     """{enquiry id: dict}: everything the analysis found about each enquiry/case."""
     with _db() as cur:
