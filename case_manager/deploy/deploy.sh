@@ -17,7 +17,8 @@
 #      only: its data (pdfs/, case_details/, ...) is the droplet's own.
 #   3. Runs deploy/remote-deploy.sh on the droplet: installs Python deps,
 #      backs up the database and applies any new migrations, creates the case
-#      tracker's tables, restarts the service and checks that it answers. The
+#      tracker's tables and backs up its database too, restarts the service and
+#      checks that it answers. The
 #      encryption key is never part of a deploy: it lives only in the running
 #      server's memory, so after every restart an administrator has to enter
 #      it at /encryption-key.

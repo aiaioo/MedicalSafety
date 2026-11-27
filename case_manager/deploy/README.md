@@ -96,7 +96,9 @@ and, if `viewer.py` isn't there, just doesn't mount it. To use it on the droplet
   load them onto the droplet separately, or the tracker's pages will be empty;
 - give the crawler's database its own variable, `CASE_PROGRESS_DATABASE_URL`, in
   `/etc/case-manager/case-manager.env` (default `postgresql:///case_progress`; `DATABASE_URL` is this app's; see `case-manager.env.example`), after creating
-  that database and role once by hand -- each deploy then creates its tables;
+  that database and role once by hand (named `case_progress`, which is what the deploy backs up) -- each deploy then
+  creates its tables, moves any order files saved the old way into the order store, and backs the database up to
+  `/var/backups/case-manager/case_progress/`;
 - the Python dependencies (the crawler's modules need `requests`, `beautifulsoup4` and `pypdf`) are installed by the deploy.
 
 The web app holds no cases in memory: each page reads the rows it shows from the `view_*` tables, and the dashboards

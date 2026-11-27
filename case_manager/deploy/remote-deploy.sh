@@ -83,6 +83,15 @@ else
   # that. The old files are kept (see migrate_orders_to_store.py). This one stops the deploy if it fails.
   (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && runuser -u case-manager -- "$APP_DIR/.venv/bin/python" migrate_orders_to_store.py) \
     || { echo "FAILED: the order files aren't all in the order store (see above); fix that and deploy again. $SERVICE was not restarted." >&2; exit 1; }
+  # Back up the tracker's database on every deploy: the order files are named by their content, so only its
+  # case_orders table says which case each belongs to. Written aside first, so a failed dump is never kept as a backup.
+  install -d -m 700 "$BACKUP_DIR" "$BACKUP_DIR/case_progress"
+  backup="$BACKUP_DIR/case_progress/case_progress-$(date +%Y%m%d-%H%M%S).dump"
+  (umask 077; sudo -u postgres pg_dump -Fc case_progress > "$backup.part") \
+    || { rm -f "$backup.part"; echo "FAILED: couldn't back up the case tracker's database. $SERVICE was not restarted." >&2; exit 1; }
+  mv "$backup.part" "$backup"
+  echo "backed up the case tracker's database to $backup"
+  ls -1t "$BACKUP_DIR"/case_progress/*.dump | tail -n +6 | xargs -r rm -f   # keep the newest 5
   # The tracker's pages read tables the daily crawl builds: build them now if there are none yet, or the code now
   # expects another format. A few minutes at most; the crawl rebuilds them every day.
   (set -a; . "$ENV_FILE"; set +a; cd "$CRAWLER_DIR" && runuser -u case-manager -- "$APP_DIR/.venv/bin/python" dashboard_stats.py --pages-if-needed) \
