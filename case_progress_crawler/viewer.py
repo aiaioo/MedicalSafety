@@ -67,6 +67,8 @@ COURT_LABELS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA"}  # kind of court 
 CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case (filedInComissionName) -> its full name, for the ones that are not district commissions
     "KARNATAKA": "Karnataka State Consumer Disputes Redressal Commission",
     "DELHI": "Delhi State Consumer Disputes Redressal Commission", "KERALA": "Kerala State Consumer Disputes Redressal Commission",
+    "TAMIL NADU": "Tamil Nadu State Consumer Disputes Redressal Commission",
+    "CIRCUIT BENCH MADURAI": "Tamil Nadu State Consumer Disputes Redressal Commission (Madurai Circuit Bench)",
     "NCDRC": "National Consumer Disputes Redressal Commission"}
 COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
 MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year
@@ -84,7 +86,10 @@ COUNCIL_SITES = {  # medical council -> its own website and inquiries page, link
                       ("Status of complaints examined", "https://delhimedicalcouncil.org/status-of-complaints")], "note": ""},
 }
 OPAQUE_COUNCILS = {  # state -> its medical council that publishes no case records, so the tracker has none to show
-    "Kerala": {"name": "Kerala State Medical Councils", "url": "https://medicalcouncil.kerala.gov.in/"},
+    "Kerala": {"name": "Kerala State Medical Councils", "url": "https://medicalcouncil.kerala.gov.in/", "verdict": "These Councils are opaque.",
+               "finding": "Their website publishes no list of the complaints they receive, their hearings or the outcomes, only an occasional notice of action against a practitioner."},
+    "Tamil Nadu": {"name": "Tamil Nadu Medical Council", "url": "https://www.tamilnadumedicalcouncil.org/", "verdict": "This Council is opaque.",
+                   "finding": "Its website publishes no list of the complaints it receives, its hearings or the outcomes."},
 }
 DEFAULT_STATE = "Karnataka"  # the state shown to a visitor with no choice yet (the first state with analysed courts if there is none of this name)
 SELECTIONS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
@@ -1165,7 +1170,8 @@ def case_prefill(number, with_court=True):
                 court = (CONSUMER_COMMISSION_NAMES.get(commission.upper())
                          or f"{commission} District Consumer Disputes Redressal Commission")
             elif c["commission"]:  # no details yet: as the stored page names it, from the cause list
-                court = f"{c['commission']} Consumer Disputes Redressal Commission"
+                court = next((n for n in CONSUMER_COMMISSION_NAMES.values() if n.replace(" Consumer Disputes Redressal Commission", "") == c["commission"]),
+                             f"{c['commission']} Consumer Disputes Redressal Commission")
     days = {}  # a day can have more than one list entry: they become one hearing
     read = [h for _, h in with_texts([(c, h) for h in c["hearings"]])]
     for h in sorted(read, key=lambda h: (h["hearing_date"], h["hearing_time"])):

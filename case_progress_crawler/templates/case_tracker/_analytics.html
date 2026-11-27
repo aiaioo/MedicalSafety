@@ -91,7 +91,7 @@
   {% if silent %}
     <div class="opaque-council">
       <h3>{{ silent.name }} <span class="muted">no case data</span></h3>
-      <p class="muted"><strong>These Councils are opaque.</strong> Their website publishes no list of the complaints they receive, their hearings or the outcomes, only an occasional notice of action against a practitioner. No medical council cases are therefore shown or counted for {{ panel_state }} (checked November 2026).</p>
+      <p class="muted"><strong>{{ silent.verdict }}</strong> {{ silent.finding }} No medical council cases are therefore shown or counted for {{ panel_state }} (checked November 2026).</p>
       <p><a href="{{ silent.url }}" target="_blank" rel="noopener">{{ silent.name }} website</a></p>
     </div>
   {% endif %}

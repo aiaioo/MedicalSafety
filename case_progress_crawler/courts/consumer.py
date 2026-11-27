@@ -1,7 +1,7 @@
 """Consumer commissions (e-Jagriti): download the cause lists of the courts in court_list.py.
 
 For every active consumer court in the courts table (storage.load_courts) (the state commission and the district
-commissions of Karnataka, Delhi and Kerala, and the National Commission; run court_list.py to refresh it), the day's cause lists of all its
+commissions of Karnataka, Delhi, Kerala and Tamil Nadu, and the National Commission; run court_list.py to refresh it), the day's cause lists of all its
 court numbers (the portal's "All") are fetched from the e-Jagriti API (courts/ejagriti.py)
 for each working day from yesterday to LOOKAHEAD_DAYS ahead, and saved as one document per
 commission per day (storage.save_cause_list).
