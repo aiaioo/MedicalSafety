@@ -1786,15 +1786,38 @@ def mark_reminder_sent(case_id: str, date: str, days_before: int) -> None:
                     (case_id, date, days_before))
 
 
-def alert_recipients(case_id: str) -> list[str]:
-    """The (decrypted) addresses of the signed-up, verified users with access to the case who want hearing alerts."""
+def alert_recipients(case_id: str) -> list[tuple[str, bool]]:
+    """[(decrypted address, owns the case)] of the signed-up, verified users with access to the case who want hearing alerts, and
+    have not switched them off for this case. Owning the case, or the cause it is under, counts as owning it; anyone else is a
+    collaborator."""
     with _cursor() as cur:
         cur.execute(
-            """SELECT u.email FROM eff_user_cases e JOIN users u ON u.id = e.user_id
-               WHERE e.case_id = %s AND e.user_id > 0 AND u.hearing_alerts AND u.email_verified_at IS NOT NULL""",
+            """SELECT u.email,
+                      EXISTS (SELECT 1 FROM user_cases o WHERE o.user_id = u.id AND o.case_id = e.case_id AND o.role = 'owner')
+                      OR EXISTS (SELECT 1 FROM cases c JOIN user_causes o ON o.cause_id = c.cause_id
+                                 WHERE c.id = e.case_id AND o.user_id = u.id AND o.role = 'owner') AS owns
+               FROM eff_user_cases e JOIN users u ON u.id = e.user_id
+               WHERE e.case_id = %s AND e.user_id > 0 AND u.hearing_alerts AND u.email_verified_at IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM user_case_alerts_off x WHERE x.user_id = u.id AND x.case_id = e.case_id)""",
             (case_id,),
         )
-        return sorted({_dec_text(r["email"]) for r in cur.fetchall()})
+        return sorted((_dec_text(r["email"]), r["owns"]) for r in cur.fetchall())
+
+
+def case_alerts_off(user_id: int) -> set[str]:
+    """The ids of the cases this user has switched hearing alerts off for."""
+    with _cursor() as cur:
+        cur.execute("SELECT case_id FROM user_case_alerts_off WHERE user_id = %s", (user_id,))
+        return {r["case_id"] for r in cur.fetchall()}
+
+
+def set_case_alerts(user_id: int, case_id: str, on: bool) -> None:
+    with _cursor() as cur:
+        if on:
+            cur.execute("DELETE FROM user_case_alerts_off WHERE user_id = %s AND case_id = %s", (user_id, case_id))
+        else:
+            cur.execute("INSERT INTO user_case_alerts_off (user_id, case_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (user_id, case_id))
 
 
 def get_report_sections(user_id: int) -> list:

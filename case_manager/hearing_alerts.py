@@ -4,7 +4,8 @@ coming hearings: two weeks before, two days before and on the morning (the round
 For every case with a case number the tracker knows, the tracker's hearing days that have passed and have a record (the
 text kept as the hearing's "order text": the outcome or order and the next date) are compared with the days already dealt
 with (storage.alert_dates_seen). A day not yet dealt with is emailed -- the record quoted, the court's PDF attached where
-there is one -- to the verified users with access to the case who have not turned alerts off, then marked as dealt with.
+there is one -- to the verified users with access to the case who have not turned alerts off (altogether, or for that case),
+then marked as dealt with. Reminders and records sent to someone who does not own the case say they collaborate on it.
 
 A case's first check only records the hearings it already has (the baseline), so adding a case does not send its history.
 If every address of a hearing fails (Postmark down), the hearing is left for the next round; if some got it, it is marked,
@@ -79,15 +80,28 @@ def _attachments(tracker_viewer, tracker_case: dict, date: str):
     return files, skipped
 
 
-def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], attached: list[str]) -> tuple[str, str, str]:
-    """(subject, text body, HTML body) of the alert for one hearing."""
+def _footer(collaborator: bool) -> str:
+    why = "you are a collaborator on this case" if collaborator else "you have access to this case"
+    return (f"You get this because {why}. To stop emails about this case, switch them off on its card on your Cases page. "
+            "To stop all hearing emails, switch them off on your home page.")
+
+
+def _case_link(case: dict) -> str:
+    return f"{mailer.base_url(SITE_HOST)}/cases?case={case['id']}"
+
+
+def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], attached: list[str],
+            collaborator: bool = False) -> tuple[str, str, str]:
+    """(subject, text body, HTML body) of the alert for one hearing; `collaborator`: the recipient does not own the case."""
     date = _pretty(hearing["date"])
     label = case["case_number"]
     parties = case["name"] or ""
-    subject = f"Update on {label}: the hearing of {date}"
+    subject = (f"Update on a case you collaborate on, {label}: the hearing of {date}" if collaborator
+               else f"Update on {label}: the hearing of {date}")
     court = tracker_case.get("court") or tracker_case.get("court_label") or ""
     record = hearing["order_text"].strip()
-    link = f"{mailer.base_url(SITE_HOST)}/cases"
+    link = _case_link(case)
+    foot = _footer(collaborator)
     notes = []
     if attached:
         notes.append("The court's document for the hearing is attached: " + ", ".join(attached) + ".")
@@ -95,11 +109,10 @@ def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], a
         notes.append("Too large to attach (see the case tracker): " + ", ".join(skipped) + ".")
     if not attached and not skipped:
         notes.append("The court published no document for this hearing; the text above is its record.")
-    intro = f"The court's record of the hearing of {date} in {label}" + (f" ({parties})" if parties else "") + \
+    intro = ("You are collaborating on this case. " if collaborator else "") + f"The court's record of the hearing of {date} in {label}" + (f" ({parties})" if parties else "") + \
             (f", {court}," if court else "") + " has just appeared."
     text = (f"{intro}\n\nWhat the court recorded:\n\n" + "\n".join("> " + ln for ln in record.splitlines()) +
-            "\n\n" + "\n".join(notes) + f"\n\nOpen your cases: {link}\n\n{WARNING}\n\n"
-            "You get this because you have access to this case. To stop these emails, untick the alerts box on your home page.\n")
+            "\n\n" + "\n".join(notes) + f"\n\nOpen the case: {link}\n\n{WARNING}\n\n{foot}\n")
     esc = html.escape
     body = (
         '<div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 15px; color: #222; max-width: 560px;">'
@@ -107,10 +120,9 @@ def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], a
         '<blockquote style="margin: 0 0 12px; padding: 4px 14px; border-left: 3px solid #2a5bd7; background: #f4f6fb;">'
         + "".join(f"<p style=\"margin: 8px 0;\">{esc(ln)}</p>" for ln in record.splitlines() if ln.strip()) +
         "</blockquote>" + "".join(f"<p>{esc(n)}</p>" for n in notes) +
-        f'<p><a href="{esc(link, quote=True)}">Open your cases</a></p>'
+        f'<p><a href="{esc(link, quote=True)}">Open the case</a></p>'
         f'<p style="font-size: 14px; border: 1px solid #c9a227; background: #fff8e1; padding: 8px 12px;"><strong>{esc(WARNING)}</strong></p>'
-        '<p style="font-size: 13px; color: #555;">You get this because you have access to this case. '
-        "To stop these emails, untick the alerts box on your home page.</p></div>")
+        f'<p style="font-size: 13px; color: #555;">{esc(foot)}</p></div>')
     return subject, text, body
 
 
@@ -141,30 +153,32 @@ def source_links(tracker_viewer, tracker_case: dict, date: str) -> list[tuple[st
 
 
 def compose_reminder(case: dict, tracker_case: dict, date: str, stage: str, when: str,
-                     sources: list[tuple[str, str]] = ()) -> tuple[str, str, str]:
-    """(subject, text body, HTML body) of a reminder; `when` is "today", "in two days" or "in two weeks"."""
+                     sources: list[tuple[str, str]] = (), collaborator: bool = False) -> tuple[str, str, str]:
+    """(subject, text body, HTML body) of a reminder; `when` is "today", "in two days" or "in two weeks"; `collaborator`: the
+    recipient does not own the case."""
     label = case["case_number"]
     day = datetime.strptime(date, "%Y-%m-%d")
     pretty = f"{day.strftime('%A')}, {_pretty(date)}"
-    subject = f"Hearing {when}: {label}"
+    subject = f"A case you collaborate on has a hearing {when}: {label}" if collaborator else f"Hearing {when}: {label}"
     court = tracker_case.get("court") or tracker_case.get("court_label") or ""
-    lines = [f"You have a hearing {when}, {pretty}.", f"Case: {label}" + (f" ({case['name']})" if case["name"] else "")]
+    opening = "You are collaborating on a case which has a hearing" if collaborator else "You have a hearing"
+    lines = [f"{opening} {when}, {pretty}.", f"Case: {label}" + (f" ({case['name']})" if case["name"] else "")]
     if court:
         lines.append(f"Court: {court}")
     if stage:
         lines.append(f"Listed for: {stage}")
-    link = f"{mailer.base_url(SITE_HOST)}/cases"
-    foot = "You get this because you have access to this case. To stop these emails, untick the alerts box on your home page."
+    link = _case_link(case)
+    foot = _footer(collaborator)
     disclaimer = "Please check this date: it was read from the court's published record and may be wrong or have changed."
     src_text = "".join(f"\nThe document it was taken from: {n}: {u}" for n, u in sources)
-    text = f"{pretty.upper()}\n\n{disclaimer}{src_text}\n\n" + "\n".join(lines) + f"\n\nOpen your cases: {link}\n\n{WARNING}\n\n{foot}\n"
+    text = f"{pretty.upper()}\n\n{disclaimer}{src_text}\n\n" + "\n".join(lines) + f"\n\nOpen the case: {link}\n\n{WARNING}\n\n{foot}\n"
     esc = html.escape
     body = ('<div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 15px; color: #222; max-width: 560px;">'
             f'<h1 style="text-align: center; font-size: 28px; line-height: 1.25; margin: 0 0 16px;">{esc(pretty)}</h1>'
             f'<p style="text-align: center; font-size: 13px; color: #555; margin: 0 0 16px;">{esc(disclaimer)}'
             + "".join(f'<br>The document it was taken from: <a href="{esc(u, quote=True)}">{esc(n)}</a>' for n, u in sources) + "</p>"
             f"<p><strong>{esc(lines[0])}</strong></p>" + "".join(f"<p style=\"margin: 4px 0;\">{esc(x)}</p>" for x in lines[1:]) +
-            f'<p><a href="{esc(link, quote=True)}">Open your cases</a></p>'
+            f'<p><a href="{esc(link, quote=True)}">Open the case</a></p>'
             f'<p style="font-size: 14px; border: 1px solid #c9a227; background: #fff8e1; padding: 8px 12px;"><strong>{esc(WARNING)}</strong></p>'
             f'<p style="font-size: 13px; color: #555;">{esc(foot)}</p></div>')
     return subject, text, body
@@ -183,9 +197,10 @@ def send_reminders(tracker_viewer, case: dict, tracker_case: dict) -> int:
             continue
         recipients = storage.alert_recipients(case["id"])
         if recipients:
-            subject, text, body = compose_reminder(case, tracker_case, date, stage, REMINDERS[days],
-                                                     source_links(tracker_viewer, tracker_case, date))
-            if not any([mailer.send_email_now(SITE_HOST, to, subject, text, body) for to in recipients]):
+            sources = source_links(tracker_viewer, tracker_case, date)
+            mails = {c: compose_reminder(case, tracker_case, date, stage, REMINDERS[days], sources, collaborator=c)
+                     for c in {not owns for _, owns in recipients}}
+            if not any([mailer.send_email_now(SITE_HOST, to, *mails[not owns]) for to, owns in recipients]):
                 log.error("hearing reminder for case %s, %s (%d days): not delivered; will retry", case["id"], date, days)
                 continue
         storage.mark_reminder_sent(case["id"], date, days)
@@ -209,8 +224,9 @@ def check_case(tracker_viewer, case: dict) -> int:
         recipients = storage.alert_recipients(case["id"])
         if recipients:
             files, skipped = _attachments(tracker_viewer, tracker_case, date)
-            subject, text, body = compose(case, tracker_case, recorded[date], skipped, [f[0] for f in files])
-            sent = [mailer.send_email_now(SITE_HOST, to, subject, text, body, files) for to in recipients]
+            mails = {c: compose(case, tracker_case, recorded[date], skipped, [f[0] for f in files], collaborator=c)
+                     for c in {not owns for _, owns in recipients}}
+            sent = [mailer.send_email_now(SITE_HOST, to, *mails[not owns], files) for to, owns in recipients]
             if not any(sent):
                 log.error("hearing alert for case %s, %s: not delivered; will retry", case["id"], date)
                 continue

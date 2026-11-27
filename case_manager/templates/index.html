@@ -67,8 +67,9 @@
   </div>
   </div>
 
-  <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
-  <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" id="alerts-toggle"{% if g.user.hearing_alerts %} checked{% endif %}> Email me about the hearings of my tracked cases (reminders, and the court's record when it appears)</label>
+  <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" class="switch" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
+  <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" class="switch" id="alerts-toggle"{% if g.user.hearing_alerts %} checked{% endif %}> Email me about the hearings of my tracked cases (reminders, and the court's record when it appears)</label>
+  <p class="hint" style="margin: 0;">To choose case by case, use the switch on each case's card on the <a href="{{ url_for('cases_view') }}">Cases page</a>.</p>
 
   {% include "_also_called.html" %}
   <div style="height: 3rem;" aria-hidden="true"></div>

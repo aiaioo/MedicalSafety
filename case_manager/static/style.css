@@ -610,6 +610,11 @@ a.tag:hover { background: #d7deec; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* A case card's "Email me about hearings" switch. */
+.case-alerts-row { margin-top: 8px; padding: 0 6px; font-size: 12px; color: #46536b; }
+.case-alerts-row label { display: inline-flex; align-items: center; cursor: pointer; user-select: none; }
+.case-alerts-note { margin-top: 3px; font-size: 11px; color: #8a92a5; }
+
 /* Brief highlight on a field right after Enter forces an immediate save,
    since the header's save-status text is easy to miss while eyes are on
    the field being edited. */
@@ -1206,10 +1211,11 @@ a.cause-static { text-decoration: none; color: inherit; }
 #causeModal.modal-overlay.open { display: block; }
 #causeModal .modal { margin-top: 6px; border: 1px solid #cfd4e0; }
 
-/* Sliding toggle switches in place of checkboxes (annexures, annotations, reports panels) */
+/* Sliding toggle switches in place of checkboxes (annexures, annotations, reports panels; elsewhere class "switch") */
 label.annex-toggle input[type="checkbox"],
 label.toggle-label #continuousToggle,
-.list-cascade-field input[type="checkbox"] {
+.list-cascade-field input[type="checkbox"],
+input[type="checkbox"].switch {
   -webkit-appearance: none; appearance: none;
   position: relative; display: inline-block; flex: none;
   width: 30px; height: 17px; margin: 0 8px 0 0; padding: 0; border: 0;
@@ -1218,20 +1224,24 @@ label.toggle-label #continuousToggle,
 }
 label.annex-toggle input[type="checkbox"]::before,
 label.toggle-label #continuousToggle::before,
-.list-cascade-field input[type="checkbox"]::before {
+.list-cascade-field input[type="checkbox"]::before,
+input[type="checkbox"].switch::before {
   content: ""; position: absolute; top: 2px; left: 2px;
   width: 13px; height: 13px; border-radius: 50%; background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
 }
 label.annex-toggle input[type="checkbox"]:checked,
 label.toggle-label #continuousToggle:checked,
-.list-cascade-field input[type="checkbox"]:checked { background: #2266dd; }
+.list-cascade-field input[type="checkbox"]:checked,
+input[type="checkbox"].switch:checked { background: #2266dd; }
 label.annex-toggle input[type="checkbox"]:checked::before,
 label.toggle-label #continuousToggle:checked::before,
-.list-cascade-field input[type="checkbox"]:checked::before { transform: translateX(13px); }
+.list-cascade-field input[type="checkbox"]:checked::before,
+input[type="checkbox"].switch:checked::before { transform: translateX(13px); }
 label.annex-toggle input[type="checkbox"]:focus-visible,
 label.toggle-label #continuousToggle:focus-visible,
-.list-cascade-field input[type="checkbox"]:focus-visible { outline: 2px solid #2266dd; outline-offset: 2px; }
+.list-cascade-field input[type="checkbox"]:focus-visible,
+input[type="checkbox"].switch:focus-visible { outline: 2px solid #2266dd; outline-offset: 2px; }
 .annex-collapse { margin-top: 6px; }
 .annex-collapse > summary { cursor: pointer; font-size: 13px; color: #555; padding: 4px 0; }
 .source-picker .source-group { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; border: 1px solid #e0e2e8; border-radius: 8px; background: #f8f9fb; }

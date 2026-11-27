@@ -290,6 +290,51 @@
     return select;
   }
 
+  // The card's "Email me about hearings" switch, saved as soon as it is flipped. All of them are overridden by the
+  // home page's switch, which the card says when that one is off.
+  function buildAlertsSwitch(c) {
+    const row = document.createElement("div");
+    row.className = "case-alerts-row";
+    const label = document.createElement("label");
+    label.title = "Reminders, and the court's record when it appears";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "switch";
+    input.checked = c.email_alerts;
+    input.addEventListener("change", async () => {
+      const on = input.checked;
+      c.email_alerts = on;
+      input.disabled = true;  // one save at a time
+      setStatus("Saving…");
+      try {
+        const res = await fetch(caseUrl(c.id) + "/hearing-alerts", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on }),
+        });
+        if (!res.ok) throw new Error(res.statusText);
+        setStatus("Saved");
+      } catch (e) {
+        c.email_alerts = input.checked = !on;
+        setStatus("Save failed: " + e.message, true);
+      } finally {
+        input.disabled = false;
+      }
+    });
+    label.append(input, "Email me about hearings");
+    row.appendChild(label);
+    if (appEl.dataset.allAlertsOff) {
+      const note = document.createElement("div");
+      note.className = "case-alerts-note";
+      const home = document.createElement("a");
+      home.href = appEl.dataset.homeUrl;
+      home.textContent = "your home page";
+      note.append("All hearing emails are off on ", home, ".");
+      row.appendChild(note);
+    }
+    return row;
+  }
+
   function buildCaseCard(c) {
     const card = document.createElement("div");
     card.className = "allegation-card case-card" + (c.id === selectedId ? " selected" : "");
@@ -343,6 +388,10 @@
     if (!canEdit(c.role)) window.ReadOnlyLock.lock(card);
     else if (deleteBtn && c.role !== "owner") deleteBtn.disabled = true;
 
+    // Added after the lock: it is the user's own setting, so someone who can only view the case may change it.
+    // (Not there for guests, who are not emailed.)
+    if (typeof c.email_alerts === "boolean") card.querySelector(".allegation-card-meta").after(buildAlertsSwitch(c));
+
     // Draggable only while the handle is held, so text in the fields can still be selected with the mouse.
     const handle = card.querySelector(".drag-handle");
     handle.addEventListener("mousedown", () => { card.draggable = true; });
@@ -350,7 +399,7 @@
     handle.addEventListener("mouseup", () => { card.draggable = false; });
 
     card.addEventListener("click", (e) => {
-      if (e.target.closest("input, textarea, button, select")) return;
+      if (e.target.closest("input, textarea, button, select, label, a")) return;
       selectCase(c.id);
     });
 
@@ -539,6 +588,7 @@
         allegation_count: 0,
         hearing_count: (data.hearings || []).length,
         role: "owner", owner_name: "You",
+        email_alerts: document.body.dataset.guest ? undefined : true,
         created_at: data.created_at,
         updated_at: data.updated_at,
       });

@@ -5572,6 +5572,10 @@ def api_allegation_cases():
         placed = storage.get_case_order(g.user.id)
         items.sort(key=lambda x: (x["id"] in placed, placed.get(x["id"], 0)))
         items = attach_cause_owners(attach_owners("case", items))
+        if not g.user.is_guest:  # the card's "Email me about hearings" switch
+            off = storage.case_alerts_off(g.user.id)
+            for item in items:
+                item["email_alerts"] = item["id"] not in off
         if viewing is not None:
             items = [i for i in items if i.get("cause_owner_id") == viewing]
         return jsonify(items)
@@ -5614,6 +5618,18 @@ def api_allegation_cases():
     }
     storage.save_case(case_id, data, owner_id=g.user.id, actor_id=acting_user_id())
     return jsonify({"id": case_id, **attach_cause_owners([data])[0]})
+
+
+@app.route("/api/allegation-case/<case_id>/hearing-alerts", methods=["PUT"])
+def api_case_hearing_alerts(case_id):
+    """Saves whether this user is emailed about this case's hearings: their own setting, so viewing the case is enough."""
+    check_report_id(case_id)
+    require_role("case", case_id)
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"error": "on must be true or false"}), 400
+    storage.set_case_alerts(g.user.id, case_id, on)
+    return jsonify({"on": on})
 
 
 @app.route("/api/allegation-case/<case_id>/tracker-hearings", methods=["POST"])
