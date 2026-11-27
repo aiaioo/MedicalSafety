@@ -1733,11 +1733,6 @@ def set_show_advanced(user_id: int, show: bool) -> None:
         cur.execute("UPDATE users SET show_advanced = %s WHERE id = %s", (show, user_id))
 
 
-def set_hearing_alerts(user_id: int, on: bool) -> None:
-    with _cursor() as cur:
-        cur.execute("UPDATE users SET hearing_alerts = %s WHERE id = %s", (on, user_id))
-
-
 # Hearing alerts (db/migrations/052_hearing_alerts.sql; the logic is in hearing_alerts.py).
 
 def cases_with_numbers() -> list[dict]:
@@ -1797,7 +1792,7 @@ def alert_recipients(case_id: str) -> list[tuple[str, bool]]:
                       OR EXISTS (SELECT 1 FROM cases c JOIN user_causes o ON o.cause_id = c.cause_id
                                  WHERE c.id = e.case_id AND o.user_id = u.id AND o.role = 'owner') AS owns
                FROM eff_user_cases e JOIN users u ON u.id = e.user_id
-               WHERE e.case_id = %s AND e.user_id > 0 AND u.hearing_alerts AND u.email_verified_at IS NOT NULL
+               WHERE e.case_id = %s AND e.user_id > 0 AND u.email_verified_at IS NOT NULL
                  AND NOT EXISTS (SELECT 1 FROM user_case_alerts_off x WHERE x.user_id = u.id AND x.case_id = e.case_id)""",
             (case_id,),
         )
@@ -2174,7 +2169,7 @@ def get_session_user(token_hash: str) -> dict | None:
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.hearing_alerts, u.is_admin, u.is_content_creator, u.email_verified_at
+            SELECT u.id, u.email, u.password_hash, u.show_advanced, u.is_admin, u.is_content_creator, u.email_verified_at
             FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = %s AND s.expires_at > now()
             """,

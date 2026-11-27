@@ -2919,16 +2919,6 @@ def api_set_show_advanced():
     return jsonify({"show": show})
 
 
-@app.route("/api/settings/hearing-alerts", methods=["PUT"])
-def api_set_hearing_alerts():
-    """Saves whether this user is emailed about the hearings of their cases (reminders, and the court's record when it appears)."""
-    on = (request.get_json(silent=True) or {}).get("on")
-    if not isinstance(on, bool):
-        return jsonify({"error": "on must be true or false"}), 400
-    storage.set_hearing_alerts(g.user.id, on)
-    return jsonify({"on": on})
-
-
 @app.route("/api/report-sections", methods=["GET", "PUT"])
 def api_report_sections():
     """The user's reports-page sections (names, order, and which report
@@ -5572,10 +5562,6 @@ def api_allegation_cases():
         placed = storage.get_case_order(g.user.id)
         items.sort(key=lambda x: (x["id"] in placed, placed.get(x["id"], 0)))
         items = attach_cause_owners(attach_owners("case", items))
-        if not g.user.is_guest:  # the card's "Email me about hearings" switch
-            off = storage.case_alerts_off(g.user.id)
-            for item in items:
-                item["email_alerts"] = item["id"] not in off
         if viewing is not None:
             items = [i for i in items if i.get("cause_owner_id") == viewing]
         return jsonify(items)
@@ -5680,7 +5666,9 @@ def api_allegation_case(case_id):
     if request.method == "GET":
         log_activity("view", "case", case_id)
         existing = sync_case_with_tracker(case_id, existing, role)
-        return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role,
+        # The Case details page's "Email me about hearings" switch (guests are not emailed, so they get none).
+        alerts = {} if g.user.is_guest else {"email_alerts": case_id not in storage.case_alerts_off(g.user.id)}
+        return jsonify({**attach_item_creators(existing, ("hearings",)), "role": role, **alerts,
                         "tracker_hearings_on_offer": tracker_hearings_on_offer(existing, role),
                         **tracker_extras(existing)})
 

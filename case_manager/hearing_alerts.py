@@ -4,7 +4,7 @@ coming hearings: two weeks before, two days before and on the morning (the round
 For every case with a case number the tracker knows, the tracker's hearing days that have passed and have a record (the
 text kept as the hearing's "order text": the outcome or order and the next date) are compared with the days already dealt
 with (storage.alert_dates_seen). A day not yet dealt with is emailed -- the record quoted, the court's PDF attached where
-there is one -- to the verified users with access to the case who have not turned alerts off (altogether, or for that case),
+there is one -- to the verified users with access to the case who have not turned alerts off for that case,
 then marked as dealt with. Reminders and records sent to someone who does not own the case say they collaborate on it.
 
 A case's first check only records the hearings it already has (the baseline), so adding a case does not send its history.
@@ -80,10 +80,13 @@ def _attachments(tracker_viewer, tracker_case: dict, date: str):
     return files, skipped
 
 
-def _footer(collaborator: bool) -> str:
+def _footer(case: dict, collaborator: bool) -> tuple[str, str]:
+    """(text, HTML) of why the email was sent and where to switch this case's emails off."""
     why = "you are a collaborator on this case" if collaborator else "you have access to this case"
-    return (f"You get this because {why}. To stop emails about this case, switch them off on its card on your Cases page. "
-            "To stop all hearing emails, switch them off on your home page.")
+    link = f"{mailer.base_url(SITE_HOST)}/case-details?case={case['id']}"
+    start = f"You get this because {why}. To stop emails about this case, switch them off on its "
+    return (f"{start}Case details page: {link}",
+            f'{html.escape(start)}<a href="{html.escape(link, quote=True)}">Case details page</a>.')
 
 
 def _case_link(case: dict) -> str:
@@ -101,7 +104,7 @@ def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], a
     court = tracker_case.get("court") or tracker_case.get("court_label") or ""
     record = hearing["order_text"].strip()
     link = _case_link(case)
-    foot = _footer(collaborator)
+    foot, foot_html = _footer(case, collaborator)
     notes = []
     if attached:
         notes.append("The court's document for the hearing is attached: " + ", ".join(attached) + ".")
@@ -122,7 +125,7 @@ def compose(case: dict, tracker_case: dict, hearing: dict, skipped: list[str], a
         "</blockquote>" + "".join(f"<p>{esc(n)}</p>" for n in notes) +
         f'<p><a href="{esc(link, quote=True)}">Open the case</a></p>'
         f'<p style="font-size: 14px; border: 1px solid #c9a227; background: #fff8e1; padding: 8px 12px;"><strong>{esc(WARNING)}</strong></p>'
-        f'<p style="font-size: 13px; color: #555;">{esc(foot)}</p></div>')
+        f'<p style="font-size: 13px; color: #555;">{foot_html}</p></div>')
     return subject, text, body
 
 
@@ -168,7 +171,7 @@ def compose_reminder(case: dict, tracker_case: dict, date: str, stage: str, when
     if stage:
         lines.append(f"Listed for: {stage}")
     link = _case_link(case)
-    foot = _footer(collaborator)
+    foot, foot_html = _footer(case, collaborator)
     disclaimer = "Please check this date: it was read from the court's published record and may be wrong or have changed."
     src_text = "".join(f"\nThe document it was taken from: {n}: {u}" for n, u in sources)
     text = f"{pretty.upper()}\n\n{disclaimer}{src_text}\n\n" + "\n".join(lines) + f"\n\nOpen the case: {link}\n\n{WARNING}\n\n{foot}\n"
@@ -180,7 +183,7 @@ def compose_reminder(case: dict, tracker_case: dict, date: str, stage: str, when
             f"<p><strong>{esc(lines[0])}</strong></p>" + "".join(f"<p style=\"margin: 4px 0;\">{esc(x)}</p>" for x in lines[1:]) +
             f'<p><a href="{esc(link, quote=True)}">Open the case</a></p>'
             f'<p style="font-size: 14px; border: 1px solid #c9a227; background: #fff8e1; padding: 8px 12px;"><strong>{esc(WARNING)}</strong></p>'
-            f'<p style="font-size: 13px; color: #555;">{esc(foot)}</p></div>')
+            f'<p style="font-size: 13px; color: #555;">{foot_html}</p></div>')
     return subject, text, body
 
 

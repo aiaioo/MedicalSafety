@@ -90,6 +90,43 @@
   });
 
   // -------------------------------------------------------------------
+  // "Email me about hearings": the user's own setting, saved as soon as it is flipped, apart from the case's fields
+  // -------------------------------------------------------------------
+  function buildAlertsSwitch() {
+    const row = document.createElement("div");
+    row.className = "case-alerts-row";
+    const label = document.createElement("label");
+    label.title = "Reminders, and the court's record when it appears";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "switch";
+    input.checked = data.email_alerts;
+    input.addEventListener("change", async () => {
+      const on = input.checked;
+      input.disabled = true;  // one save at a time
+      setStatus("Saving…");
+      try {
+        const res = await fetch(caseUrl + "/hearing-alerts", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        data.email_alerts = on;
+        setStatus("Saved");
+      } catch (e) {
+        input.checked = !on;
+        setStatus("Save failed: " + e.message, true);
+      } finally {
+        input.disabled = false;
+      }
+    });
+    label.append(input, "Email me about hearings");
+    row.appendChild(label);
+    return row;
+  }
+
+  // -------------------------------------------------------------------
   // Cause title
   // -------------------------------------------------------------------
   const generateCauseDoc = () => window.CauseTitle.generate(data, templates);
@@ -319,6 +356,8 @@
       window.ReadOnlyLock.lock(bodyEl);
       titleEditor.setEditable(false);
     }
+    // Added after the lock, so someone who can only view the case may still change it.
+    if (typeof data.email_alerts === "boolean") bodyEl.prepend(buildAlertsSwitch());
   }
 
   // The report editor sends people here (with ?notice=no-cause-title) when

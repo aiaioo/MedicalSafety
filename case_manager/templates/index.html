@@ -68,24 +68,11 @@
   </div>
 
   <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" class="switch" id="advanced-toggle"{% if g.user.show_advanced %} checked{% endif %}> View advanced features</label>
-  <label style="display: block; margin: 0.5rem 0; font-family: inherit; font-size: 13px;"><input type="checkbox" class="switch" id="alerts-toggle"{% if g.user.hearing_alerts %} checked{% endif %}> Email me about the hearings of my tracked cases (reminders, and the court's record when it appears)</label>
-  <p class="hint" style="margin: 0;">To choose case by case, use the switch on each case's card on the <a href="{{ url_for('cases_view') }}">Cases page</a>.</p>
 
   {% include "_also_called.html" %}
   <div style="height: 3rem;" aria-hidden="true"></div>
 </div>
 <script>
-(function () {
-  var alerts = document.getElementById('alerts-toggle');
-  alerts.addEventListener('change', function () {
-    var on = alerts.checked;
-    fetch({{ url_for('api_set_hearing_alerts')|tojson }}, {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({on: on})
-    }).then(function (r) { if (!r.ok) throw new Error(); }).catch(function () { alerts.checked = !on; });
-  });
-})();
 (function () {
   var toggle = document.getElementById('advanced-toggle');
   var sections = document.getElementById('advanced-sections');
