@@ -476,6 +476,13 @@ a.tag:hover { background: #d7deec; }
 .report-sections { display: flex; flex-direction: column; gap: 4px; }
 .report-section { margin-bottom: 20px; padding: 6px 8px 10px; border: 1px dashed transparent; border-radius: 8px; }
 .report-section.drop-target { border-color: #2266dd; background: #f3f7ff; }
+.doc-landing.drop-target { outline: 2px dashed #2266dd; background: #f3f7ff; }
+.upload-status.floating {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 300; max-width: 90vw;
+  padding: 8px 14px; background: white; color: #1c1c1c; border: 1px solid #cfd4e0; border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+}
+.upload-status.floating:empty { display: none; }
 .report-section.dragging, .report-card.dragging { opacity: 0.45; }
 .report-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .report-section-head .section-title { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }

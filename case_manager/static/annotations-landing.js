@@ -2,6 +2,17 @@
   const uploadInput = document.getElementById("uploadInput");
   const uploadSubmit = document.getElementById("uploadSubmit");
   const uploadStatus = document.getElementById("uploadStatus");
+  let addToSection = null; // set up with the sections, below
+
+  // Uploads one file, giving the new document's id.
+  async function uploadFile(file) {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch("/api/documents/upload", { method: "POST", body });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || (res.status === 413 ? "The file is too large" : "Upload failed"));
+    return data.id;
+  }
 
   if (uploadSubmit && uploadInput) {
     uploadSubmit.addEventListener("click", () => uploadInput.click());
@@ -15,12 +26,8 @@
       uploadStatus.classList.remove("error");
 
       try {
-        const body = new FormData();
-        body.append("file", file);
-        const res = await fetch("/api/documents/upload", { method: "POST", body });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Upload failed");
-        uploadStatus.textContent = `Uploaded as "${data.id}". Reloading…`;
+        const id = await uploadFile(file);
+        uploadStatus.textContent = `Uploaded as "${id}". Reloading…`;
         setTimeout(() => location.reload(), 600);
       } catch (err) {
         uploadStatus.textContent = err.message;
@@ -72,20 +79,40 @@
     let canArrange = false; // set once the layout has loaded, so that a change can't overwrite it unseen
     const sectionOrder = () => sections.map((s) => s.id).join();
 
+    async function putSections() {
+      const res = await fetch(sectionsUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sections),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    }
+
     function saveSections() {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
-        fetch(sectionsUrl, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(sections),
-        })
-          .then(async (res) => {
-            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-          })
-          .catch((e) => window.alert("Could not save sections: " + e.message));
+        saveTimer = null;
+        putSections().catch((e) => window.alert("Could not save sections: " + e.message));
       }, 200);
     }
+
+    // Puts a newly uploaded document in a section. The layout is read afresh first, as others working in the
+    // workspace may have changed it during a long upload.
+    addToSection = async (docId, sectionId) => {
+      if (saveTimer) { // a change made here that is still waiting to be saved goes first
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        await putSections();
+      }
+      const res = await fetch(sectionsUrl);
+      if (!res.ok) throw new Error(res.statusText);
+      const latest = await res.json();
+      const section = latest.find((s) => s.id === sectionId);
+      if (!section) throw new Error("the section no longer exists");
+      section.documents.push(docId);
+      sections = latest;
+      await putSections();
+    };
 
     function moveDocToSection(docId, sectionId) {
       for (const sec of sections) sec.documents = sec.documents.filter((id) => id !== docId);
@@ -231,6 +258,75 @@
         render();
       })
       .catch((e) => console.error("Could not load sections", e));
+  }
+
+  // ---- Files dragged in from the computer ----
+  // Let go on a named section, they are uploaded into it; anywhere else on the page, into General.
+  if (uploadSubmit) {
+    const landing = document.querySelector(".doc-landing");
+    let dropZone = null; // what is highlighted as the place the files would go
+    const hasFiles = (e) => Array.from(e.dataTransfer.types).includes("Files");
+    // Not while an upload is under way or a dialog is open, nor for someone who may not add documents here.
+    const canDrop = () => !uploadSubmit.disabled && !uploadSubmit.hidden && !document.querySelector(".modal-overlay.open");
+    const zoneAt = (target) => (target.closest && target.closest(".report-section[data-section-id]"))
+      || document.querySelector(".report-section:not([data-section-id])") || landing;
+
+    function highlight(zone) {
+      if (dropZone && dropZone !== zone) dropZone.classList.remove("drop-target");
+      if (zone) zone.classList.add("drop-target");
+      dropZone = zone;
+    }
+
+    async function uploadDropped(files, sectionId) {
+      const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
+      const problems = files.filter((f) => !pdfs.includes(f)).map((f) => `${f.name}: skipped, as it is not a PDF`);
+      let uploaded = 0;
+      uploadSubmit.disabled = true;
+      uploadStatus.classList.remove("error");
+      uploadStatus.classList.add("floating"); // in view however far down the page the files were let go
+      for (const [i, file] of pdfs.entries()) {
+        const count = pdfs.length > 1 ? ` ${i + 1} of ${pdfs.length}` : "";
+        uploadStatus.textContent = `Uploading${count}: ${file.name}…`;
+        let docId;
+        try {
+          docId = await uploadFile(file);
+        } catch (err) {
+          problems.push(`${file.name}: ${err.message}`);
+          continue;
+        }
+        uploaded++;
+        if (!sectionId) continue;
+        try {
+          await addToSection(docId, sectionId);
+        } catch (err) {
+          problems.push(`${file.name}: uploaded, but into General (${err.message})`);
+        }
+      }
+      if (problems.length) window.alert(problems.join("\n"));
+      if (uploaded) {
+        uploadStatus.textContent = `Uploaded ${uploaded} ${uploaded === 1 ? "document" : "documents"}. Reloading…`;
+        setTimeout(() => location.reload(), 600);
+      } else {
+        uploadStatus.textContent = "";
+        uploadStatus.classList.remove("floating");
+        uploadSubmit.disabled = false;
+      }
+    }
+
+    document.addEventListener("dragover", (e) => {
+      if (!hasFiles(e)) return; // a card or section being moved
+      e.preventDefault(); // otherwise letting go opens the file in place of this page
+      const allowed = canDrop();
+      e.dataTransfer.dropEffect = allowed ? "copy" : "none";
+      highlight(allowed ? zoneAt(e.target) : null);
+    });
+    document.addEventListener("dragleave", (e) => { if (!e.relatedTarget) highlight(null); }); // left the window
+    document.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      highlight(null);
+      if (canDrop()) uploadDropped(Array.from(e.dataTransfer.files), zoneAt(e.target).dataset.sectionId || null);
+    });
   }
 
   document.querySelectorAll(".doc-card-delete").forEach((btn) => {
