@@ -2919,48 +2919,65 @@ def api_set_show_advanced():
     return jsonify({"show": show})
 
 
-@app.route("/api/report-sections", methods=["GET", "PUT"])
-def api_report_sections():
-    """The user's reports-page sections (names, order, and which report
-    cards sit in each; unlisted reports are in the implicit General)."""
+def can_arrange_sections(owner_id):
+    """Whether the user may change the section layout of `owner_id`'s workspace (None or their own id: theirs). In a
+    collaborator's, that takes a create or edit role on one of the collaborator's causes, or edit access to a case in one."""
+    if g.user.is_guest:
+        return False
+    return owner_id in (None, g.user.id) or bool(creation_targets(owner_id))
+
+
+def _workspace_sections(kind, items_key, load, save):
+    """GET and PUT of a section layout, which belongs to a workspace: ?owner= names a collaborator's, else it is the
+    user's own. The URL names it, not the account cookie, so that a page left open keeps saving to the workspace it
+    shows. A collaborator is sent only the items they can see, and their save keeps the others where they were."""
+    owner = request.args.get("owner", type=int) or g.user.id
+    shared = owner != g.user.id
+    if shared and not any(a["id"] == owner for a in collaborator_accounts()):
+        raise DocumentError("That user hasn't shared anything with you", 403)
+    visible = storage.accessible_ids(g.user.id, kind) if shared else None
+
     if request.method == "GET":
-        return jsonify(storage.get_report_sections(g.user.id))
+        sections = load(owner)
+        if shared:
+            sections = [{**sec, items_key: [i for i in sec[items_key] if i in visible]} for sec in sections]
+        return jsonify(sections)
+
+    if shared and not can_arrange_sections(owner):
+        raise DocumentError("You don't have permission to change the sections in this workspace", 403)
     data = request.get_json(silent=True)
     if not isinstance(data, list) or len(data) > 100:
         return jsonify({"error": "sections must be a list"}), 400
     clean = []
     for sec in data:
         if not (isinstance(sec, dict) and isinstance(sec.get("id"), str) and isinstance(sec.get("name"), str)
-                and isinstance(sec.get("reports"), list)):
+                and isinstance(sec.get(items_key), list)):
             return jsonify({"error": "invalid section"}), 400
         clean.append({
             "id": sec["id"][:40], "name": sec["name"].strip()[:80],
-            "reports": [r[:100] for r in sec["reports"][:2000] if isinstance(r, str)],
+            items_key: [i[:100] for i in sec[items_key][:2000] if isinstance(i, str)],
         })
-    storage.set_report_sections(g.user.id, clean)
+    if not shared:
+        save(owner, clean)
+        return jsonify(clean)
+    clean = [{**sec, items_key: [i for i in sec[items_key] if i in visible]} for sec in clean]
+    hidden = {sec["id"]: [i for i in sec[items_key] if i not in visible] for sec in load(owner)}
+    save(owner, [{**sec, items_key: sec[items_key] + hidden.get(sec["id"], [])} for sec in clean])
     return jsonify(clean)
+
+
+@app.route("/api/report-sections", methods=["GET", "PUT"])
+def api_report_sections():
+    """A workspace's reports-page sections (names, order, and which report
+    cards sit in each; unlisted reports are in the implicit General)."""
+    return _workspace_sections("report", "reports", storage.get_report_sections, storage.set_report_sections)
 
 
 @app.route("/api/document-sections", methods=["GET", "PUT"])
 def api_document_sections():
-    """The user's documents-page sections (names, order, and which document
+    """A workspace's documents-page sections (names, order, and which document
     cards sit in each; unlisted documents are in the implicit General)."""
-    if request.method == "GET":
-        return jsonify(storage.get_document_sections(g.user.id))
-    data = request.get_json(silent=True)
-    if not isinstance(data, list) or len(data) > 100:
-        return jsonify({"error": "sections must be a list"}), 400
-    clean = []
-    for sec in data:
-        if not (isinstance(sec, dict) and isinstance(sec.get("id"), str) and isinstance(sec.get("name"), str)
-                and isinstance(sec.get("documents"), list)):
-            return jsonify({"error": "invalid section"}), 400
-        clean.append({
-            "id": sec["id"][:40], "name": sec["name"].strip()[:80],
-            "documents": [d[:100] for d in sec["documents"][:2000] if isinstance(d, str)],
-        })
-    storage.set_document_sections(g.user.id, clean)
-    return jsonify(clean)
+    return _workspace_sections("source", "documents", storage.get_document_sections, storage.set_document_sections)
 
 
 ACCOUNT_FIELD_MAX_CHARS = 100
@@ -3097,7 +3114,8 @@ def page_view():
         switch = switch_account_to(request.args.get("owner", type=int))
         if switch:
             return switch
-        return render_template("annotations.html", doc_id="", docs=attach_owners("source", scoped_source_docs()), default_cause=default_cause_for_display(), can_create=can_create_here())
+        return render_template("annotations.html", doc_id="", docs=attach_owners("source", scoped_source_docs()), default_cause=default_cause_for_display(), can_create=can_create_here(),
+                               sections_owner=viewing_owner_id(), can_arrange=can_arrange_sections(viewing_owner_id()))
 
     try:
         page = int(request.args.get("page", 1))
@@ -3195,6 +3213,8 @@ def documents_view():
         shared_with_me=bool(report_id) and is_shared_with_me("report", report_id),
         owner_link_id=owner_link_id("report", report_id) if report_id else None,
         can_create=can_create_here(),
+        sections_owner=viewing_owner_id(),
+        can_arrange=can_arrange_sections(viewing_owner_id()),
         report_cause_titles=report_cause_titles,
         preselect_source=preselect_source,
         preselect_type=preselect_type,
@@ -3697,8 +3717,10 @@ def api_transfer_document_ownership(doc_id):
 
 @app.route("/api/document/<doc_id>", methods=["DELETE"])
 def api_delete_document(doc_id):
+    """The document's owner may delete it, and so may whoever created it, while they still have access to it."""
     check_doc_id(doc_id)
-    require_role("source", doc_id, "owner")
+    if require_role("source", doc_id) != "owner" and storage.get_document_creator(doc_id) != g.user.id:
+        raise DocumentError("You don't have permission to delete this document", 403)
     if storage.get_document_type(doc_id) is None:
         raise DocumentError(f"No document with id {doc_id!r}", 404)
 

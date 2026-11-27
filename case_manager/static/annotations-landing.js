@@ -55,9 +55,9 @@
 
   // ---- Landing page sections ----
   // Same idea as the reports page: users organise document cards into named, draggable sections. "General" is
-  // implicit and holds every document not assigned elsewhere. The layout is stored on the user's account
-  // (users.document_sections): [{id, name, documents: [...]}]. The cards are rendered by the server into
-  // #docCardPool and moved into their sections here.
+  // implicit and holds every document not assigned elsewhere. The layout belongs to the workspace, and is stored on
+  // its owner's account (users.document_sections): [{id, name, documents: [...]}]. The cards are rendered by the
+  // server into #docCardPool and moved into their sections here.
   const sectionsEl = document.getElementById("docSections");
   const pool = document.getElementById("docCardPool");
   const addSectionBtn = document.getElementById("addSectionBtn");
@@ -67,7 +67,10 @@
     let sections = [];
     let dragDocId = null;
     let dragSectionId = null;
+    let orderBeforeDrag = "";
     let saveTimer = null;
+    let canArrange = false; // set once the layout has loaded, so that a change can't overwrite it unseen
+    const sectionOrder = () => sections.map((s) => s.id).join();
 
     function saveSections() {
       clearTimeout(saveTimer);
@@ -76,7 +79,11 @@
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sections),
-        }).catch((e) => console.error("Could not save sections", e));
+        })
+          .then(async (res) => {
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          })
+          .catch((e) => window.alert("Could not save sections: " + e.message));
       }, 200);
     }
 
@@ -93,7 +100,7 @@
       if (sectionId) wrap.dataset.sectionId = sectionId;
       const head = document.createElement("div");
       head.className = "report-section-head";
-      head.innerHTML = sectionId
+      head.innerHTML = sectionId && canArrange
         ? '<span class="section-handle" title="Drag to reorder">&#8942;&#8942;</span><h3 class="section-title"></h3><button type="button" class="section-rename" title="Rename section">Rename</button><button type="button" class="section-delete card-delete-btn" title="Delete section (documents move to General)">✕</button>'
         : '<h3 class="section-title"></h3>';
       head.querySelector(".section-title").textContent = title;
@@ -117,14 +124,24 @@
         moveDocToSection(dragDocId, sectionId || null);
       });
 
-      if (sectionId) {
+      if (sectionId && canArrange) {
         const sec = sections.find((s) => s.id === sectionId);
         const handle = head.querySelector(".section-handle");
         handle.addEventListener("mousedown", () => { wrap.draggable = true; });
-        wrap.addEventListener("dragend", () => { wrap.draggable = false; wrap.classList.remove("dragging"); dragSectionId = null; });
+        handle.addEventListener("mouseup", () => { wrap.draggable = false; });
+        // Saved when the drag ends, wherever that is: by then the section being dragged is usually under the pointer
+        // itself, so no "drop" can be counted on.
+        wrap.addEventListener("dragend", () => {
+          wrap.draggable = false;
+          wrap.classList.remove("dragging");
+          if (dragSectionId !== sectionId) return; // a card's drag ending
+          dragSectionId = null;
+          if (sectionOrder() !== orderBeforeDrag) saveSections();
+        });
         wrap.addEventListener("dragstart", (e) => {
           if (!wrap.draggable || dragDocId) return;
           dragSectionId = sectionId;
+          orderBeforeDrag = sectionOrder();
           wrap.classList.add("dragging");
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("text/plain", sectionId);
@@ -143,7 +160,6 @@
           const dragged = sectionsEl.querySelector(".report-section.dragging");
           sectionsEl.insertBefore(dragged, before ? wrap : wrap.nextSibling);
         });
-        wrap.addEventListener("drop", (e) => { if (dragSectionId) { e.preventDefault(); saveSections(); } });
         head.querySelector(".section-rename").addEventListener("click", () => {
           const name = window.prompt("Section name", sec.name);
           if (name && name.trim()) { sec.name = name.trim().slice(0, 80); saveSections(); render(); }
@@ -170,7 +186,7 @@
         for (const id of ids) {
           const card = cards.get(id);
           grid.appendChild(card);
-          card.draggable = true;
+          card.draggable = canArrange;
         }
       };
       // General is only titled when sections exist, but is always a valid drop target for moving cards back.
@@ -190,7 +206,12 @@
       card.addEventListener("dragend", () => { dragDocId = null; card.classList.remove("dragging"); });
     });
 
+    // A section may be let go anywhere among the sections (without this the browser animates it "snapping back").
+    sectionsEl.addEventListener("dragover", (e) => { if (dragSectionId) e.preventDefault(); });
+    sectionsEl.addEventListener("drop", (e) => { if (dragSectionId) e.preventDefault(); });
+
     if (addSectionBtn) {
+      addSectionBtn.disabled = true;
       addSectionBtn.addEventListener("click", () => {
         const name = window.prompt("New section name");
         if (!name || !name.trim()) return;
@@ -202,9 +223,14 @@
 
     render();
     fetch(sectionsUrl)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((server) => { sections = server; render(); })
-      .catch(() => {});
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((server) => {
+        sections = server;
+        canArrange = Boolean(sectionsEl.dataset.canArrange);
+        if (addSectionBtn) addSectionBtn.disabled = false;
+        render();
+      })
+      .catch((e) => console.error("Could not load sections", e));
   }
 
   document.querySelectorAll(".doc-card-delete").forEach((btn) => {

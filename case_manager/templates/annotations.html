@@ -21,14 +21,21 @@
       <div class="doc-landing">
         <div class="landing-head">
           <h2>Your documents</h2>
-          {% if docs and not (g.user and g.user.is_guest) %}<button type="button" class="btn" id="addSectionBtn" title="Add a document section">+ Add section</button>{% endif %}
+          {% if docs and can_arrange %}<button type="button" class="btn" id="addSectionBtn" title="Add a document section">+ Add section</button>{% endif %}
         </div>
+        <div class="upload-form">
+          <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
+          <button type="button" id="imagesOpen" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images and PDF sections&hellip;</button>
+          <input type="file" id="uploadInput" accept=".pdf" hidden>
+          <span id="uploadStatus" class="upload-status"></span>
+        </div>
+        {% include "_default_cause_hint.html" %}
         {% if docs %}
-        <div id="docSections" class="report-sections" data-sections-url="{{ url_for('api_document_sections') }}"></div>
+        <div id="docSections" class="report-sections" data-sections-url="{{ url_for('api_document_sections', owner=sections_owner) }}" data-can-arrange="{{ '1' if can_arrange else '' }}"></div>
         <div id="docCardPool" class="report-grid">
           {% for d in docs %}
           <a class="report-card" data-doc-id="{{ d.id }}" href="{{ url_for('page_view') }}?doc={{ d.id }}&type={{ d.type }}&page=1">
-            {% if d.role == "owner" %}<button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>{% endif %}
+            {% if d.role == "owner" or d.created_by == g.user.id %}<button type="button" class="report-card-delete card-delete-btn doc-card-delete" title="Delete document" data-doc-id="{{ d.id }}">&#10005;</button>{% endif %}
             <div class="report-card-name">{{ d.title }}</div>
             <div class="report-card-meta">{{ d.type }}</div>
             <div class="report-card-meta">{{ d.snippet_count }} {{ "snippet" if d.snippet_count == 1 else "snippets" }}</div>
@@ -39,15 +46,8 @@
           {% endfor %}
         </div>
         {% else %}
-        <p class="empty" id="landingEmptyHint">No documents yet. Upload one below, or ask a colleague to share theirs with you.</p>
+        <p class="empty" id="landingEmptyHint">No documents yet. Upload one above, or ask a colleague to share theirs with you.</p>
         {% endif %}
-        <div class="upload-form">
-          <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
-          <button type="button" id="imagesOpen" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images and PDF sections&hellip;</button>
-          <input type="file" id="uploadInput" accept=".pdf" hidden>
-          <span id="uploadStatus" class="upload-status"></span>
-        </div>
-        {% include "_default_cause_hint.html" %}
       </div>
     </div>
   </main>

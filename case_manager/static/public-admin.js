@@ -91,6 +91,12 @@
     });
   }
 
+  const sectionOrder = () => sections.filter((s) => s.kind !== "legal_tools").map((s) => s.id);
+  // A section may be let go anywhere among the sections (without this the browser animates it "snapping back").
+  for (const type of ["dragover", "drop"]) {
+    sectionsEl.addEventListener(type, (e) => { if (drag && drag.kind === "section") e.preventDefault(); });
+  }
+
   // Same markup as the public page's cards, as a div so a click doesn't navigate.
   function makeCard(a, fromSectionId) {
     const card = el("div", "article-card pa-card");
@@ -205,10 +211,19 @@
     const handle = head.querySelector(".pa-handle");
     handle.addEventListener("mousedown", () => { wrap.draggable = true; });
     handle.addEventListener("mouseup", () => { if (!drag) wrap.draggable = false; });
-    wrap.addEventListener("dragend", () => { wrap.draggable = false; wrap.classList.remove("dragging"); if (drag && drag.kind === "section") drag = null; });
+    // Saved when the drag ends, wherever that is: by then the section being dragged is usually under the pointer
+    // itself, so no "drop" can be counted on.
+    wrap.addEventListener("dragend", () => {
+      wrap.draggable = false;
+      wrap.classList.remove("dragging");
+      if (!drag || drag.kind !== "section") return;
+      const moved = sectionOrder().join() !== drag.before;
+      drag = null;
+      if (moved) api(fill(urls.order, { __W__: websiteId }), "PUT", { ids: sectionOrder() }).catch(fail("save the section order"));
+    });
     wrap.addEventListener("dragstart", (e) => {
       if (!wrap.draggable || drag) return;
-      drag = { kind: "section", id: sec.id };
+      drag = { kind: "section", id: sec.id, before: sectionOrder().join() };
       wrap.classList.add("dragging");
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", sec.id);
@@ -225,13 +240,6 @@
       const [moved] = sections.splice(from, 1);
       sections.splice(to, 0, moved);
       sectionsEl.insertBefore(sectionsEl.querySelector(".pa-section.dragging"), before ? wrap : wrap.nextSibling);
-    });
-    wrap.addEventListener("drop", (e) => {
-      if (!drag || drag.kind !== "section") return;
-      e.preventDefault();
-      api(fill(urls.order, { __W__: websiteId }), "PUT", {
-        ids: sections.filter((s) => s.kind !== "legal_tools").map((s) => s.id),
-      }).catch(fail("save the section order"));
     });
     return wrap;
   }

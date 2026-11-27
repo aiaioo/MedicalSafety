@@ -385,8 +385,9 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
 
   // ---- Landing page sections ----
   // Users organise report cards into named sections. "General" is implicit
-  // and holds every report not assigned elsewhere. The layout is stored on
-  // the user's account (users.report_sections): [{id, name, reports: [...]}].
+  // and holds every report not assigned elsewhere. The layout belongs to the
+  // workspace, and is stored on its owner's account (users.report_sections):
+  // [{id, name, reports: [...]}].
   const sectionsUrl = appEl.dataset.sectionsUrl;
   const legacySectionsKey = "reportSections:" + (appEl.dataset.userId || "");
   let saveTimer = null;
@@ -397,15 +398,22 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(sections),
-      }).catch((e) => console.error("Could not save sections", e));
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        })
+        .catch((e) => window.alert("Could not save sections: " + e.message));
     }, 200);
   }
+  let canArrange = false; // set once the layout has loaded, so that a change can't overwrite it unseen
   async function loadSections() {
     try {
       const res = await fetch(sectionsUrl);
       if (!res.ok) return [];
       const server = await res.json();
-      if (server.length) return server;
+      canArrange = Boolean(appEl.dataset.canArrange);
+      if (addSectionBtn) addSectionBtn.disabled = false;
+      if (server.length || appEl.dataset.sharedSections) return server;
       // One-time import of a layout saved in this browser before it moved
       // to the database.
       const old = JSON.parse(localStorage.getItem(legacySectionsKey));
@@ -423,6 +431,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
   let sections = [];
   let landingReports = [];
   const addSectionBtn = document.getElementById("addSectionBtn");
+  if (addSectionBtn) addSectionBtn.disabled = true;
 
   function moveReportToSection(reportId, sectionId) {
     for (const sec of sections) sec.reports = sec.reports.filter((id) => id !== reportId);
@@ -437,7 +446,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     if (sectionId) wrap.dataset.sectionId = sectionId;
     const head = document.createElement("div");
     head.className = "report-section-head";
-    head.innerHTML = sectionId
+    head.innerHTML = sectionId && canArrange
       ? '<span class="section-handle" title="Drag to reorder">&#8942;&#8942;</span><h3 class="section-title"></h3><button type="button" class="section-rename" title="Rename section">Rename</button><button type="button" class="section-delete card-delete-btn" title="Delete section (reports move to General)">✕</button>'
       : '<h3 class="section-title"></h3>';
     head.querySelector(".section-title").textContent = title;
@@ -461,14 +470,25 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
       moveReportToSection(dragReportId, sectionId || null);
     });
 
-    if (sectionId) {
+    if (sectionId && canArrange) {
       const sec = sections.find((s) => s.id === sectionId);
       const handle = head.querySelector(".section-handle");
       handle.addEventListener("mousedown", () => { wrap.draggable = true; });
-      wrap.addEventListener("dragend", () => { wrap.draggable = false; wrap.classList.remove("dragging"); dragSectionId = null; });
+      handle.addEventListener("mouseup", () => { wrap.draggable = false; });
+      // Saved when the drag ends, wherever that is: by then the section being
+      // dragged is usually under the pointer itself, so no "drop" can be
+      // counted on.
+      wrap.addEventListener("dragend", () => {
+        wrap.draggable = false;
+        wrap.classList.remove("dragging");
+        if (dragSectionId !== sectionId) return; // a card's drag ending
+        dragSectionId = null;
+        if (sectionOrder() !== orderBeforeDrag) saveSections();
+      });
       wrap.addEventListener("dragstart", (e) => {
         if (!wrap.draggable || dragReportId) return;
         dragSectionId = sectionId;
+        orderBeforeDrag = sectionOrder();
         wrap.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", sectionId);
@@ -487,7 +507,6 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         const dragged = reportListLanding.querySelector(".report-section.dragging");
         reportListLanding.insertBefore(dragged, before ? wrap : wrap.nextSibling);
       });
-      wrap.addEventListener("drop", (e) => { if (dragSectionId) { e.preventDefault(); saveSections(); } });
       head.querySelector(".section-rename").addEventListener("click", () => {
         const name = window.prompt("Section name", sec.name);
         if (name && name.trim()) { sec.name = name.trim().slice(0, 80); saveSections(); renderLanding(); }
@@ -504,6 +523,14 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
 
   let dragReportId = null;
   let dragSectionId = null;
+  let orderBeforeDrag = "";
+  const sectionOrder = () => sections.map((s) => s.id).join();
+  // A section may be let go anywhere among the sections (without this the
+  // browser animates it "snapping back").
+  if (reportListLanding) {
+    reportListLanding.addEventListener("dragover", (e) => { if (dragSectionId) e.preventDefault(); });
+    reportListLanding.addEventListener("drop", (e) => { if (dragSectionId) e.preventDefault(); });
+  }
 
   function renderLanding() {
     reportListLanding.innerHTML = "";
@@ -521,7 +548,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
           renderLanding();
         }, true);
         const card = grid.lastElementChild;
-        card.draggable = true;
+        card.draggable = canArrange;
         card.addEventListener("dragstart", (e) => {
           dragReportId = r.id;
           card.classList.add("dragging");

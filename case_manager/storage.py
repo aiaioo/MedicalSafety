@@ -235,11 +235,11 @@ def _cause_owner_dir(cur, link: tuple[str, str], fallback_user_id: int) -> str:
 
 def list_documents(user_id: int) -> list[dict]:
     """Every uploaded source document this user has any role on, id-sorted
-    -- {"id", "type", "title", "description", "role", "cause_ids", "case_ids", "snippet_count"}."""
+    -- {"id", "type", "title", "description", "role", "created_by", "cause_ids", "case_ids", "snippet_count"}."""
     with _cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.doc_type, d.title, d.description, d.rotation_rev, us.role, {links},
+            SELECT d.id, d.doc_type, d.title, d.description, d.rotation_rev, d.created_by, us.role, {links},
                    (SELECT count(*) FROM snippets s WHERE s.document_id = d.id) AS snippet_count
             FROM documents d JOIN eff_user_sources us ON us.document_id = d.id AND us.user_id = %s
             ORDER BY d.id
@@ -249,7 +249,7 @@ def list_documents(user_id: int) -> list[dict]:
         rows = cur.fetchall()
     return [
         {"id": r["id"], "type": r["doc_type"], "title": _dec_text(r["title"]), "description": _dec_text(r["description"]),
-         "rev": r["rotation_rev"], "role": r["role"],
+         "rev": r["rotation_rev"], "role": r["role"], "created_by": r["created_by"],
          "cause_ids": list(r["cause_ids"]), "case_ids": list(r["case_ids"]),
          "snippet_count": r["snippet_count"]}
         for r in rows
@@ -339,8 +339,8 @@ def set_document_description(document_id: str, description: str) -> None:
 def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int, link: tuple[str, str]) -> None:
     """Registers a freshly uploaded document: writes its bytes via the
     storage backend, then -- in one transaction -- its row (title defaults
-    to its own id, matching the old doc_meta fallback), its uploader's
-    ownership, and its first association, `link` = ("cause" | "case", id).
+    to its own id, matching the old doc_meta fallback; created by `owner_id`),
+    its uploader's ownership, and its first association, `link` = ("cause" | "case", id).
     The bytes go under the owner of that cause (see _cause_owner_dir), a
     folder fixed on the row from then on."""
     with _cursor() as cur:
@@ -348,8 +348,8 @@ def create_document(document_id: str, doc_type: str, data: bytes, owner_id: int,
     get_storage_backend().write_bytes(document_storage_key(document_id, doc_type, owner), data)
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
-            (document_id, doc_type, _enc_text(document_id), owner),
+            "INSERT INTO documents (id, doc_type, title, storage_owner, created_by) VALUES (%s, %s, %s, %s, %s)",
+            (document_id, doc_type, _enc_text(document_id), owner, owner_id),
         )
         _grant(cur, owner_id, "source", document_id, "owner")
         _link(cur, "source", document_id, *link)
@@ -361,7 +361,7 @@ def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id:
     come, so the file is never held whole in memory (or on disk unencrypted). `validate`, if given,
     is called with a seekable decrypting file object once everything is stored; if it raises, the
     stored file is removed and nothing is registered. `editor_id`, if given, is the uploader when the document is
-    registered as owned by someone else: they keep editing rights on it."""
+    registered as owned by someone else: they are recorded as its creator and keep editing rights on it."""
     with _cursor() as cur:
         owner = _cause_owner_dir(cur, link, owner_id)
     backend = get_storage_backend()
@@ -373,8 +373,9 @@ def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id:
                 validate(f)
         with _cursor() as cur:
             cur.execute(
-                "INSERT INTO documents (id, doc_type, title, storage_owner) VALUES (%s, %s, %s, %s)",
-                (document_id, doc_type, _enc_text(title or document_id), owner),
+                "INSERT INTO documents (id, doc_type, title, storage_owner, created_by) VALUES (%s, %s, %s, %s, %s)",
+                (document_id, doc_type, _enc_text(title or document_id), owner,
+                 owner_id if editor_id is None else editor_id),
             )
             _grant(cur, owner_id, "source", document_id, "owner")
             if editor_id is not None and editor_id != owner_id:
@@ -383,6 +384,14 @@ def create_document_streaming(document_id: str, doc_type: str, chunks, owner_id:
     except BaseException:
         backend.delete(key)
         raise
+
+
+def get_document_creator(document_id: str) -> int | None:
+    """Id of the user who uploaded the document (a split document's parts keep it); None if unknown."""
+    with _cursor() as cur:
+        cur.execute("SELECT created_by FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+    return row["created_by"] if row else None
 
 
 def document_cause_owner_ids(document_id: str) -> list[int]:
@@ -809,13 +818,14 @@ def commit_split(split_id: str) -> None:
         old, plan = row["document_id"], row["plan"]
         segs = plan["segments"]
         seg_ids = [s["id"] for s in segs]
-        cur.execute("SELECT description, storage_owner FROM documents WHERE id = %s FOR UPDATE", (old,))
+        cur.execute("SELECT description, storage_owner, created_by FROM documents WHERE id = %s FOR UPDATE", (old,))
         doc = cur.fetchone()
 
         for seg in segs:
             cur.execute(
-                "INSERT INTO documents (id, doc_type, title, description, storage_owner) VALUES (%s, 'pdf', %s, %s, %s)",
-                (seg["id"], _enc_text(seg["title"]), doc["description"], doc["storage_owner"]),
+                "INSERT INTO documents (id, doc_type, title, description, storage_owner, created_by) "
+                "VALUES (%s, 'pdf', %s, %s, %s, %s)",
+                (seg["id"], _enc_text(seg["title"]), doc["description"], doc["storage_owner"], doc["created_by"]),
             )
             # Whoever could see or edit the document, and every cause and case it was filed under, gets the same on each part.
             cur.execute("INSERT INTO user_sources (user_id, document_id, role, created_at) "
@@ -1816,7 +1826,7 @@ def set_case_alerts(user_id: int, case_id: str, on: bool) -> None:
 
 
 def get_report_sections(user_id: int) -> list:
-    """The user's reports-page layout: [{"id", "name", "reports": [...]}]."""
+    """The reports-page layout of this user's workspace: [{"id", "name", "reports": [...]}]."""
     with _cursor() as cur:
         cur.execute("SELECT report_sections FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
@@ -1832,7 +1842,7 @@ def set_report_sections(user_id: int, sections: list) -> None:
 
 
 def get_document_sections(user_id: int) -> list:
-    """The user's documents-page layout: [{"id", "name", "documents": [...]}]."""
+    """The documents-page layout of this user's workspace: [{"id", "name", "documents": [...]}]."""
     with _cursor() as cur:
         cur.execute("SELECT document_sections FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
