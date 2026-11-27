@@ -92,6 +92,30 @@
   }
 
   const sectionOrder = () => sections.filter((s) => s.kind !== "legal_tools").map((s) => s.id);
+  // One save at a time, so that quick successive moves can't arrive out of order.
+  let orderSaved = Promise.resolve();
+  function saveOrder() {
+    const ids = sectionOrder();
+    orderSaved = orderSaved
+      .then(() => api(fill(urls.order, { __W__: websiteId }), "PUT", { ids }))
+      .catch(fail("save the section order"));
+  }
+  // The arrows: one place up or down.
+  function moveSection(sectionId, step) {
+    const order = sectionOrder();
+    const otherId = order[order.indexOf(sectionId) + step];
+    if (!order.includes(sectionId) || !otherId) return; // already first or last
+    const from = sections.findIndex((s) => s.id === sectionId);
+    const to = sections.findIndex((s) => s.id === otherId);
+    [sections[from], sections[to]] = [sections[to], sections[from]];
+    saveOrder();
+    render();
+    // Keep hold of the arrow (the other one, at either end), which also keeps the section in view.
+    const arrows = [...sectionsEl.children[sectionOrder().indexOf(sectionId)].querySelectorAll(".section-move")];
+    const used = arrows[step < 0 ? 0 : 1];
+    const next = used.disabled ? arrows.find((b) => !b.disabled) : used;
+    if (next) next.focus();
+  }
   // A section may be let go anywhere among the sections (without this the browser animates it "snapping back").
   for (const type of ["dragover", "drop"]) {
     sectionsEl.addEventListener(type, (e) => { if (drag && drag.kind === "section") e.preventDefault(); });
@@ -193,10 +217,17 @@
     const wrap = el("section", "pa-section public-section");
     const head = el("div", "pa-section-head");
     head.innerHTML = '<span class="pa-handle" title="Drag to reorder">&#8942;&#8942;</span><h2></h2>' +
+      '<button type="button" class="section-move" data-step="-1" title="Move section up" aria-label="Move section up">&#9650;</button>' +
+      '<button type="button" class="section-move" data-step="1" title="Move section down" aria-label="Move section down">&#9660;</button>' +
       '<button type="button" class="pa-edit-link">Edit</button>' +
       '<button type="button" class="card-delete-btn" title="Delete section (its articles become unplaced here)">&#10005;</button>';
     head.querySelector("h2").textContent = sec.title;
     head.querySelector(".pa-edit-link").addEventListener("click", () => editSection(sec));
+    head.querySelectorAll(".section-move").forEach((btn) => {
+      const step = Number(btn.dataset.step);
+      btn.disabled = !sectionOrder()[sectionOrder().indexOf(sec.id) + step];
+      btn.addEventListener("click", () => moveSection(sec.id, step));
+    });
     wrap.appendChild(head);
     if (sec.description) wrap.appendChild(el("p", "public-section-description", sec.description));
     const grid = el("div", "article-card-grid");
@@ -219,7 +250,7 @@
       if (!drag || drag.kind !== "section") return;
       const moved = sectionOrder().join() !== drag.before;
       drag = null;
-      if (moved) api(fill(urls.order, { __W__: websiteId }), "PUT", { ids: sectionOrder() }).catch(fail("save the section order"));
+      if (moved) { saveOrder(); render(); }
     });
     wrap.addEventListener("dragstart", (e) => {
       if (!wrap.draggable || drag) return;

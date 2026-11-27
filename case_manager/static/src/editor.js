@@ -440,6 +440,21 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     renderLanding();
   }
 
+  // The arrows: one place up or down among the named sections (General always stays first).
+  function moveSection(sectionId, step) {
+    const from = sections.findIndex((s) => s.id === sectionId);
+    const to = from + step;
+    if (from < 0 || to < 0 || to >= sections.length) return; // already first or last
+    [sections[from], sections[to]] = [sections[to], sections[from]];
+    saveSections();
+    renderLanding();
+    // Keep hold of the arrow (the other one, at either end), which also keeps the section in view.
+    const arrows = [...reportListLanding.querySelectorAll(`.report-section[data-section-id="${CSS.escape(sectionId)}"] .section-move`)];
+    const used = arrows[step < 0 ? 0 : 1];
+    const next = used.disabled ? arrows.find((b) => !b.disabled) : used;
+    if (next) next.focus();
+  }
+
   function buildSection(title, sectionId) {
     const wrap = document.createElement("section");
     wrap.className = "report-section";
@@ -447,7 +462,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
     const head = document.createElement("div");
     head.className = "report-section-head";
     head.innerHTML = sectionId && canArrange
-      ? '<span class="section-handle" title="Drag to reorder">&#8942;&#8942;</span><h3 class="section-title"></h3><button type="button" class="section-rename" title="Rename section">Rename</button><button type="button" class="section-delete card-delete-btn" title="Delete section (reports move to General)">✕</button>'
+      ? '<span class="section-handle" title="Drag to reorder">&#8942;&#8942;</span><h3 class="section-title"></h3><button type="button" class="section-move" data-step="-1" title="Move section up" aria-label="Move section up">&#9650;</button><button type="button" class="section-move" data-step="1" title="Move section down" aria-label="Move section down">&#9660;</button><button type="button" class="section-rename" title="Rename section">Rename</button><button type="button" class="section-delete card-delete-btn" title="Delete section (reports move to General)">✕</button>'
       : '<h3 class="section-title"></h3>';
     head.querySelector(".section-title").textContent = title;
     const grid = document.createElement("div");
@@ -483,7 +498,7 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         wrap.classList.remove("dragging");
         if (dragSectionId !== sectionId) return; // a card's drag ending
         dragSectionId = null;
-        if (sectionOrder() !== orderBeforeDrag) saveSections();
+        if (sectionOrder() !== orderBeforeDrag) { saveSections(); renderLanding(); }
       });
       wrap.addEventListener("dragstart", (e) => {
         if (!wrap.draggable || dragReportId) return;
@@ -506,6 +521,12 @@ import { TableTools, setupTableToolbar, handleTableTab } from "./tableTools.js";
         sections.splice(to, 0, moved);
         const dragged = reportListLanding.querySelector(".report-section.dragging");
         reportListLanding.insertBefore(dragged, before ? wrap : wrap.nextSibling);
+      });
+      head.querySelectorAll(".section-move").forEach((btn) => {
+        const step = Number(btn.dataset.step);
+        const to = sections.indexOf(sec) + step;
+        btn.disabled = to < 0 || to >= sections.length;
+        btn.addEventListener("click", () => moveSection(sectionId, step));
       });
       head.querySelector(".section-rename").addEventListener("click", () => {
         const name = window.prompt("Section name", sec.name);
