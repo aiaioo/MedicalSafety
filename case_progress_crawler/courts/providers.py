@@ -47,10 +47,12 @@ class ProviderMatcher:
         r"director|chief|chairman|ceo|manager)|(?:the\s+)?(?:managing\s+director|authori[sz]ed\s+(?:signatory|officer)))\b.*$",
         re.IGNORECASE)
     institution_re = re.compile(r"\b(?:" + "|".join(INSTITUTION_PATTERNS) + r")\b", re.IGNORECASE)
-    # "lab" alone is a weak sign of a provider: with one of these words the name is a computer lab, a photo lab ... not a diagnostic lab
-    weak_institution_re = re.compile(r"labs?|laborator(?:y|ies)", re.IGNORECASE)
+    # "lab", "clinic" and "diagnostics" are weak signs of a provider: with one of these words the name is a computer lab,
+    # a car clinic, a vehicle diagnostics firm ... not a medical one
+    weak_institution_re = re.compile(r"labs?|laborator(?:y|ies)|clinics?|diagnostics?", re.IGNORECASE)
     non_medical_lab_re = re.compile(r"\b(?:computers?|software|infotech|information\s+technolog\w*|cyber|photo\w*|printing|printers?|electronics?|"
-                                    r"mobiles?|robotics|language|engineering|soil|textiles?|cement|steel|metals?)\b", re.IGNORECASE)
+                                    r"mobiles?|robotics|language|engineering|soil|textiles?|cement|steel|metals?|"
+                                    r"auto|cars?|motors?|vehicles?|agri|agro)\b", re.IGNORECASE)
     doctor_re = re.compile(r"\b(?:" + "|".join(DOCTOR_PATTERNS) + r")\b", re.IGNORECASE)
     veterinary_re = re.compile(r"\bveterinar\w*|\bvets?\b|\banimals?\b|\bpets?\b|\bcattle\b|\bkennel", re.IGNORECASE)
     # businesses that are not medical providers; a "Dr" or "hospital" beside them is incidental
@@ -78,7 +80,7 @@ class ProviderMatcher:
 
     @functools.lru_cache(maxsize=200000)  # the same party names recur across thousands of cases; the patterns never change
     def has_institution(self, n):
-        """Does the (cleaned) name have a word of an institution -- but not only "lab" in a name that is plainly not medical?"""
+        """Does the (cleaned) name have a word of an institution -- but not only a weak one in a name that is plainly not medical?"""
         words = [m.group() for m in self.institution_re.finditer(n or "")]
         if not words:
             return False

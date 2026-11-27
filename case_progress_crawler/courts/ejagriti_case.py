@@ -233,6 +233,16 @@ class ConsumerCaseDownloader:
                                  {**result, "version": CLASSIFIER_VERSION, "classified_at": now.isoformat(timespec="seconds")})
         out["saved"].append("classification.json")
 
+    def relabel(self, case_number, parties, now=None):
+        """Label a case again, from its saved status, if its label was made by older rules: nothing is asked of the
+        portal. True if it was."""
+        old = self._json(case_number, "classification.json")
+        status = self._json(case_number, "status.json")
+        if not status or (old and old.get("version") == CLASSIFIER_VERSION):
+            return False
+        self._classify(case_number, parties, status, now or datetime.now(), {"saved": []})
+        return True
+
     def due(self, case_number, now=None):
         """Is it time to ask the portal about this case? Not every day: a case is asked about when its next
         hearing is today or past (the order and a new date are expected), when its last hearing was within RECENT
@@ -376,6 +386,10 @@ class ConsumerCaseDownloader:
         """sync() each case that is due; `cases` is tracked_cases(). One case failing does not stop the rest.
         Returns the number of cases that had a failure."""
         case_numbers = sorted(cases)
+        if not dry_run:
+            relabelled = sum(self.relabel(number, cases[number]) for number in case_numbers)
+            if relabelled:
+                log(f"case details: {relabelled} cases labelled again under the current rules")
         failures = new = changed = idle = 0
         for number in case_numbers:
             if not self.due(number):
