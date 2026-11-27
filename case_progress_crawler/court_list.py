@@ -2,7 +2,7 @@
 """Refresh the stored list (storage.save_courts) of courts the crawler knows about, by city.
 
 It holds the crawler's own courts (courts/, e.g. the Karnataka Medical Council) and the
-consumer courts of Karnataka and Delhi (with the National Commission) read from the e-Jagriti portal (courts/ejagriti.py). Courts
+consumer courts of Karnataka, Delhi (with the National Commission) and Kerala read from the e-Jagriti portal (courts/ejagriti.py). Courts
 come and go on the portal, so each run records when a court was first and last seen; one
 that disappears is kept, marked "active": false, rather than dropped.
 

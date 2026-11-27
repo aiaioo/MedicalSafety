@@ -66,7 +66,8 @@ bp = Blueprint("case_tracker", __name__, template_folder="templates", static_fol
 COURT_LABELS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA"}  # kind of court -> short label; an analysed court "consumer-<state>" is of kind "consumer"
 CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case (filedInComissionName) -> its full name, for the ones that are not district commissions
     "": "Karnataka State Consumer Disputes Redressal Commission", "KARNATAKA": "Karnataka State Consumer Disputes Redressal Commission",
-    "DELHI": "Delhi State Consumer Disputes Redressal Commission", "NCDRC": "National Consumer Disputes Redressal Commission"}
+    "DELHI": "Delhi State Consumer Disputes Redressal Commission", "KERALA": "Kerala State Consumer Disputes Redressal Commission",
+    "NCDRC": "National Consumer Disputes Redressal Commission"}
 COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
 MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year
 COURT_DESCRIPTIONS = {  # kind of court -> what the court is, shown under its figures in the "At a glance" panel
@@ -75,6 +76,16 @@ COURT_DESCRIPTIONS = {  # kind of court -> what the court is, shown under its fi
     "consumer": "CPA: medical negligence cases before the consumer courts of {state}{extra} (Consumer Protection Act).",
 }
 CONSUMER_EXTRAS = {"Delhi": " and the National Commission (NCDRC), whose cases come from all over India"}  # what a state's consumer figures include besides its own courts
+COUNCIL_SITES = {  # medical council -> its own website and inquiries page, linked under "More about" it in the panel
+    "kmc": {"links": [("Karnataka Medical Council website", "https://www.karnatakamedicalcouncil.com/"),
+                      ("Enquiry page", "https://www.karnatakamedicalcouncil.com/Enquiry.aspx")],
+            "note": "The Council took its site down for a security audit in November 2026; if these links do not open, that may be why."},
+    "dmc": {"links": [("Delhi Medical Council website", "https://delhimedicalcouncil.org/"),
+                      ("Status of complaints examined", "https://delhimedicalcouncil.org/status-of-complaints")], "note": ""},
+}
+OPAQUE_COUNCILS = {  # state -> its medical council that publishes no case records, so the tracker has none to show
+    "Kerala": {"name": "Kerala State Medical Councils", "url": "https://medicalcouncil.kerala.gov.in/"},
+}
 DEFAULT_STATE = "Karnataka"  # the state shown to a visitor with no choice yet (the first state with analysed courts if there is none of this name)
 SELECTIONS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
 DEFAULT_SELECTION = "all"  # for visitors with no choice yet; set by --court
@@ -239,6 +250,19 @@ class in_state:
 
     def __exit__(self, *exc):
         _state_forced.value = None
+
+
+@bp.app_template_global()
+def council_site(court):
+    """The links of a medical council's own pages (see COUNCIL_SITES), or None for another kind of court. A template
+    global, so figures stored before a link changed show the current one."""
+    return COUNCIL_SITES.get(court)
+
+
+@bp.app_template_global()
+def opaque_council(st):
+    """The medical council of a state that publishes no case records (see OPAQUE_COUNCILS), or None."""
+    return OPAQUE_COUNCILS.get(st)
 
 
 def selections(st=None):

@@ -22,6 +22,7 @@ DISTRICT_COMMISSION = 3
 
 KARNATAKA = {"state": "Karnataka", "state_id": 29}
 DELHI = {"state": "Delhi", "state_id": 7}
+KERALA = {"state": "Kerala", "state_id": 32}
 NATIONAL = {"state_id": 0}  # the portal lists the National Commission (NCDRC) under state id 0
 NATIONAL_SEAT = DELHI  # where the National Commission sits: its courts are listed with that state's
 BANGALORE_RE = re.compile(r"\b(?:bangalore|bengaluru)\b", re.IGNORECASE)  # two spellings of the same name
@@ -94,9 +95,14 @@ def delhi_courts():
     return state_courts(DELHI["state"], DELHI["state_id"], "New Delhi") + national_courts()
 
 
+def kerala_courts():
+    return state_courts(KERALA["state"], KERALA["state_id"], "Thiruvananthapuram")
+
+
 def consumer_courts():
-    """Every consumer court the crawler follows: those of Karnataka, and those of Delhi with the National Commission."""
-    return karnataka_courts() + delhi_courts()
+    """Every consumer court the crawler follows: those of Karnataka, those of Delhi with the National Commission,
+    and those of Kerala."""
+    return karnataka_courts() + delhi_courts() + kerala_courts()
 
 
 API_BASE = "https://e-jagriti.gov.in/services"
