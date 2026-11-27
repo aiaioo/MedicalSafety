@@ -346,11 +346,12 @@ def analytics_page(page, p):
 
 
 def build_analytics_page(page, p, non_medical, data):
-    """What analytics_page returns, worked out from a state's data (call inside `in_state`, without a request)."""
-    keep = (lambda c: True) if non_medical else (lambda c: c.get("label") != "not_medical")
+    """What analytics_page returns, worked out from a state's data (call inside `in_state`, without a request). The
+    advocates table counts medical cases only, whatever `non_medical` says."""
+    keep = (lambda c: True) if non_medical else (lambda c: not is_non_medical(c))
     if page == "hospitals":
         return hospital_table([c for c in data["ordered"] if keep(c) and in_period(c, p)])
-    return [{k: v for k, v in a.items() if k not in ("cases", "sides")} for a in visible_advocates(data, p, keep)]  # no case lists: a page needs only their counts
+    return [{k: v for k, v in a.items() if k not in ("cases", "sides")} for a in medical_advocates(data, p)]  # no case lists: a page needs only their counts
 
 
 def show_non_medical():
@@ -461,11 +462,11 @@ def hospital_names():
 
 
 def advocate_case_counts():
-    """{slug: number of cases} of the advocates of this state, over every court."""
+    """{slug: number of medical cases} of the advocates of this state, over every court."""
     held = _held_data(state())
     if held is not None:
-        return {slug: len(a["cases"]) for slug, a in held["advocates"].items()}
-    return storage.view_link_counts(state(), "advocate")
+        return {slug: sum(not is_non_medical(c) for c in a["cases"]) for slug, a in held["advocates"].items()}
+    return storage.view_link_counts(state(), "advocate", medical_only=True)
 
 
 def analytics(cases, all_years=None):
@@ -662,7 +663,7 @@ def side_comparison(cases):
     point. Hearings are those of cases where the hospital's side is known. A lawyer's experience is the number of
     cases they appear in anywhere in the tracker (not years at the bar, which no record gives); each lawyer counts once
     per case, on the side they act for, and the figure is the mean and median over those appearances."""
-    known = [c for c in cases if c["provider_side"]]
+    known = [c for c in cases if c["provider_side"] and not is_non_medical(c)]
     hearings = sum(c["n_held"] for c in known)
     totals = defaultdict(int)
     for c in known:
@@ -1235,10 +1236,18 @@ def suggest():
 MIN_CLOSED_FOR_RANKING = 3
 
 
+def is_non_medical(c):
+    """Is the case labelled as not about medical negligence? It may be listed (see visible), but it has no patient's or
+    hospital's side: nobody wins it for either, and it counts in no lawyer's or hospital's record."""
+    return c.get("label") == "not_medical"
+
+
 def case_verdict(c):
     """'for' / 'against' the hospital, from who brought the case and how the court decided it: the court allowing
     it favours the complainant (or appellant), dismissing it favours the respondent. None when the case is open,
-    ended some other way, or the hospital's side is unknown."""
+    ended some other way, the hospital's side is unknown, or it is not a medical case."""
+    if is_non_medical(c):
+        return None
     side = c.get("provider_side")
     if side not in ("complainant", "respondent") or c["outcome"] not in ("allowed", "dismissed"):
         return None
@@ -1253,7 +1262,7 @@ def hospital_ranking(cases):
     for c in cases:
         if c["outcome"] != "open":
             for slug in c["provider_hospitals"]:
-                if slug:
+                if slug and not is_non_medical(c):
                     closed[slug].append(c)
     rows = []
     for slug, cs in closed.items():
@@ -1279,23 +1288,24 @@ def hospital_table(cases):
     rows = []
     for slug, cs in by.items():
         cs = list(cs.values())
-        prov = [c for c in cs if slug in c["provider_hospitals"] and c["outcome"] != "open"]
+        medical = [c for c in cs if not is_non_medical(c)]
+        prov = [c for c in medical if slug in c["provider_hospitals"] and c["outcome"] != "open"]
         against = sum(case_verdict(c) == "against" for c in prov)
         closed = [c for c in cs if c["outcome"] != "open"]
         asked = held = 0
         lawyers = defaultdict(lambda: [0, ""])
         for c in cs:
             side = c["provider_side"] or "respondent"
-            if c["provider_side"]:
+            if c["provider_side"] and not is_non_medical(c):
                 asked += c["adjournments"][(side, "time")]
                 held += c["n_held"]
-            for aslug, name in c["advocate_links"][side]:
+            for aslug, name in [] if is_non_medical(c) else c["advocate_links"][side]:
                 lawyers[aslug][0] += 1
                 lawyers[aslug][1] = name
         name = HOSPITAL_DISPLAY.get(slug) or best.get(slug) or next(iter({**cs[0]["hospitals"], **cs[0]["provider_hospitals"]}.values()))
         rows.append({"slug": slug, "name": name, "cases": len(cs), "closed": len(prov), "n_closed": len(closed), "against": against,
                      "ratio": against / len(prov) if len(prov) >= MIN_CLOSED_FOR_RANKING else None,
-                     "ratio_all": against / len(cs) if len(cs) >= MIN_CLOSED_FOR_RANKING else None,
+                     "ratio_all": against / len(medical) if len(medical) >= MIN_CLOSED_FOR_RANKING else None,
                      "years": mean([c["days_to_close"] / 365.25 for c in closed if c["days_to_close"] is not None], 1),
                      "hearings": mean([c["n_held"] for c in closed if c["n_held"]], 1),
                      "adjourned": round(100 * asked / held) if held else None,
@@ -1365,7 +1375,9 @@ def hospital(slug):
 
 def represents(case, role):
     """Whom an advocate on `role`'s side of the case acts for: 'hospital', 'patient', 'insurer', 'organisation',
-    'mixed' or '' (see ProviderMatcher.party_of)."""
+    'mixed' or '' (see ProviderMatcher.party_of); 'not_medical' in a case that is not a medical one."""
+    if is_non_medical(case):
+        return "not_medical"
     stored = case.get("party_of")
     return stored[role] if stored and role in stored else MATCHER.party_of(case["complainants"], case["respondents"], role)
 
@@ -1434,7 +1446,9 @@ def advocate_metrics(cases, sides):
     side, not the lawyer, so the last two are the side's rates. hearings_closed / hearings_open are the median
     hearings held per closed and per open case (with the number of cases, n_hearings_*), and gap_days the median days
     between consecutive hearing days across all their cases (n_gaps of them). Each pct is None where there is nothing to divide by.
-    Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not."""
+    Only patient-side and hospital-side appearances count for these; an insurer's or organisation's lawyer does not.
+    Cases that are not medical ones are left out of every figure, "cases" included, even where they are listed."""
+    cases = [c for c in cases if not is_non_medical(c)]
     m = {"cases": len(cases), "closed": sum(c["outcome"] != "open" for c in cases), "won": 0, "decided": 0,
          "won_patient": 0, "won_hospital": 0, "patient_cases": 0, "hospital_cases": 0, "closed_patient": 0, "closed_hospital": 0, "time_n": 0, "time_of": 0, "absent_n": 0, "absent_of": 0}
     won_held, won_days = [], []  # hearings held in, and days from filing to the end of, each case they won, on whichever side
@@ -1476,13 +1490,12 @@ def advocate_metrics(cases, sides):
             "time_pct": pct(m["time_n"], m["time_of"]), "absent_pct": pct(m["absent_n"], m["absent_of"])}
 
 
-def visible_advocates(data, p="all", keep=None):
-    """The advocates with their visible cases only (an advocate left with none is dropped), and the count of
+def medical_advocates(data, p="all"):
+    """The advocates with their medical cases only (an advocate left with none is dropped), and the count of
     those cases for the complainant side and for the respondent side."""
-    keep = keep or visible
     out = []
     for a in data["advocates"].values():
-        cases = [c for c in a["cases"] if keep(c) and in_period(c, p)]
+        cases = [c for c in a["cases"] if not is_non_medical(c) and in_period(c, p)]
         if cases:
             sides = [a["sides"][c["case_key"]] for c in cases]
             out.append({**a, "cases": cases, "complainant": sum("complainant" in s for s in sides),
@@ -1627,9 +1640,11 @@ def advocate(slug):
     cases = [c for c in theirs if visible(c)]
     if wants_list():
         return list_only("case_tracker/_cases_table.html", cases=cases, sides=a["sides"], links=court_links())
-    return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(), m=advocate_metrics(cases, a["sides"]),
-                           complainant=sum("complainant" in a["sides"][c["case_key"]] for c in cases),
-                           respondent=sum("respondent" in a["sides"][c["case_key"]] for c in cases),
+    medical = [c for c in cases if not is_non_medical(c)]  # the figures count these; the list may show the others too
+    return render_template("case_tracker/advocate.html", a={**a, "cases": cases}, links=court_links(), m=advocate_metrics(medical, a["sides"]),
+                           medical=len(medical), others=len(theirs) - len(medical),
+                           complainant=sum("complainant" in a["sides"][c["case_key"]] for c in medical),
+                           respondent=sum("respondent" in a["sides"][c["case_key"]] for c in medical),
                            patient=sum(represents(c, r) == "patient" for c in cases for r in a["sides"][c["case_key"]]),
                            hospital=sum(represents(c, r) == "hospital" for c in cases for r in a["sides"][c["case_key"]]),
                            other_org=sum(represents(c, r) in ("insurer", "organisation") for c in cases for r in a["sides"][c["case_key"]]))
@@ -1777,7 +1792,7 @@ def judgement_line(c):
     if j["reason"]:
         text += ": " + dict((k, label) for k, label, _ in DISMISSAL_REASONS)[j["reason"]].lower()
     side = c.get("provider_side")  # the side the hospital is on: complainant or respondent
-    if side in ("complainant", "respondent") and j["class"] in ("dismissed", "part", "full"):
+    if side in ("complainant", "respondent") and j["class"] in ("dismissed", "part", "full") and not is_non_medical(c):
         for_hospital = (j["class"] == "dismissed") == (side == "respondent")  # dismissal favours the respondent
         text += ", " + ("partly " if j["class"] == "part" else "") + ("for hospital" if for_hospital else "against hospital")
     return j["name"], text

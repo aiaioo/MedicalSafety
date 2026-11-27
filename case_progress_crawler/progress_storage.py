@@ -600,10 +600,11 @@ def view_name(state, sel, kind, slug):
         return row["name"] if row else None
 
 
-def view_link_counts(state, kind):
-    """{slug: number of cases} over every court of a state."""
+def view_link_counts(state, kind, medical_only=False):
+    """{slug: number of cases} over every court of a state; medical_only leaves out those labelled not_medical."""
+    join = " JOIN view_cases c ON c.case_key = l.case_key AND c.label <> 'not_medical'" if medical_only else ""
     with _db() as cur:
-        cur.execute("SELECT slug, count(*) AS n FROM view_links WHERE state = %s AND kind = %s GROUP BY slug", (state, kind))
+        cur.execute(f"SELECT l.slug, count(*) AS n FROM view_links l{join} WHERE l.state = %s AND l.kind = %s GROUP BY l.slug", (state, kind))
         return {r["slug"]: r["n"] for r in cur.fetchall()}
 
 
