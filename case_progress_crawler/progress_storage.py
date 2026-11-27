@@ -227,6 +227,17 @@ def load_status_summaries(courts=None, case_keys=None):
         return {r["case_key"]: r["doc"] for r in cur.fetchall()}
 
 
+def load_status_advocates(case_keys):
+    """{case key: status document} cut down to complainantAdvocate and respondentAdvocate, all the consumer analysis
+    reads of it, for those `case_keys`. The whole documents, with the record of every hearing, are far larger."""
+    with _db() as cur:
+        cur.execute("""
+            SELECT case_key, jsonb_build_object('complainantAdvocate', doc->'complainantAdvocate',
+                                                'respondentAdvocate', doc->'respondentAdvocate') AS doc
+            FROM case_documents WHERE name = 'status.json' AND case_key = ANY(%s)""", (list(case_keys),))
+        return {r["case_key"]: r["doc"] for r in cur.fetchall()}
+
+
 def save_case_document_version(case_key, name, stamp, doc):
     """Keep an earlier copy of a document that has changed (stamp: when it was replaced)."""
     with _db() as cur:

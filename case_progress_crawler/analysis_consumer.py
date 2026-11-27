@@ -187,7 +187,7 @@ def write_outputs(result, state=DEFAULT_STATE):
             for name in listed:
                 party_rows.append([eid, name, party_type(name, role), role, r["as_of"], r["case_key"]])
     advocate_rows = []
-    statuses = storage.load_case_documents("status.json", case_keys=[r["case_key"] for r in result.values()])
+    statuses = storage.load_status_advocates([r["case_key"] for r in result.values()])
     for eid, r in result.items():
         details = detail_advocates(statuses.get(r["case_key"]))
         for role in ("complainant", "respondent"):
