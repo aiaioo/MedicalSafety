@@ -24,9 +24,9 @@
           {% if docs and can_arrange %}<button type="button" class="btn" id="addSectionBtn" title="Add a document section">+ Add section</button>{% endif %}
         </div>
         <div class="upload-form">
-          <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload document&hellip;</button>
+          <button type="button" id="uploadSubmit" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Upload documents&hellip;</button>
           <button type="button" id="imagesOpen" class="btn" {{ 'hidden' if owner_view and not can_create }} {{ 'disabled title="You have no cause you can add documents to"' if not can_create }}>Create from images and PDF sections&hellip;</button>
-          <input type="file" id="uploadInput" accept=".pdf" hidden>
+          <input type="file" id="uploadInput" accept=".pdf" multiple hidden>
           <span id="uploadStatus" class="upload-status"></span>
         </div>
         {% include "_default_cause_hint.html" %}

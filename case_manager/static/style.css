@@ -17,7 +17,8 @@ a { color: #2266dd; }
   background: #e7ebf3; color: #46536b; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
 a.tag { text-decoration: none; cursor: pointer; }
 a.tag:hover { background: #d7deec; }
-.upload-form { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.upload-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.upload-form .upload-status { overflow-wrap: anywhere; }
 .btn { padding: 8px 14px; border: 1px solid #cfd4e0; border-radius: 6px;
   background: #f1f3f4; color: #1c1c1c; font-size: 13px; cursor: pointer; }
 .btn:hover { background: #e4e6e8; }
@@ -477,12 +478,6 @@ a.tag:hover { background: #d7deec; }
 .report-section { margin-bottom: 20px; padding: 6px 8px 10px; border: 1px dashed transparent; border-radius: 8px; }
 .report-section.drop-target { border-color: #2266dd; background: #f3f7ff; }
 .doc-landing.drop-target { outline: 2px dashed #2266dd; background: #f3f7ff; }
-.upload-status.floating {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 300; max-width: 90vw;
-  padding: 8px 14px; background: white; color: #1c1c1c; border: 1px solid #cfd4e0; border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.14);
-}
-.upload-status.floating:empty { display: none; }
 .report-section.dragging, .report-card.dragging { opacity: 0.45; }
 .report-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .report-section-head .section-title { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }

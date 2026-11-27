@@ -14,27 +14,45 @@
     return data.id;
   }
 
+  // Uploads files one after another, counting them off beside the buttons, into the section named (null: General),
+  // then reloads the page to show them. Files that are not PDFs, or fail, are listed at the end.
+  async function uploadFiles(files, sectionId) {
+    const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
+    const problems = files.filter((f) => !pdfs.includes(f)).map((f) => `${f.name}: skipped, as it is not a PDF`);
+    // Neither way of adding documents is open meanwhile: the reload at the end would cut it off.
+    const buttons = [uploadSubmit, document.getElementById("imagesOpen")];
+    let uploaded = 0;
+    buttons.forEach((btn) => { btn.disabled = true; });
+    for (const [i, file] of pdfs.entries()) {
+      uploadStatus.textContent = `Uploading ${i + 1} of ${pdfs.length}: ${file.name}…`;
+      let docId;
+      try {
+        docId = await uploadFile(file);
+      } catch (err) {
+        problems.push(`${file.name}: ${err.message}`);
+        continue;
+      }
+      uploaded++;
+      if (!sectionId) continue;
+      try {
+        await addToSection(docId, sectionId);
+      } catch (err) {
+        problems.push(`${file.name}: uploaded, but into General (${err.message})`);
+      }
+    }
+    uploadStatus.textContent = uploaded ? `Uploaded ${uploaded} of ${files.length}. Reloading…` : "";
+    if (problems.length) window.alert(problems.join("\n"));
+    if (uploaded) setTimeout(() => location.reload(), 600);
+    else buttons.forEach((btn) => { btn.disabled = false; });
+  }
+
   if (uploadSubmit && uploadInput) {
     uploadSubmit.addEventListener("click", () => uploadInput.click());
 
-    uploadInput.addEventListener("change", async () => {
-      const file = uploadInput.files[0];
-      if (!file) return;
-
-      uploadSubmit.disabled = true;
-      uploadStatus.textContent = "Uploading…";
-      uploadStatus.classList.remove("error");
-
-      try {
-        const id = await uploadFile(file);
-        uploadStatus.textContent = `Uploaded as "${id}". Reloading…`;
-        setTimeout(() => location.reload(), 600);
-      } catch (err) {
-        uploadStatus.textContent = err.message;
-        uploadStatus.classList.add("error");
-        uploadSubmit.disabled = false;
-        uploadInput.value = "";
-      }
+    uploadInput.addEventListener("change", () => {
+      const files = Array.from(uploadInput.files);
+      uploadInput.value = ""; // so that choosing the same files again counts as a change
+      if (files.length) uploadFiles(files, null);
     });
   }
 
@@ -277,42 +295,6 @@
       dropZone = zone;
     }
 
-    async function uploadDropped(files, sectionId) {
-      const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
-      const problems = files.filter((f) => !pdfs.includes(f)).map((f) => `${f.name}: skipped, as it is not a PDF`);
-      let uploaded = 0;
-      uploadSubmit.disabled = true;
-      uploadStatus.classList.remove("error");
-      uploadStatus.classList.add("floating"); // in view however far down the page the files were let go
-      for (const [i, file] of pdfs.entries()) {
-        const count = pdfs.length > 1 ? ` ${i + 1} of ${pdfs.length}` : "";
-        uploadStatus.textContent = `Uploading${count}: ${file.name}…`;
-        let docId;
-        try {
-          docId = await uploadFile(file);
-        } catch (err) {
-          problems.push(`${file.name}: ${err.message}`);
-          continue;
-        }
-        uploaded++;
-        if (!sectionId) continue;
-        try {
-          await addToSection(docId, sectionId);
-        } catch (err) {
-          problems.push(`${file.name}: uploaded, but into General (${err.message})`);
-        }
-      }
-      if (problems.length) window.alert(problems.join("\n"));
-      if (uploaded) {
-        uploadStatus.textContent = `Uploaded ${uploaded} ${uploaded === 1 ? "document" : "documents"}. Reloading…`;
-        setTimeout(() => location.reload(), 600);
-      } else {
-        uploadStatus.textContent = "";
-        uploadStatus.classList.remove("floating");
-        uploadSubmit.disabled = false;
-      }
-    }
-
     document.addEventListener("dragover", (e) => {
       if (!hasFiles(e)) return; // a card or section being moved
       e.preventDefault(); // otherwise letting go opens the file in place of this page
@@ -325,7 +307,7 @@
       if (!hasFiles(e)) return;
       e.preventDefault();
       highlight(null);
-      if (canDrop()) uploadDropped(Array.from(e.dataTransfer.files), zoneAt(e.target).dataset.sectionId || null);
+      if (canDrop()) uploadFiles(Array.from(e.dataTransfer.files), zoneAt(e.target).dataset.sectionId || null);
     });
   }
 
