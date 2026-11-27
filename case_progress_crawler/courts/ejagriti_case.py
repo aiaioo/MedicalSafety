@@ -77,20 +77,24 @@ def same_parties(status, parties):
 
 
 def tracked_cases():
-    """{case number: {"respondents": [...], "complainants": [...], "case_type": ...}} for every consumer case
-    that has appeared on a saved cause list (storage.iter_latest_cause_lists); a later list's parties replace an earlier one's.
+    """{case number: {"respondents": [...], "complainants": [...], "case_type": ..., "listed_as": {...}}} for every consumer
+    case that has appeared on a saved cause list (storage.iter_latest_cause_lists); a later list's parties replace an earlier one's.
+    The case number is in its standard form (analysis_consumer.standard_number); "listed_as" holds the ways the lists
+    wrote it, since the portal may know the case only by one of those.
     The lists are read one at a time, so only the small result is held in memory, not every list."""
-    from analysis_consumer import CASE_NO_RE  # a top-level module; imported late as it imports this package
+    from analysis_consumer import standard_number  # a top-level module; imported late as it imports this package
     cases = {}
     for cause_list in storage.iter_latest_cause_lists():
         for row in cause_list["doc"]["causelists"]:
             for c in row["cases"]:
-                number = " ".join((c.get("caseNumber") or "").split())
-                if number and CASE_NO_RE.fullmatch(number):  # skips a mistyped number ("DC/525/RBT/CC/14/633"); the case is also listed under its right one
+                listed = " ".join((c.get("caseNumber") or "").split())
+                number = standard_number(listed)
+                if number:  # None for a mistyped number ("DC/545/CC/2013/344")
                     cases[number] = {
                         "respondents": [r.get("respondant_name") or "" for r in c.get("respondantList") or []],
                         "complainants": [c2.get("complainant_name") or "" for c2 in c.get("complainantList") or []],
-                        "case_type": c.get("caseTypeName") or ""}
+                        "case_type": c.get("caseTypeName") or "",
+                        "listed_as": cases.get(number, {}).get("listed_as", set()) | {listed}}
     return cases
 
 
@@ -253,6 +257,32 @@ class ConsumerCaseDownloader:
             return True
         return age >= STALE_AFTER
 
+    def _find_status(self, case_number, parties):
+        """(status, the number the portal knows the case by). The numbers the cause lists wrote it as are asked first,
+        the standard one leading if it is among them; then numbers worked out from it -- the standard form of a case
+        only ever listed another way, and alias_number() -- which are used only if the parties match. The portal answers
+        400 for a number it does not know; any other error is raised at once, as is the first 400 if none is known."""
+        listed = (parties or {}).get("listed_as") or {case_number}
+        numbers = [(n, False) for n in sorted(listed, key=lambda n: (n != case_number, n))]
+        if parties:
+            derived = [case_number] if case_number not in listed else []
+            numbers += [(n, True) for n in derived + [alias_number(case_number)] if n]
+        unknown = None
+        for number, check in numbers:
+            if unknown:
+                time.sleep(REQUEST_DELAY)
+            try:
+                status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=number)
+            except Exception as e:
+                if getattr(getattr(e, "response", None), "status_code", None) != 400:
+                    raise
+                unknown = unknown or e
+                continue
+            if check and not same_parties(status, parties):
+                raise ValueError(f"{number} is not the same case as {case_number}") from unknown
+            return status, number
+        raise unknown
+
     def sync(self, case_number, now=None, parties=None):
         """Bring one case up to date. A case not seen before is fetched in full. For one already held: the status
         and history are fetched again (two requests); an order is fetched only if it is not saved yet, or if its
@@ -266,18 +296,7 @@ class ConsumerCaseDownloader:
         out = {"saved": [], "skipped": [], "failed": []}
         previous = self._json(case_number, "status.json")
         old_entries = {h.get("courtRoomHearingId"): h for h in (previous or {}).get("caseHearingDetails") or []}
-        portal_number = case_number
-        try:
-            status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=case_number)
-        except Exception as e:
-            alias = alias_number(case_number)
-            if not (alias and parties and getattr(getattr(e, "response", None), "status_code", None) == 400):
-                raise
-            # the portal knows this case by another number; use it only if it is the same case. Everything is still saved under case_number.
-            status = self._get_data("/case/caseFilingService/v2/getCaseStatus", caseNumber=alias)
-            if not same_parties(status, parties):
-                raise ValueError(f"{alias} is not the same case as {case_number}") from e
-            portal_number = alias
+        status, portal_number = self._find_status(case_number, parties)  # everything is saved under case_number
         history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=portal_number)
         recheck_failed = False
         for h in status.get("caseHearingDetails") or []:

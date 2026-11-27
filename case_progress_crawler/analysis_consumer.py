@@ -35,7 +35,9 @@ from analysis import party_type
 COURT = "consumer"  # the analysed court of the first state, Karnataka; another state's is court_id(state)
 DEFAULT_STATE = "Karnataka"
 
-CASE_NO_RE = re.compile(r"(?P<prefix>.+)/(?P<serial>\d+)/(?P<year>\d{4})$")
+CASE_NO_RE = re.compile(r"(?P<prefix>.+)/(?P<serial>\d+)/(?P<year>\d{4})$")  # <prefix>/<serial>/<year>, the usual form
+SHORT_YEAR_RE = re.compile(r"(?P<prefix>.+/[A-Za-z]+)/(?P<year>\d{2})/(?P<serial>\d+)$")  # <prefix>/<yy>/<serial>, the other way round
+FIRST_YEAR = 1986  # the Consumer Protection Act: no case is older
 TIME_RE = re.compile(r"\bAT\s+(\d{1,2}):(\d{2})\s*([AP])\.?\s*M", re.IGNORECASE)
 # (tag, regex) for the stage printed on the list
 STAGE_TAGS = [("admission", r"admission"), ("directions", r"direction"), ("order", r"pronouncement|\border\b"),
@@ -46,6 +48,21 @@ warnings = []
 
 def warn(msg):
     warnings.append(msg)
+
+
+def standard_number(number, this_year=None):
+    """A case number as <prefix>/<serial>/<year>, or None if it cannot be read as one. Some cause lists write a case
+    the other way round with a two-digit year -- SC/32/CC/15/81 is SC/32/CC/81/2015 -- often for a case that other
+    lists give in the usual form, so both must come to the same number. A four-digit ending that is no possible year
+    is a serial number of the short form: DC/555/CC/24/1030 is serial 1030 of 2024."""
+    this_year = this_year or date.today().year
+    m = CASE_NO_RE.fullmatch(number)
+    if m and FIRST_YEAR <= int(m["year"]) <= this_year:
+        return number
+    m = SHORT_YEAR_RE.fullmatch(number)
+    if m and 2000 + int(m["year"]) <= this_year:
+        return f"{m['prefix']}/{int(m['serial'])}/{2000 + int(m['year'])}"
+    return None
 
 
 def case_key(case_number):
@@ -120,12 +137,12 @@ def collect():
         cases = by_state.setdefault(states.get(doc.get("ejagriti_commission_id"), DEFAULT_STATE), {})
         for row in doc["causelists"]:
             for c in row["cases"]:
-                number = " ".join((c.get("caseNumber") or "").split())
-                try:
-                    key = case_key(number)
-                except ValueError as e:
-                    warn(f"{source}: {e}")
+                listed = " ".join((c.get("caseNumber") or "").split())
+                number = standard_number(listed)
+                if not number:
+                    warn(f"{source}: unrecognised case number: {listed}")
                     continue
+                key = case_key(number)
                 case = cases.setdefault(number, {
                     "enquiry_id": number, "case_key": key, "case_type": c.get("caseTypeName") or "",
                     "commission": doc["commission"], "complainants": [], "respondents": [],
@@ -144,7 +161,7 @@ def collect():
                 bench = ", ".join(names(c.get("judgeName"), "judge_name"))
                 court_no = c.get("courtRoomName") or ""
                 raw = "\n".join(filter(None, [
-                    f"[{source}]", f"case: {number} ({c.get('caseTypeName') or ''})", f"court: {court_no}",
+                    f"[{source}]", f"case: {listed} ({c.get('caseTypeName') or ''})", f"court: {court_no}",
                     f"stage: {stage}", f"before: {bench}",
                     f"complainant: {'; '.join(names(c.get('complainantList'), 'complainant_name'))}",
                     f"respondent: {'; '.join(names(c.get('respondantList'), 'respondant_name'))}",

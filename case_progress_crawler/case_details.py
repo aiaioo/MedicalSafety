@@ -12,6 +12,7 @@ Usage:  python case_details.py DC/525/CC/763/2026 [CASE_NUMBER ...]
 import argparse
 import sys
 
+from analysis_consumer import standard_number
 from courts import log
 from courts.ejagriti_case import ConsumerCaseDownloader, StoragePersister, tracked_cases
 
@@ -22,7 +23,7 @@ def main():
     parser.add_argument("--tracked", action="store_true", help="all cases seen on a saved cause list")
     args = parser.parse_args()
     known = tracked_cases()  # the parties of a case, for labelling it; a case not on any saved list is not labelled
-    numbers = args.case_numbers + (sorted(known) if args.tracked else [])
+    numbers = [standard_number(n) or n for n in args.case_numbers] + (sorted(known) if args.tracked else [])
     if not numbers:
         parser.error("give case numbers or --tracked")
 
