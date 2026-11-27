@@ -31,6 +31,7 @@ from datetime import date
 
 import progress_storage as storage
 from analysis import party_type
+from courts.ejagriti_case import transfers
 
 COURT = "consumer"  # the analysed court of the first state, Karnataka; another state's is court_id(state)
 DEFAULT_STATE = "Karnataka"
@@ -38,6 +39,7 @@ DEFAULT_STATE = "Karnataka"
 CASE_NO_RE = re.compile(r"(?P<prefix>.+)/(?P<serial>\d+)/(?P<year>\d{4})$")  # <prefix>/<serial>/<year>, the usual form
 SHORT_YEAR_RE = re.compile(r"(?P<prefix>.+/[A-Za-z]+)/(?P<year>\d{2})/(?P<serial>\d+)$")  # <prefix>/<yy>/<serial>, the other way round
 FIRST_YEAR = 1986  # the Consumer Protection Act: no case is older
+BENCH_NUMBER_RE = re.compile(r"SC/CB\d+/(?P<state>\d+)/(?:RBT/)?(?P<rest>.+)")  # a case of a State Commission's circuit bench
 TIME_RE = re.compile(r"\bAT\s+(\d{1,2}):(\d{2})\s*([AP])\.?\s*M", re.IGNORECASE)
 # (tag, regex) for the stage printed on the list
 STAGE_TAGS = [("admission", r"admission"), ("directions", r"direction"), ("order", r"pronouncement|\border\b"),
@@ -63,6 +65,14 @@ def standard_number(number, this_year=None):
     if m and 2000 + int(m["year"]) <= this_year:
         return f"{m['prefix']}/{int(m['serial'])}/{2000 + int(m['year'])}"
     return None
+
+
+def number_before_transfer(number):
+    """The State Commission number a circuit bench's case would have had before it was sent there -- SC/CB1/29/RBT/A/5/2023
+    and SC/CB2/29/A/5/2023 both come from SC/29/A/5/2023 -- or None for any other number. A bench also numbers cases of
+    its own the same way, so only the parties say whether it is the same case (courts/ejagriti_case.py transfers)."""
+    m = BENCH_NUMBER_RE.fullmatch(number)
+    return f"SC/{m['state']}/{m['rest']}" if m else None
 
 
 def case_key(case_number):
@@ -171,7 +181,20 @@ def collect():
                 case["hearings"].setdefault(list_date, {
                     "date": list_date, "stage": stage, "court": court_no, "bench": bench,
                     "time": list_time(stage), "sources": [source], "raw": raw})
+    for cases in by_state.values():
+        for moved, old in transfers(cases).items():
+            merge_transferred(cases[old], cases.pop(moved))
     return by_state
+
+
+def merge_transferred(case, moved):
+    """Add to a case what the circuit bench it was sent to has listed of it, under its new number: its hearings (the
+    bench's, on a day both listed), its advocates, and the parties if the bench's list is the later one."""
+    case["hearings"].update(moved["hearings"])
+    for role, listed in moved["advocates"].items():
+        case["advocates"][role] += [a for a in listed if a not in case["advocates"][role]]
+    if moved.get("as_of", "") >= case.get("as_of", ""):
+        case.update(complainants=moved["complainants"], respondents=moved["respondents"], as_of=moved["as_of"])
 
 
 def build(cases, today=None):

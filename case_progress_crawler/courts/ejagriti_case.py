@@ -76,11 +76,47 @@ def same_parties(status, parties):
                 and _party_words([status.get("respondent") or ""]) & _party_words(parties.get("respondents") or []))
 
 
+def _same_side(a, b):
+    """Do two lists of names share a telling word -- or, where one has none ("ESI Hospital"), a whole name?"""
+    x, y = _party_words(a), _party_words(b)
+    if x and y:
+        return bool(x & y)
+    plain = lambda names: {re.sub(r"\W", "", n.lower()) for n in names} - {""}
+    return bool(plain(a) & plain(b))
+
+
+def transfers(cases):
+    """{circuit bench's number: the State Commission's number} of the cases listed under both: sent to a bench, a case goes
+    on under a new number (analysis_consumer.number_before_transfer) while the old one stops. `cases` is {case number:
+    {"complainants": [...], "respondents": [...]}}; both sides' parties must match, as a bench gives new cases of its
+    own numbers that look the same."""
+    from analysis_consumer import number_before_transfer  # a top-level module; imported late as it imports this package
+    found = {}
+    for number, case in cases.items():
+        old = number_before_transfer(number)
+        if old in cases and all(_same_side(case[side], cases[old][side]) for side in ("complainants", "respondents")):
+            found[number] = old
+    return found
+
+
+def carried_over(old_status, old_history, status, history):
+    """(status, history) of a transferred case with the hearings its record under the old number had: the new record's
+    hearings start at the transfer, so those the old one had before the first of them are kept in front. (The new history
+    also has the filing, dated long before, which is why only hearings are compared.)"""
+    def before(old, new, field, is_hearing=lambda e: True):
+        first = min((e[field] for e in new if is_hearing(e) and e.get(field)), default=None)
+        return [e for e in old if is_hearing(e) and e.get(field) and (first is None or e[field] < first)] + new
+    hearings = before((old_status or {}).get("caseHearingDetails") or [], status.get("caseHearingDetails") or [], "dateOfHearing")
+    return {**status, "caseHearingDetails": hearings}, before(
+        old_history or [], history or [], "dateOfAction", lambda e: (e.get("actionTaken") or "").startswith("Hearing"))
+
+
 def tracked_cases():
     """{case number: {"respondents": [...], "complainants": [...], "case_type": ..., "listed_as": {...}}} for every consumer
     case that has appeared on a saved cause list (storage.iter_latest_cause_lists); a later list's parties replace an earlier one's.
     The case number is in its standard form (analysis_consumer.standard_number); "listed_as" holds the ways the lists
-    wrote it, since the portal may know the case only by one of those.
+    wrote it, since the portal may know the case only by one of those. A case sent to a circuit bench stays under its
+    old number, with the new one in "listed_as" and in "moved_to" (see transfers).
     The lists are read one at a time, so only the small result is held in memory, not every list."""
     from analysis_consumer import standard_number  # a top-level module; imported late as it imports this package
     cases = {}
@@ -95,6 +131,10 @@ def tracked_cases():
                         "complainants": [c2.get("complainant_name") or "" for c2 in c.get("complainantList") or []],
                         "case_type": c.get("caseTypeName") or "",
                         "listed_as": cases.get(number, {}).get("listed_as", set()) | {listed}}
+    for moved, old in transfers(cases).items():
+        new = cases.pop(moved)
+        cases[old] = {**new, "case_type": cases[old]["case_type"], "listed_as": cases[old]["listed_as"] | new["listed_as"],
+                      "moved_to": cases[old].get("moved_to", set()) | new["listed_as"]}
     return cases
 
 
@@ -269,11 +309,12 @@ class ConsumerCaseDownloader:
 
     def _find_status(self, case_number, parties):
         """(status, the number the portal knows the case by). The numbers the cause lists wrote it as are asked first,
-        the standard one leading if it is among them; then numbers worked out from it -- the standard form of a case
+        those of a circuit bench it was sent to leading, then the standard one if it is among them; then numbers worked out from it -- the standard form of a case
         only ever listed another way, and alias_number() -- which are used only if the parties match. The portal answers
         400 for a number it does not know; any other error is raised at once, as is the first 400 if none is known."""
         listed = (parties or {}).get("listed_as") or {case_number}
-        numbers = [(n, False) for n in sorted(listed, key=lambda n: (n != case_number, n))]
+        moved = (parties or {}).get("moved_to") or set()
+        numbers = [(n, False) for n in sorted(listed, key=lambda n: (n not in moved, n != case_number, n))]
         if parties:
             derived = [case_number] if case_number not in listed else []
             numbers += [(n, True) for n in derived + [alias_number(case_number)] if n]
@@ -369,6 +410,8 @@ class ConsumerCaseDownloader:
             time.sleep(REQUEST_DELAY)
         if misses_changed:
             self.persister.save_json(case_number, "no_orders.json", dict(sorted(misses.items())))
+        if portal_number in ((parties or {}).get("moved_to") or ()):
+            status, history = carried_over(previous, self._json(case_number, "history.json"), status, history)
         # A failed re-check keeps the old status, so that the change is noticed again next time.
         if previous is None or not recheck_failed:
             self._save_json_versioned(case_number, "status.json", status, stamp, out)

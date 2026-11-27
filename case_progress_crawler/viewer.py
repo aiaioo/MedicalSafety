@@ -69,6 +69,8 @@ CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case 
     "DELHI": "Delhi State Consumer Disputes Redressal Commission", "KERALA": "Kerala State Consumer Disputes Redressal Commission",
     "TAMIL NADU": "Tamil Nadu State Consumer Disputes Redressal Commission",
     "CIRCUIT BENCH MADURAI": "Tamil Nadu State Consumer Disputes Redressal Commission (Madurai Circuit Bench)",
+    "CIRCUIT BENCH KALBURGI": "Karnataka State Consumer Disputes Redressal Commission (Kalaburagi Circuit Bench)",
+    "CIRCUIT BENCH BELAGAVI": "Karnataka State Consumer Disputes Redressal Commission (Belagavi Circuit Bench)",
     "NCDRC": "National Consumer Disputes Redressal Commission"}
 COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
 MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year

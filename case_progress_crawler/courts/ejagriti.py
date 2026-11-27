@@ -40,15 +40,16 @@ def fetch_commissions(state_id):
         session.close()
 
 
-def state_courts(state, state_id, state_city=None, circuit_benches=False):
-    """Consumer courts of a state: the State Commission and every district commission (the circuit benches
-    of the State Commission are left out unless `circuit_benches` is True; they list cases of their own). `state_city` is the city of the State Commission and of any district
+def state_courts(state, state_id, state_city=None):
+    """Consumer courts of a state: the State Commission, its circuit benches (which list cases of their own) and every
+    district commission. `state_city` is the city of the State Commission and of any district
     commission whose name matches BANGALORE_RE for Karnataka ("Bangalore": Bangalore Urban, Bengaluru Rural,
-    Bengaluru South and the additional benches); any other district commission is in the city named after its district."""
+    Bengaluru South and the additional benches); a circuit bench is in the city it is named after, and any other
+    district commission in the city named after its district."""
     courts = []
     for c in fetch_commissions(state_id):
         is_state = c["commissionTypeId"] == STATE_COMMISSION and not c["circuitAdditionBenchStatus"]
-        is_bench = circuit_benches and c["commissionTypeId"] == STATE_COMMISSION and bool(c["circuitAdditionBenchStatus"])
+        is_bench = c["commissionTypeId"] == STATE_COMMISSION and bool(c["circuitAdditionBenchStatus"])
         if not (is_state or is_bench or c["commissionTypeId"] == DISTRICT_COMMISSION):
             continue
         name = c["commissionNameEn"]
@@ -102,7 +103,7 @@ def kerala_courts():
 
 
 def tamil_nadu_courts():
-    return state_courts(TAMIL_NADU["state"], TAMIL_NADU["state_id"], "Chennai", circuit_benches=True)  # Madurai's
+    return state_courts(TAMIL_NADU["state"], TAMIL_NADU["state_id"], "Chennai")
 
 
 def consumer_courts():
