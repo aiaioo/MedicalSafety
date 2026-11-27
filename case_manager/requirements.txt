@@ -1,5 +1,5 @@
 Flask>=3.0
-PyMuPDF>=1.24
+PyMuPDF>=1.24,<2  # the 2.x releases have no ready-made package for Intel Macs and are untested here
 # Renders pages straight from the encrypted file, decrypting only the chunks a page needs (see app.py api_render).
 pypdfium2>=5.0
 # Reads a big PDF lazily and writes it out as a stream (the annotated-PDF download); see app.py _stream_pikepdf.
