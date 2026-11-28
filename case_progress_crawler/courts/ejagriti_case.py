@@ -38,6 +38,12 @@ RECHECK_AFTER = timedelta(days=7)  # a case with no next hearing date (disposed?
 RECENT = timedelta(days=3)  # a hearing this recent with no order is asked about again every run
 STALE_AFTER = timedelta(days=3)  # a case with nothing due (hearing still ahead, none recent) is looked at this often anyway
 ORDER_EXTENSIONS = ("pdf", "html")  # recent orders are PDFs, older ones HTML pages
+UTF8_BOM = b"\xef\xbb\xbf"  # some of the portal's PDFs start with this byte-order mark, which is not part of the PDF
+
+
+class NoOrderDocument(ValueError):
+    """The portal answered with success but an empty document: it lists an order that it has no file for (seen for many
+    orders of 2010-2014)."""
 
 
 @lru_cache(maxsize=4096)
@@ -50,6 +56,13 @@ def history_hearing_dates(history):
     timestamps, 5:30 behind, e.g. 2026-11-04T18:30:00.000Z is the hearing of 2026-11-05."""
     return [_india_date(h["dateOfAction"][:19])
             for h in history or [] if h.get("dateOfAction") and (h.get("actionTaken") or "").startswith("Hearing")]
+
+
+def _asked_lately(checked, day, now):
+    """Is it too soon to ask again for an order the portal did not have when asked at `checked` (an ISO time, or None if
+    it was not)? It is asked again after RECHECK_AFTER, and every time while the hearing (`day`) is recent."""
+    return bool(checked) and now - datetime.fromisoformat(checked) < RECHECK_AFTER \
+        and now.date() - datetime.strptime(day, "%Y-%m-%d").date() > RECENT
 
 
 OLD_DISTRICT_NUMBER_RE = re.compile(r"AB0(\d)/(\d+)/(.+)")
@@ -222,16 +235,20 @@ class ConsumerCaseDownloader:
 
     def fetch_order(self, filing_reference_number, date_of_hearing, order_type_id):
         """One order as (bytes, extension). Recent orders come back as a base64-encoded PDF inside the JSON;
-        older ones are an HTML page in the same field. The path keeps the double slash the portal's own page uses."""
+        older ones are an HTML page in the same field. NoOrderDocument if the field is empty. The path keeps the double
+        slash the portal's own page uses."""
         data = self._get_data("//courtmaster/courtRoom/judgement/v1/getDailyOrderJudgementPdf",
                               filingReferenceNumber=filing_reference_number, dateOfHearing=date_of_hearing,
                               orderTypeId=order_type_id)
         text = data.pop("dailyOrderPdf", None) or ""
         del data
+        if not text.strip():
+            raise NoOrderDocument("the portal has no document for this order")
         if text.lstrip().lower().startswith(("<html", "<!doctype")):
             return text.encode("utf-8"), "html"
         pdf = base64.b64decode(text)
         del text  # the base64 copy is a third larger than the PDF; don't keep both
+        pdf = pdf.removeprefix(UTF8_BOM)
         if not pdf.startswith(b"%PDF"):
             raise ValueError("order is neither a PDF nor HTML")
         return pdf, "pdf"
@@ -346,7 +363,12 @@ class ConsumerCaseDownloader:
         stamp = f"{now:%Y%m%dT%H%M%S}"
         out = {"saved": [], "skipped": [], "failed": []}
         previous = self._json(case_number, "status.json")
-        old_entries = {h.get("courtRoomHearingId"): h for h in (previous or {}).get("caseHearingDetails") or []}
+        # Orders the portal did not have: {"<date>" (daily order) or "<date>_judgement": when it was last asked}
+        misses = self._json(case_number, "no_orders.json") or {}
+        misses_before = dict(misses)
+        # by hearing and kind of order: a hearing's daily order and judgement are two entries with the same courtRoomHearingId
+        entry_key = lambda h: (h.get("courtRoomHearingId"), h.get("orderTypeId"))
+        old_entries = {entry_key(h): h for h in (previous or {}).get("caseHearingDetails") or []}
         status, portal_number = self._find_status(case_number, parties)  # everything is saved under case_number
         history = self._get_data("/case/caseFilingService/v2/getCaseDetailForHistoryDashBoard", caseNumber=portal_number)
         recheck_failed = False
@@ -356,10 +378,15 @@ class ConsumerCaseDownloader:
                 continue
             base = f"orders/{h['dateOfHearing']}_{kind}"
             versions = self._versions(case_number, base)
-            old = old_entries.get(h.get("courtRoomHearingId"))
+            old = old_entries.get(entry_key(h))
             recheck = bool(versions) and old is not None and old != h
             if versions and not recheck:
                 out["skipped"].append(versions[-1])
+                continue
+            day = h["dateOfHearing"]
+            miss = day if kind == "daily_order" else f"{day}_{kind}"
+            # an order not held that the portal lacked lately is left for now, unless its hearing entry is new or changed
+            if not versions and old == h and _asked_lately(misses.get(miss), day, now):
                 continue
             try:
                 content, ext = self.fetch_order(status["fillingReferenceNumber"], h["dateOfHearing"], h["orderTypeId"])
@@ -373,42 +400,41 @@ class ConsumerCaseDownloader:
                     continue
                 self.persister.save_file(case_number, name, content)
                 out["saved"].append(name)
+                misses.pop(miss, None)
             except Exception as e:
-                log(f"  FAILED {base}: {e}")
-                out["failed"].append(base)
-                recheck_failed = recheck_failed or recheck
+                if isinstance(e, NoOrderDocument) and not versions:
+                    misses[miss] = now.isoformat(timespec="seconds")
+                else:  # including an empty answer for an order already held, which should not happen
+                    log(f"  FAILED {case_number} {base}: {e}")
+                    out["failed"].append(base)
+                    recheck_failed = recheck_failed or recheck
             time.sleep(REQUEST_DELAY)
         # Every hearing in the history should have its order too; the status lists most of them, so try the
         # ones it does not (a daily order, as the portal's "View" button does). A hearing the portal has no
-        # order for (HTTP 400) is noted in no_orders.json and only asked about again after RECHECK_AFTER, or
-        # daily while the hearing is recent (orders are uploaded a little late). Other errors are not noted.
+        # order for (HTTP 400, or an empty document) is noted in no_orders.json and only asked about again after
+        # RECHECK_AFTER, or daily while the hearing is recent (orders are uploaded a little late). Other errors
+        # are not noted.
         in_status = {h.get("dateOfHearing") for h in status.get("caseHearingDetails") or []}
-        misses = self._json(case_number, "no_orders.json") or {}
-        misses_changed = False
         for day in history_hearing_dates(history):
             if day in in_status or self._versions(case_number, f"orders/{day}_daily_order"):
                 continue
-            checked = misses.get(day)
-            if checked and now - datetime.fromisoformat(checked) < RECHECK_AFTER \
-                    and now.date() - datetime.strptime(day, "%Y-%m-%d").date() > RECENT:
+            if _asked_lately(misses.get(day), day, now):
                 continue
             try:
                 content, ext = self.fetch_order(status["fillingReferenceNumber"], day, 1)
                 name = f"orders/{day}_daily_order.{ext}"
                 self.persister.save_file(case_number, name, content)
                 out["saved"].append(name)
-                if misses.pop(day, None):
-                    misses_changed = True
+                misses.pop(day, None)
             except Exception as e:
                 no_order = isinstance(e, ValueError) or getattr(getattr(e, "response", None), "status_code", None) == 400
                 if no_order:
                     misses[day] = now.isoformat(timespec="seconds")
-                    misses_changed = True
                 else:
-                    log(f"  FAILED order of history hearing {day}: {e}")
+                    log(f"  FAILED {case_number} order of history hearing {day}: {e}")
                     out["failed"].append(f"orders/{day}_daily_order")
             time.sleep(REQUEST_DELAY)
-        if misses_changed:
+        if misses != misses_before:
             self.persister.save_json(case_number, "no_orders.json", dict(sorted(misses.items())))
         if portal_number in ((parties or {}).get("moved_to") or ()):
             status, history = carried_over(previous, self._json(case_number, "history.json"), status, history)
