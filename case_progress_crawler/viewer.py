@@ -71,6 +71,13 @@ CONSUMER_COMMISSION_NAMES = {  # what the portal calls the commission of a case 
     "CIRCUIT BENCH MADURAI": "Tamil Nadu State Consumer Disputes Redressal Commission (Madurai Circuit Bench)",
     "CIRCUIT BENCH KALBURGI": "Karnataka State Consumer Disputes Redressal Commission (Kalaburagi Circuit Bench)",
     "CIRCUIT BENCH BELAGAVI": "Karnataka State Consumer Disputes Redressal Commission (Belagavi Circuit Bench)",
+    "MAHARASHTRA": "Maharashtra State Consumer Disputes Redressal Commission",
+    "CIRCUIT BENCH NAGPUR": "Maharashtra State Consumer Disputes Redressal Commission (Nagpur Circuit Bench)",
+    "CIRCUIT BENCH KOHLAPUR": "Maharashtra State Consumer Disputes Redressal Commission (Kolhapur Circuit Bench)",
+    "CIRCUIT BENCH PUNE": "Maharashtra State Consumer Disputes Redressal Commission (Pune Circuit Bench)",
+    "CIRCUIT BENCH NASHIK": "Maharashtra State Consumer Disputes Redressal Commission (Nashik Circuit Bench)",
+    "CIRCUIT BENCH AMRAVATI": "Maharashtra State Consumer Disputes Redressal Commission (Amravati Circuit Bench)",
+    "REGIONAL BENCH CHHATRAPATI SAMBHAJINAGAR": "Maharashtra State Consumer Disputes Redressal Commission (Chhatrapati Sambhajinagar Bench)",
     "NCDRC": "National Consumer Disputes Redressal Commission"}
 COUNCIL_NAMES = {"kmc": "Karnataka Medical Council", "dmc": "Delhi Medical Council"}  # the medical councils, which have no case documents of the portal's kind
 MIN_YEAR = 2000  # case numbers for earlier years are typos (e.g. 1461): never shown as a year
@@ -92,6 +99,8 @@ OPAQUE_COUNCILS = {  # state -> its medical council that publishes no case recor
                "finding": "Their website publishes no list of the complaints they receive, their hearings or the outcomes, only an occasional notice of action against a practitioner."},
     "Tamil Nadu": {"name": "Tamil Nadu Medical Council", "url": "https://www.tamilnadumedicalcouncil.org/", "verdict": "This Council is opaque.",
                    "finding": "Its website publishes no list of the complaints it receives, its hearings or the outcomes."},
+    "Maharashtra": {"name": "Maharashtra Medical Council", "url": "https://maharashtramedicalcouncil.org.in/", "verdict": "This Council is opaque.",
+                    "finding": "Its website lets a complainant check their own complaint with a password, but publishes no list of the complaints it receives, its hearings or the outcomes."},
 }
 DEFAULT_STATE = "Karnataka"  # the state shown to a visitor with no choice yet (the first state with analysed courts if there is none of this name)
 SELECTIONS = {"kmc": "KMC", "dmc": "DMC", "consumer": "CPA (consumer courts)", "all": "All"}  # what the selector offers
@@ -212,7 +221,8 @@ def commission_label(commission):
     name = CONSUMER_COMMISSION_NAMES.get(commission.upper())
     if name:
         return name.replace(" Consumer Disputes Redressal Commission", "")
-    return re.sub(r"(\d)(St|Nd|Rd|Th)\b", lambda m: m.group(1) + m.group(2).lower(), commission.title()) + " District"
+    title = re.sub(r"(\d)(St|Nd|Rd|Th)\b", lambda m: m.group(1) + m.group(2).lower(), commission.title())
+    return re.sub(r"\bDcf\b", "DCF", title) + " District"
 
 
 def kind_of(court):

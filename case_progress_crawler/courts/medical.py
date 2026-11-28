@@ -16,9 +16,9 @@ an insurer alone is not medical negligence and stays out.
 
 import re
 
-from .providers import MATCHER
+from .providers import MATCHER, deva
 
-FILTER_VERSION = 3  # bump when the rules change; courts/consumer.py then filters saved lists again
+FILTER_VERSION = 4  # bump when the rules change; courts/consumer.py then filters saved lists again
 APPEAL_RE = re.compile(r"appeal|revision", re.IGNORECASE)  # case types where the appellant is listed as complainant
 
 M = MATCHER
@@ -56,7 +56,7 @@ def keep_medical(rows):
 # deliberately generous; classify() uses the cleaner party names and the text of the court's orders to
 # label each kept case. Nothing is dropped on the strength of a label -- it is stored beside the case.
 
-CLASSIFIER_VERSION = 3  # bump when the rules below change; cases are then labelled again, from what is stored
+CLASSIFIER_VERSION = 4  # bump when the rules below change; cases are then labelled again, from what is stored
 
 NEGLIGENCE_RE = re.compile(
     r"negligen|\btreatment|\bsurger(?:y|ies)|\boperat(?:ed|ion)\b|\bpatients?\b|\bdelivery\b|\bdeceased\b|"
@@ -66,6 +66,9 @@ NEGLIGENCE_RE = re.compile(
 # chairman, a developer's director, a doctor who bought a flat or a car. Insurers are left out: they are often
 # parties to a negligence case.
 OTHER_BUSINESS_RE = re.compile(
+    deva("सहकार", "पत\\s*संस्था", "पथ\\s*संस्था", "पतपेढ", "क्रेड(?:ि|ी)ट", "को[\\s.\\-]*ऑप", f"बिल्ड(?:ि|ी)?(?:ं)?ग?र", "डेव(?:्ह|्)?(?:ल|े)",
+         "कन्स्ट्रक्श", "मोटर्स", "गृह\\s*निर्माण", "हा(?:ऊ|उ|ौ)सिंग", "फायनान्स") + "|" +
+    "(?<!ब्लड )" + deva("ब(?:ँ|ॅं|ैं|ॅ)क") + "|" +
     r"\b(?:credit|s[ao]uh\w*ar\w*|sah[a]?k[a]?r\w*|co[\s.-]*op(?:e?rative)?|(?<!blood )(?<!eye )bank|finance|financiers?|"
     r"chit\s+funds?|securities|devel\w{0,3}p(?:e{0,2}rs?|s)|builders?|buildwell|buildcon|properties|realty|realtech|realtors?|constructions?|"
     r"infrastructures?|infratech|townships?|townscape|promoters?|projects|"

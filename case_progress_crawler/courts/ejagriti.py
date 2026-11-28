@@ -24,6 +24,7 @@ KARNATAKA = {"state": "Karnataka", "state_id": 29}
 DELHI = {"state": "Delhi", "state_id": 7}
 KERALA = {"state": "Kerala", "state_id": 32}
 TAMIL_NADU = {"state": "Tamil Nadu", "state_id": 33}
+MAHARASHTRA = {"state": "Maharashtra", "state_id": 27}
 NATIONAL = {"state_id": 0}  # the portal lists the National Commission (NCDRC) under state id 0
 NATIONAL_SEAT = DELHI  # where the National Commission sits: its courts are listed with that state's
 BANGALORE_RE = re.compile(r"\b(?:bangalore|bengaluru)\b", re.IGNORECASE)  # two spellings of the same name
@@ -38,6 +39,13 @@ def fetch_commissions(state_id):
         return resp.json()["data"]
     finally:
         session.close()
+
+
+def district_city(name):
+    """The city of a district commission or circuit bench, from its name: "SOUTH II" -> "South II", "CIRCUIT BENCH
+    MADURAI" and "Additional DCF, Nagpur" -> the place alone."""
+    city = re.sub(r"\b(Ii|Iii|Iv)\b", lambda m: m[0].upper(), " ".join(name.split()).title())  # "South II", not "South Ii"
+    return re.sub(r"^(?:(?:Circuit|Regional) Bench |Additional Dcf, )", "", city)
 
 
 def state_courts(state, state_id, state_city=None):
@@ -58,7 +66,7 @@ def state_courts(state, state_id, state_city=None):
             "id": f"ejagriti-{c['commissionId']}",
             "name": f"{state} State Commission" if is_state else " ".join(name.split()),
             "kind": "consumer state commission" if is_state else "consumer circuit bench" if is_bench else "consumer district commission",
-            "city": " ".join(name.split()).title().removeprefix("Circuit Bench ") if is_bench else state_city if in_state_city else re.sub(r"\b(Ii|Iii|Iv)\b", lambda m: m[0].upper(), " ".join(name.split()).title()),  # "South II", not "South Ii"
+            "city": state_city if in_state_city else district_city(name),
             "state": state,
             "source": API_URL + f"?stateId={state_id}",
             "ejagriti_commission_id": c["commissionId"],
@@ -106,10 +114,14 @@ def tamil_nadu_courts():
     return state_courts(TAMIL_NADU["state"], TAMIL_NADU["state_id"], "Chennai")
 
 
+def maharashtra_courts():
+    return state_courts(MAHARASHTRA["state"], MAHARASHTRA["state_id"], "Mumbai")
+
+
 def consumer_courts():
     """Every consumer court the crawler follows: those of Karnataka, those of Delhi with the National Commission,
-    and those of Kerala and Tamil Nadu."""
-    return karnataka_courts() + delhi_courts() + kerala_courts() + tamil_nadu_courts()
+    and those of Kerala, Tamil Nadu and Maharashtra."""
+    return karnataka_courts() + delhi_courts() + kerala_courts() + tamil_nadu_courts() + maharashtra_courts()
 
 
 API_BASE = "https://e-jagriti.gov.in/services"
